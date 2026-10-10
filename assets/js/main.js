@@ -7,7 +7,29 @@ document.addEventListener('DOMContentLoaded', () => {
   initCodeCopy();
   initBackToTop();
   initMermaid();
+  initKaTeX();
 });
+
+window.addEventListener('load', initKaTeX);
+
+// KaTeX Math Rendering Initializer
+function initKaTeX() {
+  if (typeof renderMathInElement !== 'undefined') {
+    renderMathInElement(document.body, {
+      delimiters: [
+        { left: '$$', right: '$$', display: true },
+        { left: '$', right: '$', display: false },
+        { left: '\\(', right: '\\)', display: false },
+        { left: '\\[', right: '\\]', display: true }
+      ],
+      ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+      ignoredClasses: ['katex', 'mermaid'],
+      output: 'html',
+      throwOnError: false
+    });
+  }
+}
+window.initKaTeX = initKaTeX;
 
 // Theme Management
 function initTheme() {

@@ -873,10 +873,32 @@ body {
   overflow-y: hidden;
   box-shadow: var(--shadow-sm);
   color: var(--text-main);
+  text-align: center;
 }
 
 .katex {
-  font-size: 1.12em !important;
+  font-size: 1.15em !important;
+}
+
+/* Strictly hide KaTeX MathML duplicate text */
+.katex-mathml {
+  display: none !important;
+  position: absolute !important;
+  clip: rect(1px, 1px, 1px, 1px) !important;
+  padding: 0 !important;
+  border: 0 !important;
+  height: 1px !important;
+  width: 1px !important;
+  overflow: hidden !important;
+  white-space: nowrap !important;
+}
+
+.callout .katex-display {
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  margin: 1rem 0 !important;
+  padding: 1rem 1.25rem !important;
+  border-radius: 8px;
 }
 
 /* ==========================================================================
