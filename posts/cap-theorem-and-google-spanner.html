@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CAP Theorem and Google Spanner — The Globally-Distributed Database — System Design Notes</title>
+  <meta name="description" content="Brewer&#x27;s CAP Theorem unpacked (CP vs AP trade-offs) and how Google Spanner achieves external consistency (linearizability) and 99.999% availability using TrueTime API GPS clocks, atomic oscillators, and Paxos consensus groups.">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.body);"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <ul class="nav-links">
+          <li><a href="../index.html">← All Notes</a></li>
+        </ul>
+        <button id="theme-toggle" class="btn-icon" aria-label="Toggle Theme">
+          <span class="theme-icon">☀️</span>
+        </button>
+        <a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="btn-icon" aria-label="GitHub Repository">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+          </svg>
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="article-page">
+    <div class="article-breadcrumbs">
+      <a href="../index.html">Home</a>
+      <span>/</span>
+      <a href="../index.html#distributed-systems">Distributed Systems</a>
+      <span>/</span>
+      <span>CAP Theorem and Google Spanner — The Globally-Distributed Database</span>
+    </div>
+
+    <header class="article-header">
+      <span class="article-header-badge">Consensus</span>
+      <h1 class="article-header-title">CAP Theorem and Google Spanner — The Globally-Distributed Database</h1>
+      <div class="article-header-meta">
+        <span>👤 Author: <strong>Rishi Chowdhury</strong></span>
+        <span>📅 Published: May 21, 2025</span>
+        <span>⏱️ 12 min read</span>
+        <span>📁 Category: Distributed Systems</span>
+      </div>
+      <div class="article-header-actions">
+        
+        <a href="../CAP_THEOREM_AND_GOOGLE_SPANNER.pdf" class="btn-secondary" target="_blank" download>
+          <span>📄 View / Download Original PDF</span>
+        </a>
+        <a href="../index.html" class="btn-primary">
+          <span>← Back to Blog Index</span>
+        </a>
+      </div>
+    </header>
+
+    <div class="article-container">
+      <article class="prose">
+        
+<div class="callout callout-note">
+  <div class="callout-title">📌 Executive Summary</div>
+  <p>The CAP Theorem (Brewer's Theorem) dictates that a distributed data store can simultaneously provide at most two out of three guarantees: Consistency, Availability, and Partition Tolerance. Because physical networks will inevitably partition, architects must choose between CP (Consistency over Availability) and AP (Availability over Consistency). Google Spanner represents a breakthrough NewSQL database: technically a <strong>CP system</strong> that achieves an unprecedented <strong>99.999% availability ("five nines")</strong>, effectively making it feel like a CA system to application developers through hardware-assisted <strong>TrueTime API</strong> atomic clocks and Paxos consensus.</p>
+</div>
+
+<h2 id="intro">1. Introduction</h2>
+<p>Modern distributed systems face an unrelenting challenge: how to scale globally across geographically dispersed datacenters while preserving strict transactional consistency and high availability. Understanding this trade-off requires analyzing the theoretical underpinnings of the CAP Theorem alongside practical implementations such as Google Spanner.</p>
+
+<h2 id="cap">2. CAP Theorem</h2>
+<h3 id="origins">2.1 Definition and Origins</h3>
+<p>Conjectured by Eric Brewer in 2000 and mathematically proven by Seth Gilbert and Nancy Lynch in 2002, the CAP theorem establishes that in any asynchronous network subject to communication failures, a distributed system cannot simultaneously guarantee all three properties:</p>
+<ul>
+  <li><strong>Consistency (Linearizability):</strong> Every read receives the most recent write or an error. All operations appear to execute atomically in a single global order.</li>
+  <li><strong>Availability:</strong> Every non-failing node must return a non-error response for every received request (though not guaranteed to be the most recent data).</li>
+  <li><strong>Partition Tolerance:</strong> The system continues to operate despite an arbitrary number of messages being dropped, delayed, or lost by the network between nodes.</li>
+</ul>
+
+<h3 id="tradeoffs">2.2 Trade-offs under Network Partition: CP vs AP</h3>
+<p>Since network partitions ($P$) are physical realities that cannot be avoided in distributed systems, the choice reduces to:</p>
+<div class="callout callout-warning">
+  <div class="callout-title">⚖️ The Fundamental Partition Choice</div>
+  <ul>
+    <li><strong>CP (Consistency over Availability):</strong> When a network partition occurs, the system refuses to serve stale or unverified writes/reads in the disconnected minority partition to protect data integrity. Nodes in the minority partition block or return errors until network connectivity resumes. Examples: Google Spanner, Apache HBase, MongoDB (with majority concern).</li>
+    <li><strong>AP (Availability over Consistency):</strong> When a network partition occurs, both sides of the partition accept reads and writes immediately. The system sacrifices strict serializability, relying on eventual consistency and conflict resolution (e.g., Last-Write-Wins or Vector Clocks). Examples: Amazon DynamoDB, Apache Cassandra, CouchDB.</li>
+  </ul>
+</div>
+
+<h3 id="no-partition">2.3 Implications When No Partition Exists</h3>
+<p>When the network is functioning normally without partitions, a distributed system can provide both strong consistency and high availability. Brewer emphasized that designers should not think of CAP as an absolute binary choice during steady-state operations, but rather as an emergency policy governing behavior <em>during</em> partitions.</p>
+
+<h2 id="spanner">3. Google Spanner</h2>
+<h3 id="overview">3.1 System Overview</h3>
+<p>Google Spanner is a globally-distributed, horizontally scalable NewSQL database supporting multi-datacenter ACID transactions, SQL querying, and non-blocking consistent reads across continents. Spanner powers mission-critical Google services including Google Ads, Google Play, and Google Cloud Spanner.</p>
+
+<div class="diagram-container">
+  <pre class="mermaid">
+sequenceDiagram
+  autonumber
+  actor Client as Client App
+  participant Leader as Paxos Leader (Zone A)
+  participant TrueTime as TrueTime API [earliest, latest]
+  participant Replica as Paxos Follower (Zone B)
+
+  Client->>Leader: Start Transaction (Write Data)
+  Leader->>Leader: Acquire Read/Write Locks (2PL)
+  Leader->>TrueTime: tt = TrueTime.now()
+  Note over Leader,TrueTime: Timestamp interval: [t_earliest, t_latest], width = 2ε
+  Leader->>Leader: Assign Commit Timestamp s = t_latest
+  Leader->>Replica: Paxos Log Replication
+  Replica-->>Leader: Paxos Acknowledgment
+  Leader->>TrueTime: Commit Wait: Wait until TrueTime.now().earliest > s
+  Note over Leader: Waiting out the clock uncertainty (2ε ~ 1-7ms)
+  Leader->>Client: Transaction Committed (Timestamp s)
+  Leader->>Leader: Release Locks & Serve Linearizable Reads
+  </pre>
+  <div class="diagram-caption">Figure 2: Google Spanner TrueTime Commit-Wait Protocol ensuring external consistency.</div>
+</div>
+
+<h3 id="truetime">3.2 TrueTime API and Global Timestamps</h3>
+<p>The core breakthrough of Google Spanner is the <strong>TrueTime API</strong>. In conventional distributed systems, physical clocks on different machines drift unpredictably via NTP (often by 100ms to several seconds), making timestamp ordering impossible without central sequencers.</p>
+<p>TrueTime exposes physical time not as a discrete number, but as an explicit bounded time range with guaranteed uncertainty $\epsilon$:</p>
+
+<div class="callout callout-tip">
+  <div class="callout-title">⏱️ TrueTime Bounded Interval</div>
+  <p>$$	ext{TrueTime.now()} = [t_{	ext{earliest}}, t_{	ext{latest}}]$$</p>
+  <p>Where absolute real time $t_{	ext{abs}}$ is mathematically guaranteed to fall within the interval:</p>
+  <p>$$t_{	ext{earliest}} \le t_{	ext{abs}} \le t_{	ext{latest}} \quad 	ext{and} \quad t_{	ext{latest}} - t_{	ext{earliest}} = 2\epsilon$$</p>
+</div>
+
+<p>Google datacenters maintain TrueTime master servers equipped with two distinct time sources with failover protection:</p>
+<ul>
+  <li><strong>GPS Receivers:</strong> High-precision satellite signals.</li>
+  <li><strong>Atomic Clocks (Rubidium Oscillators):</strong> Deployed in every datacenter rack to maintain nanosecond stability even if GPS antennas fail or experience spoofing/weather outages.</li>
+  <li>Under normal conditions, clock uncertainty $\epsilon$ is kept remarkably tight: between <strong>1 millisecond and 7 milliseconds</strong>.</li>
+</ul>
+
+<h3 id="commit-wait">3.3 The Commit-Wait Rule and External Consistency</h3>
+<p>Spanner guarantees <strong>External Consistency (Linearizability)</strong>: if a transaction $T_2$ begins after a transaction $T_1$ commits in real time, then $T_2$'s timestamp $s_2$ must be strictly greater than $T_1$'s timestamp $s_1$ ($s_2 > s_1$).</p>
+<p>Spanner enforces this through the elegant <strong>Commit-Wait Rule</strong>:</p>
+<ol>
+  <li>The Paxos leader picks a commit timestamp $s \ge t_{	ext{latest}}$ from TrueTime.</li>
+  <li>Before releasing locks and publishing the commit to clients, the leader waits until:
+  $$	ext{TrueTime.now()}.t_{	ext{earliest}} > s$$</li>
+  <li>By waiting out the clock uncertainty ($2\epsilon$, typically 2-7ms), the leader guarantees that absolute real time has passed timestamp $s$. Any future transaction initiated by any client anywhere in the world will receive a timestamp strictly greater than $s$!</li>
+</ol>
+
+<h3 id="concurrency">3.4 Concurrency Control & Replication</h3>
+<ul>
+  <li><strong>Read-Write Transactions:</strong> Use Two-Phase Locking (2PL) for serializability combined with Two-Phase Commit (2PC) coordinated across Paxos groups.</li>
+  <li><strong>Lock-Free Read-Only Transactions:</strong> Spanner executes read queries with zero locks by reading a snapshot of data at a past timestamp $t_{	ext{read}}$. Multi-Version Concurrency Control (MVCC) ensures queries never block incoming writes.</li>
+  <li><strong>Paxos Groups:</strong> Every Spanner database is split into directory splits replicated across multiple datacenters via Paxos groups for automatic leader election and failover.</li>
+</ul>
+
+<h2 id="brewer-philosophy">4. Is Spanner CA or CP? (Eric Brewer's Analysis)</h2>
+<p>In his landmark paper <em>"Spanner: Becoming a CP Database That Feels Like CA"</em>, Eric Brewer clarified Spanner's classification:</p>
+<ul>
+  <li><strong>Formal Theory:</strong> Spanner is unequivocally a <strong>CP system</strong>. If network partitions prevent a Paxos group from achieving a majority quorum, write operations halt to preserve consistency.</li>
+  <li><strong>Operational Reality:</strong> Google invests heavily in private redundant global fiber routes with automated optical switching. As a result, catastrophic network partitions occur with such extreme rarity that Spanner delivers <strong>99.999% availability ("five nines")</strong> in practice.</li>
+  <li>For software engineers, Spanner provides the simplicity of a CA system (always available with instant consistency) while preserving the formal safety guarantees of a CP system during emergencies.</li>
+</ul>
+
+<h2 id="summary">5. Architectural Comparison</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Dimension</th>
+      <th>Traditional RDBMS (MySQL)</th>
+      <th>NoSQL (Cassandra / DynamoDB)</th>
+      <th>Google Spanner</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>CAP Category</strong></td>
+      <td>CA (Single Node)</td>
+      <td>AP (Available / Partition-tolerant)</td>
+      <td>CP (with 99.999% Availability)</td>
+    </tr>
+    <tr>
+      <td><strong>Consistency</strong></td>
+      <td>Strict Serializability</td>
+      <td>Eventual Consistency</td>
+      <td>External Consistency (Linearizability)</td>
+    </tr>
+    <tr>
+      <td><strong>Transactions</strong></td>
+      <td>ACID (Local)</td>
+      <td>BASE (Row-level only)</td>
+      <td>Globally Distributed ACID</td>
+    </tr>
+    <tr>
+      <td><strong>Clock Model</strong></td>
+      <td>Local Clock / NTP</td>
+      <td>NTP (Wall clocks, Last-Write-Wins)</td>
+      <td>TrueTime (GPS + Atomic Clocks, bounded $\epsilon$)</td>
+    </tr>
+    <tr>
+      <td><strong>Consensus</strong></td>
+      <td>None (Master-Slave replication)</td>
+      <td>Gossip protocol / Dynamo quorum</td>
+      <td>Paxos Consensus Groups</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="conclusion">6. Conclusion</h2>
+<p>Google Spanner fundamentally shifted distributed system architecture by proving that strong external consistency and global horizontal scalability are not mutually exclusive. By bounding clock uncertainty using physical atomic oscillators and the TrueTime API, Spanner resolved distributed ordering without prohibitive coordination overhead, setting the standard for modern NewSQL distributed databases.</p>
+
+      </article>
+
+      <aside class="toc-sidebar">
+        <div class="toc-title">Table of Contents</div>
+        <ul class="toc-list">
+          
+<li><a href="#intro">1. Introduction</a></li>
+<li><a href="#cap">2. CAP Theorem</a></li>
+<li class="toc-sub"><a href="#origins">2.1 Definition & Origins</a></li>
+<li class="toc-sub"><a href="#tradeoffs">2.2 CP vs AP Trade-offs</a></li>
+<li class="toc-sub"><a href="#no-partition">2.3 Steady-State Without Partitions</a></li>
+<li><a href="#spanner">3. Google Spanner</a></li>
+<li class="toc-sub"><a href="#overview">3.1 System Overview</a></li>
+<li class="toc-sub"><a href="#truetime">3.2 TrueTime API & Atomic Clocks</a></li>
+<li class="toc-sub"><a href="#commit-wait">3.3 The Commit-Wait Rule</a></li>
+<li class="toc-sub"><a href="#concurrency">3.4 Concurrency & Paxos</a></li>
+<li><a href="#brewer-philosophy">4. Is Spanner CA or CP?</a></li>
+<li><a href="#summary">5. Architectural Comparison</a></li>
+<li><a href="#conclusion">6. Conclusion</a></li>
+
+        </ul>
+      </aside>
+    </div>
+
+    <div class="post-navigation">
+      
+        <a href="amazon-aurora-cloud-native-databases.html" class="nav-card">
+          <span class="nav-label">← Previous Note</span>
+          <span class="nav-card-title">Cloud-Native Databases and Amazon Aurora Architecture Technical Analysis</span>
+        </a>
+      
+        <a href="grab-data-layer-architecture.html" class="nav-card" style="text-align: right;">
+          <span class="nav-label">Next Note →</span>
+          <span class="nav-card-title">How Grab Configured Their Data Layer for Multi-Million Daily Transactions</span>
+        </a>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-brand">
+        <h4>System Design Notes</h4>
+        <p>Curated and published by Rishi Chowdhury. Deep-dive technical analyses and reference architectures for building high-scale distributed systems, fault-tolerant databases, and resilient microservices.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Quick Links</h5>
+        <ul>
+          <li><a href="../index.html">All Notes</a></li>
+          <li><a href="../index.html#cloud-databases">Cloud Databases</a></li>
+          <li><a href="../index.html#distributed-systems">Distributed Systems</a></li>
+          <li><a href="../index.html#streaming-kafka">Kafka & Streaming</a></li>
+          <li><a href="../index.html#microservices">Microservices</a></li>
+          <li><a href="../index.html#in-memory-redis">Redis Internals</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Resources</h5>
+        <ul>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank">GitHub Repository</a></li>
+          <li><a href="../System_Design_Notes.pdf" target="_blank">System Design Notes PDF</a></li>
+          <li><a href="../Amazon_Aurora_Cloud_Native_Databases.pdf" target="_blank">Amazon Aurora PDF</a></li>
+          <li><a href="../CAP_THEOREM_AND_GOOGLE_SPANNER.pdf" target="_blank">Google Spanner PDF</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <div>&copy; 2026 Rishi Chowdhury. System Design Knowledge Base.</div>
+      <div>Hosted with GitHub Pages</div>
+    </div>
+  </footer>
+
+  <button id="back-to-top" class="back-to-top" aria-label="Back to top">↑</button>
+
+  <script src="../assets/js/articles-data.js"></script>
+  <script src="../assets/js/main.js"></script>
+</body>
+</html>

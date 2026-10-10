@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>How Grab Configured Their Data Layer for Multi-Million Daily Transactions — System Design Notes</title>
+  <meta name="description" content="How Grab handles spiky food delivery traffic and millions of transactions per day: Redis Cache-Aside, Read-Write Splitting, Geographic Sharding, DynamoDB Partial Indexing optimization, and Kafka pipelines.">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.body);"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <ul class="nav-links">
+          <li><a href="../index.html">← All Notes</a></li>
+        </ul>
+        <button id="theme-toggle" class="btn-icon" aria-label="Toggle Theme">
+          <span class="theme-icon">☀️</span>
+        </button>
+        <a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="btn-icon" aria-label="GitHub Repository">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+          </svg>
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="article-page">
+    <div class="article-breadcrumbs">
+      <a href="../index.html">Home</a>
+      <span>/</span>
+      <a href="../index.html#case-studies">Case Studies</a>
+      <span>/</span>
+      <span>How Grab Configured Their Data Layer for Multi-Million Daily Transactions</span>
+    </div>
+
+    <header class="article-header">
+      <span class="article-header-badge">Real-World Architecture</span>
+      <h1 class="article-header-title">How Grab Configured Their Data Layer for Multi-Million Daily Transactions</h1>
+      <div class="article-header-meta">
+        <span>👤 Author: <strong>Rishi Chowdhury</strong></span>
+        <span>📅 Published: Feb 24, 2026</span>
+        <span>⏱️ 8 min read</span>
+        <span>📁 Category: Case Studies</span>
+      </div>
+      <div class="article-header-actions">
+        
+        <a href="../Grab_Configured_Data_Layer.pdf" class="btn-secondary" target="_blank" download>
+          <span>📄 View / Download Original PDF</span>
+        </a>
+        <a href="../index.html" class="btn-primary">
+          <span>← Back to Blog Index</span>
+        </a>
+      </div>
+    </header>
+
+    <div class="article-container">
+      <article class="prose">
+        
+<div class="callout callout-note">
+  <div class="callout-title">📌 Real-World Architecture Study</div>
+  <p>Grab processes tens of millions of food delivery, ride-hailing, and mart orders every day across Southeast Asia. Spiky lunch and dinner peak hours strain database tiers with extreme concurrency. This technical note breaks down Grab's multi-tiered data layer: splitting OLTP and OLAP workloads, caching with Redis, read-write database splitting, database sharding, and an ingenious <strong>DynamoDB Partial Indexing</strong> strategy that cuts index bloat by 90%+.</p>
+</div>
+
+<h2 id="intro">1. Introduction</h2>
+<p>Grab operates an everyday super-app handling millions of bookings and food delivery orders daily. The most critical and brittle component of any high-traffic transactional architecture is the persistence tier. Spikes during meal times and promotional campaigns can easily overwhelm databases unless traffic is carefully buffered and segmented.</p>
+
+<h2 id="query-types">2. Query Types: OLTP vs OLAP</h2>
+<p>To design an optimal persistence architecture, Grab segregates workloads into two distinct categories:</p>
+<ul>
+  <li><strong>Transactional Queries (OLTP):</strong> Real-time operations with low latency requirements (< 50ms). Examples: creating a new food order, driver location updates, order state transitions (Pending $	o$ Confirmed $	o$ Picked Up $	o$ Delivered).</li>
+  <li><strong>Analytical Queries (OLAP):</strong> Heavy aggregate read operations and reporting. Examples: merchant earnings calculations, fraud detection heuristics, supply-demand modeling, daily business metrics.</li>
+</ul>
+
+<div class="callout callout-warning">
+  <div class="callout-title">⚠️ Golden Rule</div>
+  <p>Never run OLAP queries directly against the primary OLTP transactional database. A single unindexed aggregate query or large table scan can lock tables, consume buffer cache memory, and cause cascading timeouts for end-user order creation.</p>
+</div>
+
+<h2 id="goals">3. Core Design Goals</h2>
+<ol>
+  <li><strong>High Availability:</strong> 99.99% uptime for core transactional flows.</li>
+  <li><strong>Sub-Second Latency:</strong> P99 order placement latency under 200ms.</li>
+  <li><strong>Horizontal Scalability:</strong> Ability to absorb 5x surges during monsoon rainstorms or festival holidays.</li>
+  <li><strong>Strict Isolation:</strong> Preventing analytical reporting from impacting checkout workflows.</li>
+</ol>
+
+<div class="diagram-container">
+  <pre class="mermaid">
+flowchart TD
+  Client["Grab Mobile App / API Clients"] --> GW["API Gateway & Rate Limiter"]
+  GW --> Svc["Order & Checkout Microservices"]
+
+  subgraph CachingLayer["In-Memory Acceleration"]
+    Svc -->|"1. Cache-Aside Check"| Redis["Redis Cluster (Active Orders)"]
+  end
+
+  subgraph TransactionalTier["OLTP Core Tier"]
+    Svc -->|"2. Write Primary"| MasterDB["MySQL / Aurora Primary (Writes)"]
+    MasterDB -.->|"Replication"| ReadReplica["Read Replicas (Read Queries)"]
+  end
+
+  subgraph HistoryTier["High-Throughput Storage"]
+    Svc -->|"Completed Orders"| DynamoDB["AWS DynamoDB (Partitioned by User/City)"]
+    DynamoDB --- SparseIndex["Sparse Secondary Index (Ongoing Orders Only)"]
+  end
+
+  subgraph AsyncPipelines["Event Streaming & CDC"]
+    MasterDB -->|"Debezium CDC"| Kafka["Apache Kafka Cluster"]
+    Kafka -->|"Consumer Groups"| Lake["S3 Data Lake / Snowflake OLAP"]
+  end
+  </pre>
+  <div class="diagram-caption">Figure 3: Grab multi-tier data layer architecture with CDC and storage separation.</div>
+</div>
+
+<h2 id="choices">4. Database Choices & Tiering Strategies</h2>
+<h3 id="cache-aside">4.1 Redis Caching with Cache-Aside Pattern</h3>
+<p>Frequent read queries (e.g., driver coordinates, active restaurant menus, live order status) are intercepted by a Redis cluster using the <strong>Cache-Aside (Lazy Loading)</strong> pattern:</p>
+<ol>
+  <li>Application checks Redis cache for the active order key.</li>
+  <li>If cache hit: return data immediately with ~2ms latency.</li>
+  <li>If cache miss: read from read replica, populate Redis with TTL, and return.</li>
+</ol>
+
+<h3 id="read-write-split">4.2 Read-Write Splitting</h3>
+<p>Grab employs connection proxies (ProxySQL / AWS RDS Proxy) to automatically route writes (<code>INSERT</code>, <code>UPDATE</code>, <code>DELETE</code>) to the primary database while fanning out read queries (<code>SELECT</code>) across multiple read replicas.</p>
+
+<h3 id="partial-indexing">4.3 Key Optimization: Partial Indexing in DynamoDB</h3>
+<p>One of Grab's most significant optimizations involves managing order status histories in DynamoDB. A typical Grab user might have 1,000 completed orders over 3 years, but at any given minute, only <strong>1 or 2 ongoing active orders</strong>.</p>
+<p>Querying <em>"Show me active orders for user X"</em> against a massive order table requires either scanning all historical orders or maintaining a secondary index on all orders, leading to massive storage costs and slow indexing.</p>
+
+<div class="callout callout-tip">
+  <div class="callout-title">💡 DynamoDB Sparse / Partial Indexing</div>
+  <p>In DynamoDB, Global Secondary Indexes (GSIs) only populate items that <strong>contain the index key attribute</strong>. Grab exploits this by:</p>
+  <ul>
+    <li>Adding an attribute <code>is_ongoing = 1</code> <em>only</em> while the order is in progress.</li>
+    <li>When the order is delivered or cancelled, a Lambda / background worker <strong>removes the attribute</strong>.</li>
+    <li>Result: The secondary index contains only active orders (e.g. 10,000 active orders across the entire city instead of 500,000,000 historic orders)!</li>
+    <li>Read latency drops to single-digit milliseconds and GSI storage cost drops by over 95%.</li>
+  </ul>
+</div>
+
+<h2 id="pipeline">5. Data Synchronization & Architecture Pipeline</h2>
+<p>To keep analytical and downstream microservices synchronized with the primary OLTP store without performance degradation, Grab utilizes Change Data Capture (CDC):</p>
+<ol>
+  <li>Transactions write to the MySQL/Aurora primary database.</li>
+  <li>Debezium captures the database binary log (binlog) and streams change events into <strong>Apache Kafka</strong>.</li>
+  <li>Downstream streaming consumers ingest Kafka topics into an Amazon S3 data lake, ClickHouse, or Snowflake for analytical reporting, merchant payout processing, and real-time dashboard analytics.</li>
+</ol>
+
+<h2 id="takeaways">6. Key Takeaways</h2>
+<ul>
+  <li><strong>Segregate ruthlessly:</strong> Keep transactional paths lean and offload analytics to asynchronous streams.</li>
+  <li><strong>Optimize indexing:</strong> Use sparse indexing techniques to index only volatile, highly queried state.</li>
+  <li><strong>Rely on CDC:</strong> Stream database mutations asynchronously via Kafka to prevent cross-service database coupling.</li>
+</ul>
+
+      </article>
+
+      <aside class="toc-sidebar">
+        <div class="toc-title">Table of Contents</div>
+        <ul class="toc-list">
+          
+<li><a href="#intro">1. Introduction</a></li>
+<li><a href="#query-types">2. Query Types: OLTP vs OLAP</a></li>
+<li><a href="#goals">3. Core Design Goals</a></li>
+<li><a href="#choices">4. Database Tiering Strategies</a></li>
+<li class="toc-sub"><a href="#cache-aside">4.1 Redis Cache-Aside</a></li>
+<li class="toc-sub"><a href="#read-write-split">4.2 Read-Write Splitting</a></li>
+<li class="toc-sub"><a href="#partial-indexing">4.3 DynamoDB Sparse Indexing</a></li>
+<li><a href="#pipeline">5. Data Synchronization Pipeline</a></li>
+<li><a href="#takeaways">6. Key Takeaways</a></li>
+
+        </ul>
+      </aside>
+    </div>
+
+    <div class="post-navigation">
+      
+        <a href="cap-theorem-and-google-spanner.html" class="nav-card">
+          <span class="nav-label">← Previous Note</span>
+          <span class="nav-card-title">CAP Theorem and Google Spanner — The Globally-Distributed Database</span>
+        </a>
+      
+        <a href="kafka-architecture-part1.html" class="nav-card" style="text-align: right;">
+          <span class="nav-label">Next Note →</span>
+          <span class="nav-card-title">Apache Kafka Architecture Part 1 — Event-Driven Architecture &amp; Storage Fundamentals</span>
+        </a>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-brand">
+        <h4>System Design Notes</h4>
+        <p>Curated and published by Rishi Chowdhury. Deep-dive technical analyses and reference architectures for building high-scale distributed systems, fault-tolerant databases, and resilient microservices.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Quick Links</h5>
+        <ul>
+          <li><a href="../index.html">All Notes</a></li>
+          <li><a href="../index.html#cloud-databases">Cloud Databases</a></li>
+          <li><a href="../index.html#distributed-systems">Distributed Systems</a></li>
+          <li><a href="../index.html#streaming-kafka">Kafka & Streaming</a></li>
+          <li><a href="../index.html#microservices">Microservices</a></li>
+          <li><a href="../index.html#in-memory-redis">Redis Internals</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Resources</h5>
+        <ul>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank">GitHub Repository</a></li>
+          <li><a href="../System_Design_Notes.pdf" target="_blank">System Design Notes PDF</a></li>
+          <li><a href="../Amazon_Aurora_Cloud_Native_Databases.pdf" target="_blank">Amazon Aurora PDF</a></li>
+          <li><a href="../CAP_THEOREM_AND_GOOGLE_SPANNER.pdf" target="_blank">Google Spanner PDF</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <div>&copy; 2026 Rishi Chowdhury. System Design Knowledge Base.</div>
+      <div>Hosted with GitHub Pages</div>
+    </div>
+  </footer>
+
+  <button id="back-to-top" class="back-to-top" aria-label="Back to top">↑</button>
+
+  <script src="../assets/js/articles-data.js"></script>
+  <script src="../assets/js/main.js"></script>
+</body>
+</html>

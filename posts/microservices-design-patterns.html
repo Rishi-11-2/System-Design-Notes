@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Microservices Design Patterns — Strangler Fig, SAGA, CQRS &amp; Transactional Outbox — System Design Notes</title>
+  <meta name="description" content="Essential architectural patterns for distributed microservices: monolith migration via the Strangler Fig pattern, database-per-service isolation, distributed transactions via SAGA, CQRS separation, and solving dual-writes with the Transactional Outbox pattern &amp; CDC.">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.body);"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <ul class="nav-links">
+          <li><a href="../index.html">← All Notes</a></li>
+        </ul>
+        <button id="theme-toggle" class="btn-icon" aria-label="Toggle Theme">
+          <span class="theme-icon">☀️</span>
+        </button>
+        <a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="btn-icon" aria-label="GitHub Repository">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+          </svg>
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="article-page">
+    <div class="article-breadcrumbs">
+      <a href="../index.html">Home</a>
+      <span>/</span>
+      <a href="../index.html#microservices">Microservices</a>
+      <span>/</span>
+      <span>Microservices Design Patterns — Strangler Fig, SAGA, CQRS &amp; Transactional Outbox</span>
+    </div>
+
+    <header class="article-header">
+      <span class="article-header-badge">Architecture</span>
+      <h1 class="article-header-title">Microservices Design Patterns — Strangler Fig, SAGA, CQRS &amp; Transactional Outbox</h1>
+      <div class="article-header-meta">
+        <span>👤 Author: <strong>Rishi Chowdhury</strong></span>
+        <span>📅 Published: Jan 9, 2026</span>
+        <span>⏱️ 14 min read</span>
+        <span>📁 Category: Microservices</span>
+      </div>
+      <div class="article-header-actions">
+        
+        <a href="../Microservices_Architecture_Notes.pdf" class="btn-secondary" target="_blank" download>
+          <span>📄 View / Download Original PDF</span>
+        </a>
+        <a href="../index.html" class="btn-primary">
+          <span>← Back to Blog Index</span>
+        </a>
+      </div>
+    </header>
+
+    <div class="article-container">
+      <article class="prose">
+        
+<div class="callout callout-note">
+  <div class="callout-title">📌 Microservices Architectural Blueprint</div>
+  <p>Deconstructing monoliths and orchestrating distributed microservices introduces complex failure modes. This detailed technical guide synthesizes battle-tested microservice design patterns: Monolith migration via the <strong>Strangler Fig Pattern</strong>, Database-per-Service isolation, distributed transactions via the <strong>SAGA Pattern</strong>, read/write segregation with <strong>CQRS</strong>, and solving the distributed dual-write crisis using the <strong>Transactional Outbox Pattern & Change Data Capture (CDC)</strong>.</p>
+</div>
+
+<h2 id="strangler">1. The Strangler Fig Pattern</h2>
+<h3 id="strangler-context">1.1 Context & Anti-Pattern</h3>
+<p>Attempting a "Big Bang" rewrite of a mission-critical legacy monolith is notoriously risky. Rewrites take years, during which business requirements shift, features drift, and the eventual cutover frequently results in massive downtime.</p>
+<p>The <strong>Strangler Fig Pattern</strong> (inspired by vines that slowly envelop and replace a host tree) provides a safe, incremental migration methodology by gradually replacing monolithic features with microservices until the monolith disappears.</p>
+
+<div class="diagram-container">
+  <pre class="mermaid">
+flowchart LR
+  Client["Client Request"] --> Gateway["API Gateway / Reverse Proxy"]
+  
+  subgraph PhaseMigration["Strangler Migration Traffic Routing"]
+    Gateway -->|"New Feature Routes / Migrated (Canary 10% -> 100%)"| NewService["New Order Microservice"]
+    Gateway -->|"Legacy Endpoints"| Monolith["Legacy Monolithic Application"]
+    NewService -.->|"Sync via Events"| Monolith
+  end
+  </pre>
+  <div class="diagram-caption">Figure 6: Strangler Fig Pattern routing traffic incrementally between monolith and new services.</div>
+</div>
+
+<h3 id="strangler-steps">1.2 Step-by-Step Execution</h3>
+<ol>
+  <li><strong>Insert an API Gateway / Reverse Proxy:</strong> Place an API gateway (e.g. Kong, Envoy, NGINX) in front of the existing monolith. All client traffic passes through the gateway.</li>
+  <li><strong>Carve Out a Domain Boundary:</strong> Identify a distinct, self-contained business domain (e.g., <code>Order Service</code>) and build it as an independent microservice.</li>
+  <li><strong>Route Traffic Incrementally:</strong> Configure the gateway to route a small canary fraction of traffic (10%) to the new microservice. Monitor error rates and latency.</li>
+  <li><strong>Ramp Up and Deprecate:</strong> Gradually increase traffic to 50%, then 100%. Once stable, decommission the corresponding legacy code inside the monolith.</li>
+  <li><strong>Repeat:</strong> Iterate domain by domain until the entire monolithic codebase is retired.</li>
+</ol>
+
+<h2 id="db-per-service">2. Data Management: Shared DB vs. Database-per-Service</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Approach</th>
+      <th>Description</th>
+      <th>Trade-offs & Verdict</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Shared Database (Anti-Pattern)</strong></td>
+      <td>Multiple distinct microservices connect directly to a single central database instance and share tables.</td>
+      <td><strong>Dangerous:</strong> Creates hidden tight coupling. A schema modification in Service A breaks Service B without warning. Contention on database connections and lock escalation.</td>
+    </tr>
+    <tr>
+      <td><strong>Database-per-Service (Best Practice)</strong></td>
+      <td>Each microservice owns and encapsulates its own private data store. No outside service can query or touch the tables directly; all access is via public service APIs or domain events.</td>
+      <td><strong>Recommended:</strong> Complete domain autonomy, independent scaling, choice of polyglot databases (e.g. Postgres for billing, Mongo for catalogs, Redis for sessions). Challenge: Distributed transactions require SAGAs.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="saga">3. The SAGA Pattern for Distributed Transactions</h2>
+<h3 id="saga-concept">3.1 The Failure of 2-Phase Commit</h3>
+<p>Traditional ACID transactions rely on 2-Phase Commit (2PC) to coordinate transactions across multiple databases. However, 2PC is synchronous, blocking, and vulnerable to coordinator crashes, severely reducing scalability and availability in cloud microservices.</p>
+<p>A <strong>SAGA</strong> is a sequence of local transactions where each local transaction updates the database inside a single service and publishes a message/event. If a subsequent step in the sequence fails, the SAGA coordinates a series of <strong>Compensating Transactions</strong> that roll back previous modifications in reverse order.</p>
+
+<div class="diagram-container">
+  <pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant Orchestrator as Order Saga Orchestrator
+  participant OrderSvc as Order Service
+  participant PaymentSvc as Payment Service
+  participant InventorySvc as Inventory Service
+
+  Orchestrator->>OrderSvc: 1. Create Order (Pending)
+  OrderSvc-->>Orchestrator: Order Created OK
+  Orchestrator->>PaymentSvc: 2. Process Credit Card Payment
+  PaymentSvc-->>Orchestrator: Payment Authorized OK
+  Orchestrator->>InventorySvc: 3. Reserve Product Inventory
+  InventorySvc-->>Orchestrator: ERROR: Out of Stock!
+  Note over Orchestrator,InventorySvc: SAGA Failure Triggered -> Begin Compensating Transactions
+  Orchestrator->>PaymentSvc: 4. Refund / Void Payment (Compensating Tx)
+  PaymentSvc-->>Orchestrator: Payment Refunded OK
+  Orchestrator->>OrderSvc: 5. Mark Order CANCELLED (Compensating Tx)
+  OrderSvc-->>Orchestrator: Order Cancelled OK
+  </pre>
+  <div class="diagram-caption">Figure 7: Orchestration-based SAGA executing compensating rollback transactions.</div>
+</div>
+
+<h3 id="saga-types">3.2 Choreography vs Orchestration</h3>
+<ul>
+  <li><strong>Choreography (Event-Driven):</strong> Services listen to domain events and execute local transactions independently without a central coordinator. Best for simple workflows (2-3 services). Becomes hard to trace and debug at scale due to cyclic dependencies.</li>
+  <li><strong>Orchestration (Central Coordinator):</strong> A dedicated orchestrator state machine coordinates the flow, tells participants which actions to take, and manages compensation upon failure. Recommended for complex multi-step enterprise workflows.</li>
+</ul>
+
+<h2 id="cqrs">4. CQRS (Command Query Responsibility Segregation)</h2>
+<p>In standard architectures, the same relational data model is used for both writes (commands) and reads (queries). As scale grows, complex joins and aggregates choke transactional tables.</p>
+<p><strong>CQRS</strong> strictly bifurcates the application model into two distinct paths:</p>
+<ul>
+  <li><strong>Command Side:</strong> Handles state modifications (<code>CreateOrder</code>, <code>CancelItem</code>). Optimized for validation, business logic, write throughput, and consistency.</li>
+  <li><strong>Query Side:</strong> Handles read requests (<code>GetCustomerDashboard</code>). Uses denormalized, read-optimized <strong>Materialized Views</strong> (often stored in Elasticsearch or Redis) updated asynchronously via domain events.</li>
+</ul>
+
+<h2 id="outbox">5. The Transactional Outbox Pattern & CDC</h2>
+<h3 id="dual-write">5.1 The Distributed Dual-Write Problem</h3>
+<p>A classic bug in microservices occurs when a service must perform two actions atomically: update its local database AND publish an event to Kafka:</p>
+
+<div class="code-wrapper">
+  <div class="code-header"><span>Java Antipattern: Dual-Write Bug</span></div>
+  <pre><code>// ANTI-PATTERN: Prone to silent data corruption
+@Transactional
+public void completeOrder(Order order) {
+    orderRepository.save(order);        // Step 1: Saves to DB
+    kafkaTemplate.send("orders", order); // Step 2: Can crash or fail network!
+}</code></pre>
+</div>
+
+<p>If the application crashes or network times out after saving to the DB but before publishing to Kafka, Kafka never receives the event. If you reverse the order, the event publishes but the DB transaction could roll back. Distributed systems cannot guarantee atomic operations across two independent network resources without distributed transactions.</p>
+
+<h3 id="outbox-solution">5.2 The Solution: Outbox Table + Change Data Capture</h3>
+<div class="diagram-container">
+  <pre class="mermaid">
+flowchart LR
+  subgraph MicroserviceApp["Order Microservice"]
+    Logic["Order Service Logic"]
+    subgraph LocalDB["Local Relational DB (ACID Transaction)"]
+      OrderTable["'orders' Table"]
+      OutboxTable["'outbox' Table<br/>(id, event_type, payload)"]
+    end
+    Logic -->|"Single Atomic DB Transaction"| OrderTable
+    Logic -->|"Single Atomic DB Transaction"| OutboxTable
+  end
+
+  subgraph CDCTier["Change Data Capture (Debezium)"]
+    Debezium["Debezium Connector<br/>(Tails DB Binlog)"]
+    Debezium --- OutboxTable
+  end
+
+  subgraph BrokerTier["Message Broker"]
+    Debezium -->|"Guaranteed Publish"| Kafka["Kafka Topic: 'orders'"]
+  end
+  </pre>
+  <div class="diagram-caption">Figure 8: Transactional Outbox Pattern with Change Data Capture (CDC / Debezium).</div>
+</div>
+
+<ol>
+  <li>Along with the primary business table, create an <strong><code>outbox</code></strong> table in the same database.</li>
+  <li>When a business action occurs, write the domain state to <code>orders</code> AND insert the event payload into <code>outbox</code> inside the <strong>same single local ACID database transaction</strong>!</li>
+  <li>A Change Data Capture tool (such as <strong>Debezium</strong> or a lightweight transaction log tailer) asynchronously monitors the database binary log (WAL / binlog), extracts records inserted into the outbox table, and reliably publishes them to <strong>Apache Kafka</strong>.</li>
+  <li>This guarantees <strong>At-Least-Once event delivery</strong> without distributed locking or data loss!</li>
+</ol>
+
+      </article>
+
+      <aside class="toc-sidebar">
+        <div class="toc-title">Table of Contents</div>
+        <ul class="toc-list">
+          
+<li><a href="#strangler">1. The Strangler Fig Pattern</a></li>
+<li class="toc-sub"><a href="#strangler-context">1.1 Context & Anti-Pattern</a></li>
+<li class="toc-sub"><a href="#strangler-steps">1.2 Step-by-Step Execution</a></li>
+<li><a href="#db-per-service">2. Data Management: Shared DB vs Isolated</a></li>
+<li><a href="#saga">3. The SAGA Pattern</a></li>
+<li class="toc-sub"><a href="#saga-concept">3.1 Replacing 2-Phase Commit</a></li>
+<li class="toc-sub"><a href="#saga-types">3.2 Choreography vs Orchestration</a></li>
+<li><a href="#cqrs">4. CQRS Architecture</a></li>
+<li><a href="#outbox">5. Transactional Outbox Pattern & CDC</a></li>
+<li class="toc-sub"><a href="#dual-write">5.1 The Dual-Write Problem</a></li>
+<li class="toc-sub"><a href="#outbox-solution">5.2 Outbox & Debezium Solution</a></li>
+
+        </ul>
+      </aside>
+    </div>
+
+    <div class="post-navigation">
+      
+        <a href="kafka-architecture-part2.html" class="nav-card">
+          <span class="nav-label">← Previous Note</span>
+          <span class="nav-card-title">Apache Kafka Architecture Part 2 — Consumer Groups, Rebalancing &amp; High Availability</span>
+        </a>
+      
+        <a href="redis-internals-and-architecture.html" class="nav-card" style="text-align: right;">
+          <span class="nav-label">Next Note →</span>
+          <span class="nav-card-title">Redis Deep Dive — Single-Threaded Event Loop &amp; Data Structures</span>
+        </a>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-brand">
+        <h4>System Design Notes</h4>
+        <p>Curated and published by Rishi Chowdhury. Deep-dive technical analyses and reference architectures for building high-scale distributed systems, fault-tolerant databases, and resilient microservices.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Quick Links</h5>
+        <ul>
+          <li><a href="../index.html">All Notes</a></li>
+          <li><a href="../index.html#cloud-databases">Cloud Databases</a></li>
+          <li><a href="../index.html#distributed-systems">Distributed Systems</a></li>
+          <li><a href="../index.html#streaming-kafka">Kafka & Streaming</a></li>
+          <li><a href="../index.html#microservices">Microservices</a></li>
+          <li><a href="../index.html#in-memory-redis">Redis Internals</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Resources</h5>
+        <ul>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank">GitHub Repository</a></li>
+          <li><a href="../System_Design_Notes.pdf" target="_blank">System Design Notes PDF</a></li>
+          <li><a href="../Amazon_Aurora_Cloud_Native_Databases.pdf" target="_blank">Amazon Aurora PDF</a></li>
+          <li><a href="../CAP_THEOREM_AND_GOOGLE_SPANNER.pdf" target="_blank">Google Spanner PDF</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <div>&copy; 2026 Rishi Chowdhury. System Design Knowledge Base.</div>
+      <div>Hosted with GitHub Pages</div>
+    </div>
+  </footer>
+
+  <button id="back-to-top" class="back-to-top" aria-label="Back to top">↑</button>
+
+  <script src="../assets/js/articles-data.js"></script>
+  <script src="../assets/js/main.js"></script>
+</body>
+</html>

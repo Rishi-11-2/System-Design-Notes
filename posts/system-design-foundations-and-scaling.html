@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>System Design Foundations — Core Principles, DB Scaling &amp; Resiliency Patterns — System Design Notes</title>
+  <meta name="description" content="Comprehensive notes on core system design principles: structured interview framework, Relational vs NoSQL databases, Database Scaling (Master-Slave replication, Sharding, Federation), Caching patterns, L4/L7 Load Balancing, Circuit Breakers, and Consistent Hashing.">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.body);"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <ul class="nav-links">
+          <li><a href="../index.html">← All Notes</a></li>
+        </ul>
+        <button id="theme-toggle" class="btn-icon" aria-label="Toggle Theme">
+          <span class="theme-icon">☀️</span>
+        </button>
+        <a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="btn-icon" aria-label="GitHub Repository">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+          </svg>
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="article-page">
+    <div class="article-breadcrumbs">
+      <a href="../index.html">Home</a>
+      <span>/</span>
+      <a href="../index.html#foundations-scaling">Foundations &amp; Scaling</a>
+      <span>/</span>
+      <span>System Design Foundations — Core Principles, DB Scaling &amp; Resiliency Patterns</span>
+    </div>
+
+    <header class="article-header">
+      <span class="article-header-badge">Complete Notes</span>
+      <h1 class="article-header-title">System Design Foundations — Core Principles, DB Scaling &amp; Resiliency Patterns</h1>
+      <div class="article-header-meta">
+        <span>👤 Author: <strong>Rishi Chowdhury</strong></span>
+        <span>📅 Published: Apr 12, 2026</span>
+        <span>⏱️ 24 min read</span>
+        <span>📁 Category: Foundations &amp; Scaling</span>
+      </div>
+      <div class="article-header-actions">
+        
+        <a href="../System_Design_Notes.pdf" class="btn-secondary" target="_blank" download>
+          <span>📄 View / Download Original PDF (184 Pages)</span>
+        </a>
+        <a href="../index.html" class="btn-primary">
+          <span>← Back to Blog Index</span>
+        </a>
+      </div>
+    </header>
+
+    <div class="article-container">
+      <article class="prose">
+        
+<div class="callout callout-note">
+  <div class="callout-title">📌 System Design Core Foundations</div>
+  <p>Extracted from 180+ pages of comprehensive engineering notes, this foundational guide breaks down the core building blocks required to architect resilient, web-scale platforms. We cover the systematic framework for tackling system design challenges, Relational vs NoSQL trade-offs, Database Scaling strategies (Replication, Sharding, Federation), Caching architectures, Layer 4/7 Load Balancing, Circuit Breakers, and Consistent Hashing.</p>
+</div>
+
+<h2 id="what-is">1. What is System Design?</h2>
+<p>System Design is the art and science of defining the architecture, modules, interfaces, and data flow for a system to satisfy specified operational requirements. Rather than simply writing code, system design decides:</p>
+<ul>
+  <li>How components interact with one another across the network.</li>
+  <li>How the system behaves under 100x traffic spikes or partial infrastructure failure.</li>
+  <li>The intentional trade-offs between latency, consistency, availability, and engineering complexity.</li>
+</ul>
+
+<h2 id="framework">2. How to Approach System Design Problems</h2>
+<p>When approaching any system design problem (in production or during high-stakes technical interviews), follow this structured 5-step framework:</p>
+<ol>
+  <li><strong>Understand the Scope & Requirements:</strong>
+    <ul>
+      <li><em>Functional Requirements:</em> What does the user actually do? (e.g. Post a tweet, search by hashtag, view timeline).</li>
+      <li><em>Non-Functional Requirements:</em> Scale (DAU/MAU), Latency SLA (P99 < 100ms), High Availability (99.99%), Consistency model (Strong vs Eventual).</li>
+    </ul>
+  </li>
+  <li><strong>Back-of-the-Envelope Capacity Estimations:</strong> Calculate QPS (Queries per Second), Storage volume per year, Network Bandwidth, and RAM cache size (Pareto 80/20 rule).</li>
+  <li><strong>High-Level Architecture:</strong> Draw the core components (Clients, API Gateway, Services, Primary DB, Cache, Message Queues).</li>
+  <li><strong>Deep Dive into Core Bottlenecks:</strong> Sharding strategies, data schemas, concurrency race conditions, failure recovery.</li>
+  <li><strong>Resiliency & Edge Cases:</strong> Single points of failure, rate limiting, circuit breaking, backup and failover.</li>
+</ol>
+
+<h2 id="rdbms-nosql">3. Relational Databases vs NoSQL: Picking the Right Store</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Database Category</th>
+      <th>Primary Characteristics</th>
+      <th>Best Use Cases</th>
+      <th>Popular Examples</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Relational (RDBMS)</strong></td>
+      <td>Structured tabular schema, ACID guarantees, SQL joins, foreign key integrity.</td>
+      <td>Financial transactions, user billing, checkout, core order management.</td>
+      <td>PostgreSQL, MySQL, CockroachDB</td>
+    </tr>
+    <tr>
+      <td><strong>Document Store</strong></td>
+      <td>Semi-structured JSON/BSON documents, schema flexibility, nested hierarchies.</td>
+      <td>User profiles, product catalogs, content management.</td>
+      <td>MongoDB, Amazon DocumentDB</td>
+    </tr>
+    <tr>
+      <td><strong>Key-Value Store</strong></td>
+      <td>Extremely fast $O(1)$ reads/writes by key; simple API (GET, PUT, DEL).</td>
+      <td>Session storage, caching, user shopping carts.</td>
+      <td>Redis, Memcached, DynamoDB</td>
+    </tr>
+    <tr>
+      <td><strong>Wide-Column</strong></td>
+      <td>Column families, high write throughput, distributed across thousands of nodes.</td>
+      <td>Time-series metrics, IoT telemetry, high-volume event logs.</td>
+      <td>Apache Cassandra, ScyllaDB, HBase</td>
+    </tr>
+    <tr>
+      <td><strong>Graph Database</strong></td>
+      <td>Nodes and relationships (edges) as first-class citizens, fast graph traversals.</td>
+      <td>Social network follower graphs, recommendation engines, fraud rings.</td>
+      <td>Neo4j, Amazon Neptune</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="db-scaling">4. Database Scaling Techniques</h2>
+<h3 id="vertical">4.1 Vertical Scaling (Scale-Up)</h3>
+<p>Upgrading CPU, RAM, and NVMe SSDs on a single machine. Simple (zero architectural changes), but has a hard physical ceiling and exponential hardware cost.</p>
+
+<h3 id="replication">4.2 Master-Slave Replication (Read Scaling)</h3>
+<p>Writes go to a single Primary (Master) database, which asynchronously or semi-synchronously streams replication logs to multiple Read Replicas (Slaves). Slaves serve read traffic. Enables 10x read scaling, but introduces <strong>Replication Lag</strong> (users may read stale data immediately after writing).</p>
+
+<h3 id="sharding">4.3 Sharding / Horizontal Partitioning</h3>
+<p>When dataset size exceeds a single disk or write QPS overwhelms one node, data is divided across multiple independent database instances (shards):</p>
+
+<div class="diagram-container">
+  <pre class="mermaid">
+flowchart TD
+  Client["Application Query: User #7482"] --> Router["Sharding Router / Proxy"]
+  
+  subgraph Shards["Database Shard Cluster"]
+    Shard1["Shard 1 (Users 1 - 2,500,000)"]
+    Shard2["Shard 2 (Users 2,500,001 - 5,000,000)"]
+    Shard3["Shard 3 (Users 5,000,001 - 7,500,000)"]
+    Shard4["Shard 4 (Users 7,500,001 - 10,000,000)"]
+  end
+
+  Router -->|"Shard Key: User ID #7482 -> Shard 1"| Shard1
+  </pre>
+  <div class="diagram-caption">Figure 10: Range / Hash-based database sharding architecture.</div>
+</div>
+
+<ul>
+  <li><strong>Range-Based Sharding:</strong> Partitioning by key ranges (e.g. User IDs 1-100K on Shard 1). Can lead to hotspotting if new sequential IDs overwhelm the latest shard.</li>
+  <li><strong>Hash-Based Sharding:</strong> Applying a hash function ($	ext{hash}(	ext{key}) \pmod N$) to distribute data uniformly across $N$ shards.</li>
+  <li><strong>Sharding Challenges:</strong> Cross-shard joins are virtually impossible; distributed transactions across shards require SAGAs; repartitioning when adding shards is complex.</li>
+</ul>
+
+<h2 id="caching">5. Caching Strategies & Eviction Policies</h2>
+<p>Caching intercepts requests before they hit the database, storing hot items in RAM:</p>
+<ul>
+  <li><strong>Cache-Aside (Lazy Loading):</strong> App reads cache. On miss, app queries DB, stores in cache, and returns. Cache only holds what is requested.</li>
+  <li><strong>Write-Through:</strong> App writes data to cache, and cache synchronously writes to DB before acknowledging. Strong consistency, higher write latency.</li>
+  <li><strong>Write-Behind (Write-Back):</strong> App writes to cache immediately; cache asynchronously writes batches to the DB in the background. High write speed, risk of data loss if cache crashes before sync.</li>
+  <li><strong>Refresh-Ahead:</strong> Cache automatically re-fetches items from DB before expiration based on predicted access patterns.</li>
+</ul>
+
+<h2 id="load-balancers">6. Load Balancers & Proxies</h2>
+<p>Load Balancers distribute incoming traffic across application server pools to ensure high availability and responsiveness:</p>
+<ul>
+  <li><strong>Layer 4 Load Balancing (Transport Layer):</strong> Operates at TCP/UDP level without inspecting HTTP headers or cookies. Extremely high packet throughput (millions of packets/sec). Examples: AWS NLB, IPVS.</li>
+  <li><strong>Layer 7 Load Balancing (Application Layer):</strong> Inspects HTTP request content (URL path, headers, cookies). Enables path-based routing (e.g. <code>/api/orders</code> $	o$ Order Service, <code>/images</code> $	o$ CDN), TLS termination, and sticky sessions. Examples: NGINX, HAProxy, AWS ALB.</li>
+  <li><strong>Algorithms:</strong> Round Robin, Weighted Round Robin, Least Connections, IP Hash.</li>
+</ul>
+
+<h2 id="circuit-breaker">7. Circuit Breakers & Cascading Failure Prevention</h2>
+<p>In distributed microservices, if Service C slows down, Service B's worker threads block waiting for responses. Soon, Service B exhausts its thread pool and crashes, causing Service A to crash. This catastrophic domino effect is called a <strong>Cascading Failure</strong>.</p>
+<p>The <strong>Circuit Breaker Pattern</strong> monitors outbound calls:</p>
+
+<div class="diagram-container">
+  <pre class="mermaid">
+stateDiagram-v2
+  [*] --> Closed
+  Closed --> Open: Failure threshold exceeded (e.g. > 50% errors)
+  Open --> HalfOpen: Cooldown timeout expired (e.g. after 30s)
+  HalfOpen --> Closed: Trial requests succeed
+  HalfOpen --> Open: Trial request fails
+  </pre>
+  <div class="diagram-caption">Figure 11: Circuit Breaker state machine (Closed, Open, Half-Open).</div>
+</div>
+
+<ul>
+  <li><strong>Closed:</strong> Normal operation. All requests pass through.</li>
+  <li><strong>Open:</strong> When error/timeout threshold is reached, the circuit trips OPEN. Requests fail immediately with a local fallback without touching the degraded dependency!</li>
+  <li><strong>Half-Open:</strong> After a cooldown window (e.g. 30 seconds), a limited number of test requests are allowed through. If successful, the circuit resets to CLOSED. If they fail, it trips OPEN again.</li>
+</ul>
+
+<h2 id="consistent-hashing">8. Consistent Hashing</h2>
+<p>In naive modulo hashing ($	ext{server} = 	ext{hash}(	ext{key}) \pmod N$), adding or removing a single node from $N$ to $N+1$ causes almost <strong>100% of all keys to rehash to different nodes</strong> ($rac{N}{N+1}$ keys moved), completely invalidating caches and triggering massive database stampedes.</p>
+
+<div class="callout callout-tip">
+  <div class="callout-title">🔄 The Consistent Hashing Ring</div>
+  <p>Consistent Hashing maps both keys and servers to a logical <strong>Hash Ring</strong> ($[0, 2^{32}-1]$):</p>
+  <ul>
+    <li>A key is routed to the <strong>first server encountered clockwise</strong> on the ring.</li>
+    <li>When a node is added or removed, <strong>only $rac{1}{N}$ fraction of keys are remapped</strong> on average!</li>
+    <li><strong>Virtual Nodes (vnodes):</strong> To prevent non-uniform distribution and server hotspots, each physical server is mapped to multiple virtual positions on the ring (e.g. 150 vnodes per physical machine).</li>
+  </ul>
+</div>
+
+      </article>
+
+      <aside class="toc-sidebar">
+        <div class="toc-title">Table of Contents</div>
+        <ul class="toc-list">
+          
+<li><a href="#what-is">1. What is System Design?</a></li>
+<li><a href="#framework">2. Structured 5-Step Framework</a></li>
+<li><a href="#rdbms-nosql">3. Relational vs NoSQL Databases</a></li>
+<li><a href="#db-scaling">4. Database Scaling Techniques</a></li>
+<li class="toc-sub"><a href="#vertical">4.1 Vertical Scaling</a></li>
+<li class="toc-sub"><a href="#replication">4.2 Read Replication</a></li>
+<li class="toc-sub"><a href="#sharding">4.3 Database Sharding</a></li>
+<li><a href="#caching">5. Caching Strategies & Eviction</a></li>
+<li><a href="#load-balancers">6. Load Balancers (L4 vs L7)</a></li>
+<li><a href="#circuit-breaker">7. Circuit Breakers</a></li>
+<li><a href="#consistent-hashing">8. Consistent Hashing & Ring</a></li>
+
+        </ul>
+      </aside>
+    </div>
+
+    <div class="post-navigation">
+      
+        <a href="redis-java-implementation.html" class="nav-card">
+          <span class="nav-label">← Previous Note</span>
+          <span class="nav-card-title">Implementing Redis in Java</span>
+        </a>
+      
+        <a href="system-design-case-studies.html" class="nav-card" style="text-align: right;">
+          <span class="nav-label">Next Note →</span>
+          <span class="nav-card-title">System Design Case Studies</span>
+        </a>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-brand">
+        <h4>System Design Notes</h4>
+        <p>Curated and published by Rishi Chowdhury. Deep-dive technical analyses and reference architectures for building high-scale distributed systems, fault-tolerant databases, and resilient microservices.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Quick Links</h5>
+        <ul>
+          <li><a href="../index.html">All Notes</a></li>
+          <li><a href="../index.html#cloud-databases">Cloud Databases</a></li>
+          <li><a href="../index.html#distributed-systems">Distributed Systems</a></li>
+          <li><a href="../index.html#streaming-kafka">Kafka & Streaming</a></li>
+          <li><a href="../index.html#microservices">Microservices</a></li>
+          <li><a href="../index.html#in-memory-redis">Redis Internals</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Resources</h5>
+        <ul>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank">GitHub Repository</a></li>
+          <li><a href="../System_Design_Notes.pdf" target="_blank">System Design Notes PDF</a></li>
+          <li><a href="../Amazon_Aurora_Cloud_Native_Databases.pdf" target="_blank">Amazon Aurora PDF</a></li>
+          <li><a href="../CAP_THEOREM_AND_GOOGLE_SPANNER.pdf" target="_blank">Google Spanner PDF</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <div>&copy; 2026 Rishi Chowdhury. System Design Knowledge Base.</div>
+      <div>Hosted with GitHub Pages</div>
+    </div>
+  </footer>
+
+  <button id="back-to-top" class="back-to-top" aria-label="Back to top">↑</button>
+
+  <script src="../assets/js/articles-data.js"></script>
+  <script src="../assets/js/main.js"></script>
+</body>
+</html>

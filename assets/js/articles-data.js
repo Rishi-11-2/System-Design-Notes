@@ -1,0 +1,147 @@
+// System Design Notes & Engineering Blog - Article Registry
+const ARTICLES_DATA = [
+  {
+    id: "amazon-aurora-cloud-native-databases",
+    slug: "amazon-aurora-cloud-native-databases.html",
+    title: "Cloud-Native Databases and Amazon Aurora Architecture Technical Analysis",
+    category: "Cloud Databases",
+    categorySlug: "cloud-databases",
+    readTime: "18 min read",
+    date: "Jan 9, 2026",
+    badge: "Deep Dive",
+    pdfSource: "Amazon_Aurora_Cloud_Native_Databases.pdf",
+    excerpt: "A comprehensive technical analysis of cloud-native database architecture: storage-compute separation, the 'Log is the Database' paradigm, Aurora's 4/6 quorum durability across 3 AZs, 10GB segmented storage, and instant crash recovery mechanics.",
+    tags: ["Amazon Aurora", "Cloud-Native", "Quorum", "Storage-Compute", "Distributed SQL", "AWS"],
+    featured: true
+  },
+  {
+    id: "cap-theorem-and-google-spanner",
+    slug: "cap-theorem-and-google-spanner.html",
+    title: "CAP Theorem and Google Spanner — The Globally-Distributed Database",
+    category: "Distributed Systems",
+    categorySlug: "distributed-systems",
+    readTime: "12 min read",
+    date: "May 21, 2025",
+    badge: "Consensus",
+    pdfSource: "CAP_THEOREM_AND_GOOGLE_SPANNER.pdf",
+    excerpt: "Brewer's CAP Theorem unpacked (CP vs AP trade-offs) and how Google Spanner achieves external consistency (linearizability) and 99.999% availability using TrueTime API GPS clocks, atomic oscillators, and Paxos consensus groups.",
+    tags: ["Google Spanner", "CAP Theorem", "TrueTime", "Paxos", "2PC", "Linearizability"],
+    featured: true
+  },
+  {
+    id: "microservices-design-patterns",
+    slug: "microservices-design-patterns.html",
+    title: "Microservices Design Patterns — Strangler Fig, SAGA, CQRS & Transactional Outbox",
+    category: "Microservices",
+    categorySlug: "microservices",
+    readTime: "14 min read",
+    date: "Jan 9, 2026",
+    badge: "Architecture",
+    pdfSource: "Microservices_Architecture_Notes.pdf",
+    excerpt: "Essential architectural patterns for distributed microservices: monolith migration via the Strangler Fig pattern, database-per-service isolation, distributed transactions via SAGA, CQRS separation, and solving dual-writes with the Transactional Outbox pattern & CDC.",
+    tags: ["Microservices", "Strangler Fig", "SAGA Pattern", "CQRS", "Transactional Outbox", "Debezium"],
+    featured: true
+  },
+  {
+    id: "kafka-architecture-part1",
+    slug: "kafka-architecture-part1.html",
+    title: "Apache Kafka Architecture Part 1 — Event-Driven Architecture & Storage Fundamentals",
+    category: "Streaming & Kafka",
+    categorySlug: "streaming-kafka",
+    readTime: "8 min read",
+    date: "Mar 1, 2026",
+    badge: "Streaming",
+    pdfSource: "Kafka_Architecture_Part1.pdf",
+    excerpt: "Core internals of Apache Kafka: Distributed event streaming vs Pub/Sub, Producer-Broker architecture, Partitioning strategies, Horizontal scaling, Segment files, and zero-copy sequential disk storage.",
+    tags: ["Apache Kafka", "Event Streaming", "Partitions", "Log Compaction", "Storage Engine"],
+    featured: false
+  },
+  {
+    id: "kafka-architecture-part2",
+    slug: "kafka-architecture-part2.html",
+    title: "Apache Kafka Architecture Part 2 — Consumer Groups, Rebalancing & High Availability",
+    category: "Streaming & Kafka",
+    categorySlug: "streaming-kafka",
+    readTime: "9 min read",
+    date: "Mar 1, 2026",
+    badge: "High Availability",
+    pdfSource: "Kafka_Architecture_Part2.pdf",
+    excerpt: "Deep analysis of Kafka Consumer Groups, partition assignment semantics, __consumer_offsets internal topic management, commit strategies (At-least-once, At-most-once, Exactly-once), ISR replication, and broker leader failover.",
+    tags: ["Apache Kafka", "Consumer Groups", "Rebalance Protocol", "ISR", "High Availability"],
+    featured: false
+  },
+  {
+    id: "grab-data-layer-architecture",
+    slug: "grab-data-layer-architecture.html",
+    title: "How Grab Configured Their Data Layer for Multi-Million Daily Transactions",
+    category: "Case Studies",
+    categorySlug: "case-studies",
+    readTime: "8 min read",
+    date: "Feb 24, 2026",
+    badge: "Real-World Architecture",
+    pdfSource: "Grab_Configured_Data_Layer.pdf",
+    excerpt: "How Grab handles spiky food delivery traffic and millions of transactions per day: Redis Cache-Aside, Read-Write Splitting, Geographic Sharding, DynamoDB Partial Indexing optimization, and Kafka pipelines.",
+    tags: ["Grab", "High Concurrency", "Database Sharding", "Redis", "DynamoDB", "Kafka"],
+    featured: false
+  },
+  {
+    id: "redis-internals-and-architecture",
+    slug: "redis-internals-and-architecture.html",
+    title: "Redis Deep Dive — Single-Threaded Event Loop, RESP Protocol & Data Structures",
+    category: "In-Memory & Redis",
+    categorySlug: "in-memory-redis",
+    readTime: "22 min read",
+    date: "Apr 12, 2026",
+    badge: "Deep Dive",
+    pdfSource: "Redis_Notes/",
+    excerpt: "17-module masterclass on Redis internals: I/O multiplexing (epoll/kqueue), RESP protocol specification, Active/Passive Expiration, LRU/LFU approximation algorithms, Persistence (RDB & AOF), Quicklists, Ziplists, Intsets, Geohashing, and HyperLogLog.",
+    tags: ["Redis", "Event Loop", "RESP", "IO Multiplexing", "LRU Cache", "HyperLogLog", "In-Memory DB"],
+    featured: true
+  },
+  {
+    id: "redis-java-implementation",
+    slug: "redis-java-implementation.html",
+    title: "Implementing Redis from Scratch in Java — NIO Event Loop, RESP Parser & Ping Server",
+    category: "In-Memory & Redis",
+    categorySlug: "in-memory-redis",
+    readTime: "15 min read",
+    date: "Jun 3, 2026",
+    badge: "Code Walkthrough",
+    pdfSource: "Redis_Implementation/",
+    excerpt: "Step-by-step code walkthrough of building an in-memory Redis server in Java: Single-threaded Java NIO Selector event loop, custom RESP Protocol Parser and Decoder, Ping/Pong handling, and concurrent socket channel processing.",
+    tags: ["Java", "Redis From Scratch", "Java NIO", "Event Loop", "RESP Protocol", "Socket Programming"],
+    featured: false
+  },
+  {
+    id: "system-design-foundations-and-scaling",
+    slug: "system-design-foundations-and-scaling.html",
+    title: "System Design Foundations — Core Principles, DB Scaling & Resiliency Patterns",
+    category: "Foundations & Scaling",
+    categorySlug: "foundations-scaling",
+    readTime: "24 min read",
+    date: "Apr 12, 2026",
+    badge: "Complete Notes",
+    pdfSource: "System_Design_Notes.pdf",
+    excerpt: "Comprehensive notes on core system design principles: structured interview framework, Relational vs NoSQL databases, Database Scaling (Master-Slave replication, Sharding, Federation), Caching patterns, L4/L7 Load Balancing, Circuit Breakers, and Consistent Hashing.",
+    tags: ["System Design", "Scalability", "Sharding", "Consistent Hashing", "Circuit Breaker", "Load Balancing"],
+    featured: true
+  },
+  {
+    id: "system-design-case-studies",
+    slug: "system-design-case-studies.html",
+    title: "Large-Scale System Design Case Studies — Rate Limiter, TinyURL, Notification & Crawler",
+    category: "Case Studies",
+    categorySlug: "case-studies",
+    readTime: "26 min read",
+    date: "Apr 12, 2026",
+    badge: "Real-World Systems",
+    pdfSource: "System_Design_Notes.pdf",
+    excerpt: "Architectural designs for production distributed systems: Distributed Rate Limiter, Multi-channel Notification Engine, URL Shortener (TinyURL) with range allocation, PasteBin / Gist object tiering, Real-time Fraud Detection Pipeline, Recommendation Engine, and Distributed Web Crawler.",
+    tags: ["System Design", "Rate Limiter", "TinyURL", "Notification Service", "Web Crawler", "Fraud Detection"],
+    featured: true
+  }
+];
+
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = { ARTICLES_DATA };
+}

@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Large-Scale System Design Case Studies — Rate Limiter, TinyURL, Notification &amp; Crawler — System Design Notes</title>
+  <meta name="description" content="Architectural designs for production distributed systems: Distributed Rate Limiter, Multi-channel Notification Engine, URL Shortener (TinyURL) with range allocation, PasteBin / Gist object tiering, Real-time Fraud Detection Pipeline, Recommendation Engine, and Distributed Web Crawler.">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.body);"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <ul class="nav-links">
+          <li><a href="../index.html">← All Notes</a></li>
+        </ul>
+        <button id="theme-toggle" class="btn-icon" aria-label="Toggle Theme">
+          <span class="theme-icon">☀️</span>
+        </button>
+        <a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="btn-icon" aria-label="GitHub Repository">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+          </svg>
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="article-page">
+    <div class="article-breadcrumbs">
+      <a href="../index.html">Home</a>
+      <span>/</span>
+      <a href="../index.html#case-studies">Case Studies</a>
+      <span>/</span>
+      <span>Large-Scale System Design Case Studies — Rate Limiter, TinyURL, Notification &amp; Crawler</span>
+    </div>
+
+    <header class="article-header">
+      <span class="article-header-badge">Real-World Systems</span>
+      <h1 class="article-header-title">Large-Scale System Design Case Studies — Rate Limiter, TinyURL, Notification &amp; Crawler</h1>
+      <div class="article-header-meta">
+        <span>👤 Author: <strong>Rishi Chowdhury</strong></span>
+        <span>📅 Published: Apr 12, 2026</span>
+        <span>⏱️ 26 min read</span>
+        <span>📁 Category: Case Studies</span>
+      </div>
+      <div class="article-header-actions">
+        
+        <a href="../System_Design_Notes.pdf" class="btn-secondary" target="_blank" download>
+          <span>📄 View / Download Original PDF (184 Pages)</span>
+        </a>
+        <a href="../index.html" class="btn-primary">
+          <span>← Back to Blog Index</span>
+        </a>
+      </div>
+    </header>
+
+    <div class="article-container">
+      <article class="prose">
+        
+<div class="callout callout-note">
+  <div class="callout-title">📌 Real-World Architecture Blueprints</div>
+  <p>Extracted from chapters 10-17 of the System Design Notes, this article details production architectures for 7 complex distributed systems: Distributed Rate Limiter, Multi-Channel Notification Engine, URL Shortener (TinyURL) with collision avoidance, PasteBin / Gist object tiering, Real-time Fraud Detection Pipeline, Machine Learning Recommendation Engine, and a Distributed Web Crawler.</p>
+</div>
+
+<h2 id="rate-limiter">Case Study 1: Designing a Distributed Rate Limiter</h2>
+<h3 id="rate-motive">1.1 Motive & Algorithms</h3>
+<p>Rate limiters protect servers against DDoS attacks, brute force login attempts, and runaway client scripts. The core algorithms include:</p>
+<ul>
+  <li><strong>Token Bucket:</strong> A bucket holds up to $B$ tokens. Tokens refill at rate $R$ per second. Each request consumes 1 token. Allows burst traffic while bounding average rate. Widely used (Amazon API Gateway, Stripe).</li>
+  <li><strong>Leaky Bucket:</strong> Requests enter a FIFO queue and leak out at a constant rate. Excess drops. Smoothes bursts into steady output.</li>
+  <li><strong>Sliding Window Counter:</strong> Blends requests from previous window and current window:
+  $$	ext{count} = 	ext{current\_requests} + 	ext{previous\_requests} 	imes (1 - 	ext{elapsed\_fraction})$$
+  Extremely memory-efficient and eliminates boundary spikes.</li>
+</ul>
+
+<h3 id="rate-arch">1.2 Distributed Architecture with Redis</h3>
+<p>In distributed clusters with 50+ app servers, local in-memory counters fail because a client's requests hit different servers. The solution is a centralized <strong>Redis cluster</strong> using atomic <strong>Lua scripts</strong>:</p>
+<div class="code-wrapper">
+  <div class="code-header"><span>Redis Lua Script: Atomic Sliding Window Rate Limit</span></div>
+  <pre><code>local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local window = tonumber(ARGV[2])
+local limit = tonumber(ARGV[3])
+local clearBefore = now - window
+
+-- Remove timestamps older than window
+redis.call('ZREMRANGEBYSCORE', key, 0, clearBefore)
+local currentRequests = redis.call('ZCARD', key)
+
+if currentRequests < limit then
+    redis.call('ZADD', key, now, now)
+    redis.call('EXPIRE', key, math.ceil(window / 1000))
+    return 1 -- Allowed
+else
+    return 0 -- Rejected (429 Too Many Requests)
+end</code></pre>
+</div>
+
+<h2 id="notification">Case Study 2: Designing a Distributed Notification Service</h2>
+<p>Requirements: Support multiple notification channels (Email, SMS, iOS APNs, Android FCM), guarantee high delivery rates, handle millions of users, and avoid spamming.</p>
+
+<div class="diagram-container">
+  <pre class="mermaid">
+flowchart TD
+  Client["Services (Billing, Auth, Marketing)"] --> API["Notification Ingestion Service"]
+  API --> UserDB["User Preferences DB (Opt-outs, Channels)"]
+  API --> Dedup["Redis Deduplication Cache"]
+  
+  API --> Kafka["Apache Kafka / RabbitMQ Topic"]
+  
+  subgraph Workers["Channel Worker Pools"]
+    Kafka -->|"Email Queue"| W1["Email Worker Fleet"]
+    Kafka -->|"SMS Queue"| W2["SMS Worker Fleet"]
+    Kafka -->|"Push Queue"| W3["Push Worker Fleet"]
+  end
+
+  W1 --> SendGrid["Third-Party Providers (SendGrid, Twilio, APNs, FCM)"]
+  W2 --> SendGrid
+  W3 --> SendGrid
+  </pre>
+  <div class="diagram-caption">Figure 12: Asynchronous distributed notification service architecture.</div>
+</div>
+
+<ul>
+  <li><strong>Deduplication:</strong> Compute a hash of <code>(userId + notificationType + messageDigest)</code> with a 10-minute Redis TTL to prevent duplicate notifications during network retries.</li>
+  <li><strong>Rate Limiting per User:</strong> Prevent notification fatigue (e.g. max 5 promotional emails per day per user).</li>
+  <li><strong>Channel Workers:</strong> Dedicated worker pools isolate provider failures: if Twilio SMS experiences an outage, email and push queues continue without delay.</li>
+</ul>
+
+<h2 id="tinyurl">Case Study 3: Designing a URL Shortener (TinyURL)</h2>
+<h3 id="tinyurl-math">3.1 Scale & Character Encoding</h3>
+<p>Requirements: Generate a 7-character short URL from a long URL. Redirection must happen in < 15ms. 100 million URLs generated per month.</p>
+<ul>
+  <li><strong>Base62 Encoding:</strong> Using 62 alphanumeric characters ($[a-z, A-Z, 0-9]$).</li>
+  <li>With 7 characters, total possible unique combinations:
+  $$62^7 = 3,521,614,606,208 pprox 3.5 	ext{ Trillion URLs}!$$</li>
+  <li>At 100M URLs per month, 3.5 trillion URLs lasts for over <strong>2,900 years</strong>.</li>
+</ul>
+
+<h3 id="range-allocation">3.2 Unique ID Generation via Range Reservation</h3>
+<p>How do we generate unique IDs without distributed lock contention or collision retries?</p>
+<div class="callout callout-tip">
+  <div class="callout-title">🎯 Range Reservation Pattern</div>
+  <ol>
+    <li>Maintain a coordinator (e.g. ZooKeeper or central MySQL table) managing ID ranges in blocks of <strong>1,000,000 IDs</strong>.</li>
+    <li>When Shortener Server A boots up, it requests a range: it gets $[1,000,000 	o 1,999,999]$.</li>
+    <li>Server B boots up: it gets $[2,000,000 	o 2,999,999]$.</li>
+    <li>Each server increments its local atomic counter in RAM ($O(1)$ with zero network RPCs).</li>
+    <li>The integer is converted to Base62: integer <code>1000000</code> becomes Base62 <code>4c92</code>.</li>
+    <li>Zero collision probability, zero distributed locking overhead!</li>
+  </ol>
+</div>
+
+<h2 id="pastebin">Case Study 4: Designing PasteBin / GitHub Gist</h2>
+<p>Requirements: Users upload arbitrary text snippets, get a public shareable URL, optional expiration date, millions of daily reads.</p>
+<ul>
+  <li><strong>Storage Tiering:</strong> Storing text blobs directly in a relational database bloats tables and exhausts buffer pool RAM.
+    <ul>
+      <li><strong>Amazon S3 / Blob Storage:</strong> Holds the raw text content file. Extremely cheap, 99.999999999% durability.</li>
+      <li><strong>Relational DB / DynamoDB:</strong> Holds lightweight metadata: <code>paste_id</code>, <code>s3_key</code>, <code>user_id</code>, <code>expiration_time</code>, <code>created_at</code>.</li>
+    </ul>
+  </li>
+  <li><strong>Pre-Signed URLs:</strong> Clients upload large files directly to S3 via pre-signed S3 URLs, completely bypassing application servers and saving network bandwidth.</li>
+</ul>
+
+<h2 id="fraud-detection">Case Study 5: Financial Fraud Detection Pipeline</h2>
+<p>Credit card transactions require fraud evaluation in under 50 milliseconds before authorization.</p>
+<ul>
+  <li><strong>Real-Time Path:</strong> Transaction event arrives $	o$ Fraud Inference Microservice loads pre-computed user profile from Redis (usual spending location, typical merchant categories, velocity) $	o$ Runs lightweight Random Forest / XGBoost model $	o$ Returns Score (Approve, Deny, Trigger 2FA) in < 30ms.</li>
+  <li><strong>Offline Training Path:</strong> Transactions stream into Kafka $	o$ Apache Spark / Flink processes sliding window aggregates (e.g. 5 transactions in last 2 minutes across 2 countries) $	o$ Exports features to feature store $	o$ Periodically retrains models on Amazon S3 training data.</li>
+</ul>
+
+<h2 id="recommendation">Case Study 6: Machine Learning Recommendation Engine</h2>
+<p>Powering personalized feeds (YouTube, Netflix, E-Commerce):</p>
+<ol>
+  <li><strong>Candidate Generation (Retrieval):</strong> Narrows 50 million catalog items down to top 500 candidates using Collaborative Filtering (user-item matrix embeddings, FAISS vector search).</li>
+  <li><strong>Scoring & Ranking:</strong> Heavy ML deep learning ranking model predicts Click-Through-Rate (pCTR) and Watch-Time for the 500 items.</li>
+  <li><strong>Re-ranking & Diversity:</strong> Injects diversity rules (not showing 5 videos from the same creator), removes previously watched items, applies freshness boosts.</li>
+</ol>
+
+<h2 id="crawler">Case Study 7: Designing a Distributed Web Crawler</h2>
+<p>Crawling billions of web pages across the public internet to build an inverted search index:</p>
+<ul>
+  <li><strong>Seed URLs:</strong> High-authority starting points (e.g. Wikipedia, news domains).</li>
+  <li><strong>URL Frontier:</strong> Manages which URLs to crawl next. Implements <strong>Politeness Policies</strong> (domain cooldown: waiting 5 seconds between requests to the same host) and <strong>Priority Queues</strong> (crawling breaking news before static pages).</li>
+  <li><strong>Deduplication via Bloom Filters:</strong> Checking if a URL has already been visited using an in-memory <strong>Bloom Filter</strong> ($O(1)$ space and time).</li>
+  <li><strong>Content Storage & Indexing:</strong> HTML is stripped of JavaScript/CSS, compressed, batched to S3, and words are mapped to document IDs in an inverted index stored in Elasticsearch.</li>
+</ul>
+
+      </article>
+
+      <aside class="toc-sidebar">
+        <div class="toc-title">Table of Contents</div>
+        <ul class="toc-list">
+          
+<li><a href="#rate-limiter">Case 1: Distributed Rate Limiter</a></li>
+<li class="toc-sub"><a href="#rate-motive">1.1 Motive & Algorithms</a></li>
+<li class="toc-sub"><a href="#rate-arch">1.2 Redis Architecture</a></li>
+<li><a href="#notification">Case 2: Notification Service</a></li>
+<li><a href="#tinyurl">Case 3: URL Shortener (TinyURL)</a></li>
+<li class="toc-sub"><a href="#tinyurl-math">3.1 Scale & Base62</a></li>
+<li class="toc-sub"><a href="#range-allocation">3.2 Range Reservation Pattern</a></li>
+<li><a href="#pastebin">Case 4: PasteBin / GitHub Gist</a></li>
+<li><a href="#fraud-detection">Case 5: Fraud Detection Pipeline</a></li>
+<li><a href="#recommendation">Case 6: Recommendation Engine</a></li>
+<li><a href="#crawler">Case 7: Distributed Web Crawler</a></li>
+
+        </ul>
+      </aside>
+    </div>
+
+    <div class="post-navigation">
+      
+        <a href="system-design-foundations-and-scaling.html" class="nav-card">
+          <span class="nav-label">← Previous Note</span>
+          <span class="nav-card-title">System Design Foundations &amp; Scaling</span>
+        </a>
+      <div></div>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-brand">
+        <h4>System Design Notes</h4>
+        <p>Curated and published by Rishi Chowdhury. Deep-dive technical analyses and reference architectures for building high-scale distributed systems, fault-tolerant databases, and resilient microservices.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Quick Links</h5>
+        <ul>
+          <li><a href="../index.html">All Notes</a></li>
+          <li><a href="../index.html#cloud-databases">Cloud Databases</a></li>
+          <li><a href="../index.html#distributed-systems">Distributed Systems</a></li>
+          <li><a href="../index.html#streaming-kafka">Kafka & Streaming</a></li>
+          <li><a href="../index.html#microservices">Microservices</a></li>
+          <li><a href="../index.html#in-memory-redis">Redis Internals</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Resources</h5>
+        <ul>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank">GitHub Repository</a></li>
+          <li><a href="../System_Design_Notes.pdf" target="_blank">System Design Notes PDF</a></li>
+          <li><a href="../Amazon_Aurora_Cloud_Native_Databases.pdf" target="_blank">Amazon Aurora PDF</a></li>
+          <li><a href="../CAP_THEOREM_AND_GOOGLE_SPANNER.pdf" target="_blank">Google Spanner PDF</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <div>&copy; 2026 Rishi Chowdhury. System Design Knowledge Base.</div>
+      <div>Hosted with GitHub Pages</div>
+    </div>
+  </footer>
+
+  <button id="back-to-top" class="back-to-top" aria-label="Back to top">↑</button>
+
+  <script src="../assets/js/articles-data.js"></script>
+  <script src="../assets/js/main.js"></script>
+</body>
+</html>

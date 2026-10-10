@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Redis Deep Dive — Single-Threaded Event Loop, RESP Protocol &amp; Data Structures — System Design Notes</title>
+  <meta name="description" content="17-module masterclass on Redis internals: I/O multiplexing (epoll/kqueue), RESP protocol specification, Active/Passive Expiration, LRU/LFU approximation algorithms, Persistence (RDB &amp; AOF), Quicklists, Ziplists, Intsets, Geohashing, and HyperLogLog.">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.body);"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <ul class="nav-links">
+          <li><a href="../index.html">← All Notes</a></li>
+        </ul>
+        <button id="theme-toggle" class="btn-icon" aria-label="Toggle Theme">
+          <span class="theme-icon">☀️</span>
+        </button>
+        <a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="btn-icon" aria-label="GitHub Repository">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+          </svg>
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="article-page">
+    <div class="article-breadcrumbs">
+      <a href="../index.html">Home</a>
+      <span>/</span>
+      <a href="../index.html#in-memory-redis">In-Memory &amp; Redis</a>
+      <span>/</span>
+      <span>Redis Deep Dive — Single-Threaded Event Loop, RESP Protocol &amp; Data Structures</span>
+    </div>
+
+    <header class="article-header">
+      <span class="article-header-badge">Deep Dive</span>
+      <h1 class="article-header-title">Redis Deep Dive — Single-Threaded Event Loop, RESP Protocol &amp; Data Structures</h1>
+      <div class="article-header-meta">
+        <span>👤 Author: <strong>Rishi Chowdhury</strong></span>
+        <span>📅 Published: Apr 12, 2026</span>
+        <span>⏱️ 22 min read</span>
+        <span>📁 Category: In-Memory &amp; Redis</span>
+      </div>
+      <div class="article-header-actions">
+        
+        <a href="../Redis_Notes/01 - What Makes Redis Special.pdf" class="btn-secondary" target="_blank" download>
+          <span>📄 View / Download Sample PDF (Module 1)</span>
+        </a>
+        <a href="../index.html" class="btn-primary">
+          <span>← Back to Blog Index</span>
+        </a>
+      </div>
+    </header>
+
+    <div class="article-container">
+      <article class="prose">
+        
+<div class="callout callout-note">
+  <div class="callout-title">📌 In-Memory Data Store Internals</div>
+  <p>Redis (Remote Dictionary Server) is widely renowned for serving over 100,000 queries per second on a single CPU core with sub-millisecond latencies. This comprehensive 17-module deep dive extracts the complete inner mechanics of Redis: the single-threaded event loop, non-blocking I/O multiplexing, the RESP serialization wire protocol, key expiration mechanisms, memory eviction algorithms (Approximated LRU & LFU), persistence tradeoffs (RDB vs AOF), and compact in-memory data structures (SDS, Intset, Ziplist, Quicklist, Geohash, HyperLogLog).</p>
+</div>
+
+<h2 id="special">Module 01: What Makes Redis Special?</h2>
+<ul>
+  <li><strong>In-Memory Primary Storage:</strong> Every dataset operation executes directly in RAM, bypassing disk seek and block serialization bottlenecks.</li>
+  <li><strong>Single-Threaded Execution Engine:</strong> Core commands execute on a single main thread, entirely eliminating mutex contention, race conditions, context-switch overhead, and distributed deadlocks.</li>
+  <li><strong>Rich Polymorphic Data Structures:</strong> Far more than a key-value store; natively supports Strings, Hashes, Lists, Sets, Sorted Sets (ZSet), Bitmaps, HyperLogLogs, and Geospatial indexes.</li>
+  <li><strong>Event-Driven Asynchronous I/O:</strong> Leverages kernel event demultiplexing to service thousands of simultaneous client connections without thread-per-client overhead.</li>
+</ul>
+
+<div class="diagram-container">
+  <pre class="mermaid">
+flowchart TD
+  Client1["Client 1 (Socket FD 14)"] -->|"RESP Command"| Epoll["Kernel I/O Multiplexer (epoll / kqueue)"]
+  Client2["Client 2 (Socket FD 18)"] -->|"RESP Command"| Epoll
+  Client3["Client 3 (Socket FD 21)"] -->|"RESP Command"| Epoll
+
+  subgraph RedisCore["Redis Single-Threaded Core Process"]
+    EventLoop["AeEventLoop (File Event Dispatcher)"]
+    CommandProcessor["Command Dispatcher & Table"]
+    Dict["Key-Value Hash Table (dict)"]
+    MemoryManager["Memory Tracker & Eviction Pool"]
+
+    Epoll -->|"Ready FDs"| EventLoop
+    EventLoop --> CommandProcessor
+    CommandProcessor --> Dict
+    Dict --- MemoryManager
+  end
+
+  EventLoop -->|"RESP Response"| Client1
+  </pre>
+  <div class="diagram-caption">Figure 9: Redis single-threaded event loop and non-blocking I/O multiplexer architecture.</div>
+</div>
+
+<h2 id="resp">Module 02: Redis Serialization Protocol (RESP)</h2>
+<p>Redis communicates over TCP using the human-readable, binary-safe <strong>RESP (REdis Serialization Protocol)</strong>. Every data type is identified by its first byte character:</p>
+<table>
+  <thead>
+    <tr>
+      <th>Type</th>
+      <th>Prefix</th>
+      <th>Wire Format Example</th>
+      <th>Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Simple String</strong></td>
+      <td><code>+</code></td>
+      <td><code>+OK
+</code></td>
+      <td>Non-binary safe small status strings; terminated by CRLF.</td>
+    </tr>
+    <tr>
+      <td><strong>Simple Error</strong></td>
+      <td><code>-</code></td>
+      <td><code>-ERR unknown command 'FOO'
+</code></td>
+      <td>Error messages returned by the server.</td>
+    </tr>
+    <tr>
+      <td><strong>Integer</strong></td>
+      <td><code>:</code></td>
+      <td><code>:1000
+</code></td>
+      <td>Signed 64-bit integer values.</td>
+    </tr>
+    <tr>
+      <td><strong>Bulk String</strong></td>
+      <td><code>$</code></td>
+      <td><code>$5
+hello
+</code></td>
+      <td>Binary-safe strings up to 512MB. <code>$-1
+</code> denotes a Null bulk string.</td>
+    </tr>
+    <tr>
+      <td><strong>Array</strong></td>
+      <td><code>*</code></td>
+      <td><code>*2
+$3
+GET
+$4
+name
+</code></td>
+      <td>Ordered collection of RESP elements. Used for command invocations.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="io-multiplex">Module 03: Non-Blocking I/O & IO Multiplexing</h2>
+<p>Why does Redis stay single-threaded? CPUs are rarely the bottleneck in in-memory caches; network I/O and memory bandwidth are.</p>
+<p>Instead of spawning a blocking thread for each incoming socket connection (which consumes 1MB+ stack space per thread and triggers heavy OS context switches), Redis uses <strong>I/O Multiplexing</strong> (Linux <code>epoll</code>, macOS/BSD <code>kqueue</code>, Solaris <code>evport</code>):</p>
+<ol>
+  <li>Sockets are marked non-blocking (<code>O_NONBLOCK</code>).</li>
+  <li>Socket file descriptors (FDs) are registered with the kernel multiplexer.</li>
+  <li>The kernel notifies the Redis event loop (<code>aeProcessEvents</code>) only when a descriptor is ready to read or write.</li>
+  <li>Redis processes the pending buffer, executes the command against memory, writes the response to the output buffer, and proceeds to the next ready descriptor.</li>
+</ol>
+
+<h2 id="expiration">Module 04: Key Expiration Internals</h2>
+<p>When a key is set with a Time-To-Live (<code>EXPIRE key 60</code>), Redis stores the absolute expiration Unix timestamp in a separate expires dictionary (<code>db-&gt;expires</code>). Redis uses a two-pronged strategy to evict expired keys without blocking:</p>
+<ul>
+  <li><strong>Passive (Lazy) Expiration:</strong> When a client queries a key (e.g., <code>GET user:1</code>), Redis first checks if the key exists in <code>db-&gt;expires</code>. If expired, Redis immediately deletes it and returns <code>(nil)</code>.</li>
+  <li><strong>Active (Periodic) Expiration:</strong> Running 10 times per second (10Hz) inside the <code>serverCron</code> cycle:
+    <ol>
+      <li>Test 20 random keys with configured expirations.</li>
+      <li>Delete all found expired keys.</li>
+      <li>If more than 25% of the sampled keys were expired, repeat immediately! This ensures memory is reclaimed aggressively without letting expired keys accumulate.</li>
+    </ol>
+  </li>
+</ul>
+
+<h2 id="eviction">Module 05: Memory Eviction Policies</h2>
+<p>When memory usage reaches <code>maxmemory</code>, Redis frees space using the chosen eviction policy:</p>
+<ul>
+  <li><code>noeviction</code>: Returns out-of-memory errors on new write operations (default).</li>
+  <li><code>allkeys-lru</code>: Evicts the least recently used keys across all keys.</li>
+  <li><code>volatile-lru</code>: Evicts least recently used keys among those with an expire set.</li>
+  <li><code>allkeys-lfu</code>: Evicts least frequently used keys across all keys.</li>
+  <li><code>volatile-lfu</code>: Evicts least frequently used keys among those with an expire set.</li>
+  <li><code>volatile-ttl</code>: Evicts keys with the shortest remaining Time-To-Live.</li>
+  <li><code>allkeys-random</code> / <code>volatile-random</code>: Evicts random keys.</li>
+</ul>
+
+<h2 id="pipelining">Module 06: Pipelining Mechanics</h2>
+<p>In standard request-response cycles, a client sends command 1, waits for network Round-Trip Time (RTT, e.g. 20ms), receives response 1, then sends command 2. 50 commands take $50 	imes 20	ext{ms} = 1000	ext{ms}$.</p>
+<p><strong>Pipelining</strong> enables clients to queue 50 commands, transmit them as a single TCP packet burst, and read all 50 responses in one batch. Redis processes them in sequence in memory. Execution time drops from 1000ms down to ~25ms!</p>
+
+<h2 id="persistence">Module 07: Redis Persistence (RDB vs AOF)</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Mechanism</th>
+      <th>How It Operates</th>
+      <th>Advantages</th>
+      <th>Trade-offs</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>RDB (Redis Database)</strong></td>
+      <td>Point-in-time binary snapshot saved to disk (e.g. every 15 min). Forks a background child process via <code>bgsave</code> utilizing Linux Copy-on-Write (COW).</td>
+      <td>Extremely compact; fast recovery on restart; zero parent thread disk I/O overhead.</td>
+      <td>Data between snapshots (e.g. last 5-15 min) is lost if server crashes unexpectedly.</td>
+    </tr>
+    <tr>
+      <td><strong>AOF (Append Only File)</strong></td>
+      <td>Logs every write command to an append-only log file on disk. Configured via <code>fsync</code>: <code>always</code>, <code>everysec</code> (recommended), or <code>no</code>.</td>
+      <td>Maximum durability (at most 1 second of lost data with <code>everysec</code>); human-readable format.</td>
+      <td>File size grows large (requires background AOF rewrite); slower restart replay time compared to RDB.</td>
+    </tr>
+    <tr>
+      <td><strong>Hybrid Persistence</strong></td>
+      <td>Redis 4.0+: Combines RDB snapshot prefix with incremental AOF log tail during AOF rewrite.</td>
+      <td>Fast restart times like RDB with minimal data loss like AOF.</td>
+      <td>Default in modern Redis deployments.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="redis-object">Module 08: The Redis Object Model (robj)</h2>
+<p>Every key-value entry in Redis is wrapped in a C structure called <code>redisObject</code>:</p>
+<div class="code-wrapper">
+  <div class="code-header"><span>C redisObject Structure</span></div>
+  <pre><code>typedef struct redisObject {
+    unsigned type:4;       // OBJ_STRING, OBJ_LIST, OBJ_SET, OBJ_ZSET, OBJ_HASH
+    unsigned encoding:4;   // OBJ_ENCODING_RAW, OBJ_ENCODING_INT, OBJ_ENCODING_ZIPLIST, etc.
+    unsigned lru:24;       // LRU clock or LFU frequency counter
+    int refcount;          // Reference count for memory sharing
+    void *ptr;             // Pointer to actual in-memory representation
+} robj;</code></pre>
+</div>
+<p><strong>Small Integer Optimization:</strong> Redis pre-allocates and shares <code>robj</code> instances for integers between <code>0</code> and <code>9999</code> at startup. If 10,000 keys store the value <code>100</code>, all 10,000 keys point to the exact same shared memory pointer, consuming zero additional heap space!</p>
+
+<h2 id="lru-internals">Module 10: Internals of Approximated LRU</h2>
+<p>A true Least-Recently-Used (LRU) algorithm requires maintaining every key in a doubly-linked list. Every read operation moves the accessed node to the head of the list. In a cache holding 100 million keys, maintaining pointers and lock contention consumes massive memory overhead.</p>
+<p>Redis implements <strong>Approximated LRU</strong>:</p>
+<ol>
+  <li>Each <code>robj</code> stores a 24-bit timestamp (<code>lru</code> clock).</li>
+  <li>When eviction is required, Redis randomly samples <strong>$N$ keys</strong> (default <code>maxmemory-samples = 5</code>).</li>
+  <li>It maintains a 16-element candidate pool sorted by idle time ($	ext{current\_time} - 	ext{lru}$).</li>
+  <li>The key with the greatest idle time in the pool is evicted.</li>
+  <li>With $N=10$, Approximated LRU matches theoretical true LRU within 1% accuracy while saving gigabytes of RAM!</li>
+</ol>
+
+<h2 id="structures">Modules 12-16: Advanced Compact Data Structures</h2>
+<h3 id="sds">Simple Dynamic String (SDS)</h3>
+<p>C strings are null-terminated arrays (<code>char*</code>), which suffer from $O(N)$ strlen lookups and buffer overflow risks. Redis uses SDS:</p>
+<ul>
+  <li>Stores explicit <code>len</code> ($O(1)$ length check) and <code>alloc</code> (preallocated buffer space).</li>
+  <li>Binary-safe: can store raw image bytes or serialized protobufs containing embedded null bytes (<code> </code>).</li>
+</ul>
+
+<h3 id="quicklist">Ziplist & Quicklist</h3>
+<p>Standard linked lists waste 16-24 bytes of pointer overhead per element. A <strong>Ziplist</strong> stores sequential elements contiguously in a single flat memory buffer. To avoid reallocating huge buffers on large lists, Redis 3.2+ introduced <strong>Quicklist</strong>: a doubly-linked list where each node is a compact Ziplist chunk!</p>
+
+<h3 id="hyperloglog">HyperLogLog</h3>
+<p>Used to estimate the unique cardinality of billions of items (e.g. unique website visitors) using only <strong>12 kilobytes of memory</strong> with a standard error of <strong>0.81%</strong>!</p>
+<ul>
+  <li>Hashes incoming items into a 64-bit bitstring.</li>
+  <li>Uses 14 bits to address 16,384 registers.</li>
+  <li>Estimates cardinality based on the maximum number of leading zeros observed across registers (probabilistic LogLog theorem).</li>
+</ul>
+
+<h2 id="lfu-approx">Module 17: LFU With Approximate Counting</h2>
+<p>Least Frequently Used (LFU) protects against scan anomalies where a rarely accessed key is read once and stays in cache. Redis packs both the last access time and frequency into the 24-bit <code>lru</code> field:</p>
+<ul>
+  <li><strong>16 bits:</strong> Last Decr Time (<code>ldt</code>) — timestamp in minutes. Used to decay frequency over time.</li>
+  <li><strong>8 bits:</strong> Logarithmic Counter (<code>logc</code>) — Uses Morris Approximate Counting. Instead of incrementing on every access ($255$ max), the counter increments with probability $rac{1}{1 + 	ext{counter} 	imes 	ext{lfu\_log\_factor}}$, allowing an 8-bit byte to represent up to 1,000,000 accesses!</li>
+</ul>
+
+      </article>
+
+      <aside class="toc-sidebar">
+        <div class="toc-title">Table of Contents</div>
+        <ul class="toc-list">
+          
+<li><a href="#special">01: What Makes Redis Special</a></li>
+<li><a href="#resp">02: RESP Wire Protocol</a></li>
+<li><a href="#io-multiplex">03: Non-Blocking I/O Multiplexing</a></li>
+<li><a href="#expiration">04: Key Expiration Internals</a></li>
+<li><a href="#eviction">05: Memory Eviction Policies</a></li>
+<li><a href="#pipelining">06: Pipelining Mechanics</a></li>
+<li><a href="#persistence">07: RDB vs AOF Persistence</a></li>
+<li><a href="#redis-object">08: Redis Object Model (robj)</a></li>
+<li><a href="#lru-internals">10: Approximated LRU Internals</a></li>
+<li><a href="#structures">12-16: Compact Data Structures</a></li>
+<li class="toc-sub"><a href="#sds">Simple Dynamic String (SDS)</a></li>
+<li class="toc-sub"><a href="#quicklist">Ziplist & Quicklist</a></li>
+<li class="toc-sub"><a href="#hyperloglog">HyperLogLog</a></li>
+<li><a href="#lfu-approx">17: LFU Approximate Counting</a></li>
+
+        </ul>
+      </aside>
+    </div>
+
+    <div class="post-navigation">
+      
+        <a href="microservices-design-patterns.html" class="nav-card">
+          <span class="nav-label">← Previous Note</span>
+          <span class="nav-card-title">Microservices Design Patterns</span>
+        </a>
+      
+        <a href="redis-java-implementation.html" class="nav-card" style="text-align: right;">
+          <span class="nav-label">Next Note →</span>
+          <span class="nav-card-title">Implementing Redis from Scratch in Java</span>
+        </a>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-brand">
+        <h4>System Design Notes</h4>
+        <p>Curated and published by Rishi Chowdhury. Deep-dive technical analyses and reference architectures for building high-scale distributed systems, fault-tolerant databases, and resilient microservices.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Quick Links</h5>
+        <ul>
+          <li><a href="../index.html">All Notes</a></li>
+          <li><a href="../index.html#cloud-databases">Cloud Databases</a></li>
+          <li><a href="../index.html#distributed-systems">Distributed Systems</a></li>
+          <li><a href="../index.html#streaming-kafka">Kafka & Streaming</a></li>
+          <li><a href="../index.html#microservices">Microservices</a></li>
+          <li><a href="../index.html#in-memory-redis">Redis Internals</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Resources</h5>
+        <ul>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank">GitHub Repository</a></li>
+          <li><a href="../System_Design_Notes.pdf" target="_blank">System Design Notes PDF</a></li>
+          <li><a href="../Amazon_Aurora_Cloud_Native_Databases.pdf" target="_blank">Amazon Aurora PDF</a></li>
+          <li><a href="../CAP_THEOREM_AND_GOOGLE_SPANNER.pdf" target="_blank">Google Spanner PDF</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <div>&copy; 2026 Rishi Chowdhury. System Design Knowledge Base.</div>
+      <div>Hosted with GitHub Pages</div>
+    </div>
+  </footer>
+
+  <button id="back-to-top" class="back-to-top" aria-label="Back to top">↑</button>
+
+  <script src="../assets/js/articles-data.js"></script>
+  <script src="../assets/js/main.js"></script>
+</body>
+</html>

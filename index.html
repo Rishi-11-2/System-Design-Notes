@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>System Design Notes & Engineering Blog — Rishi Chowdhury</title>
+  <meta name="description" content="Production-grade system design notes, distributed systems architecture, cloud-native database internals, Kafka event streaming, microservices patterns, and Redis deep-dives.">
+  <link rel="stylesheet" href="assets/css/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+</head>
+<body>
+  <div id="reading-progress"></div>
+
+  <!-- Navigation Bar -->
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <ul class="nav-links">
+          <li><a href="index.html" class="active">Blog & Notes</a></li>
+          <li><a href="#pdf-library">Original PDFs</a></li>
+          <li><a href="#about">About</a></li>
+        </ul>
+        <button id="theme-toggle" class="btn-icon" aria-label="Toggle Theme">
+          <span class="theme-icon">☀️</span>
+        </button>
+        <a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="btn-icon" aria-label="GitHub Repository">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+          </svg>
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Hero Section -->
+  <header class="hero">
+    <div class="hero-badge">⚡ PRODUCTION-GRADE KNOWLEDGE BASE</div>
+    <h1 class="hero-title">System Design Notes & Engineering Blog</h1>
+    <p class="hero-desc">
+      Comprehensive architectural analyses, distributed systems consensus, cloud-native database internals, Kafka streaming mechanics, microservices resilience patterns, and in-memory engine implementations extracted directly from technical notes.
+    </p>
+
+    <!-- Stats Grid -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-number">10</div>
+        <div class="stat-label">In-Depth Articles</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number">184+</div>
+        <div class="stat-label">Slide Pages Extracted</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number">17</div>
+        <div class="stat-label">Redis Modules</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number">100%</div>
+        <div class="stat-label">Exact Notes Preserved</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Controls: Search and Filters -->
+  <section class="controls-container">
+    <div class="search-bar-wrap">
+      <span class="search-icon">🔍</span>
+      <input type="text" id="search-input" class="search-input" placeholder="Search notes, architectures, topics (e.g. Aurora, Spanner, Kafka, Sharding)..." autocomplete="off">
+      <span class="search-kbd">⌘K</span>
+    </div>
+
+    <div class="categories-filter">
+      <button class="filter-chip active" data-category="all">All Notes</button>
+      <button class="filter-chip" data-category="cloud-databases">Cloud Databases</button>
+      <button class="filter-chip" data-category="distributed-systems">Distributed Systems</button>
+      <button class="filter-chip" data-category="streaming-kafka">Kafka & Streaming</button>
+      <button class="filter-chip" data-category="microservices">Microservices</button>
+      <button class="filter-chip" data-category="in-memory-redis">Redis & In-Memory</button>
+      <button class="filter-chip" data-category="foundations-scaling">Foundations & Scaling</button>
+      <button class="filter-chip" data-category="case-studies">Case Studies</button>
+    </div>
+
+    <div style="text-align: center; margin-top: 1rem; font-size: 0.85rem; color: var(--text-muted);" id="results-count">
+      Showing 10 of 10 notes
+    </div>
+  </section>
+
+  <!-- Articles Grid Section -->
+  <main class="articles-section">
+    <div class="articles-grid" id="articles-grid">
+      <!-- Dynamically populated by main.js from ARTICLES_DATA with SSR fallback -->
+      <a href="posts/amazon-aurora-cloud-native-databases.html" class="article-card">
+        <div class="card-top">
+          <span class="card-category">Cloud Databases</span>
+          <span class="card-meta-time">⏱️ 18 min read</span>
+        </div>
+        <h3 class="card-title">Cloud-Native Databases and Amazon Aurora Architecture Technical Analysis</h3>
+        <p class="card-excerpt">A comprehensive technical analysis of cloud-native database architecture: storage-compute separation, the 'Log is the Database' paradigm, Aurora's 4/6 quorum durability across 3 AZs, 10GB segmented storage, and instant crash recovery mechanics.</p>
+        <div class="card-tags">
+          <span class="card-tag">#Amazon Aurora</span>
+          <span class="card-tag">#Cloud-Native</span>
+          <span class="card-tag">#Quorum</span>
+        </div>
+        <div class="card-footer">
+          <span>📅 Jan 9, 2026</span>
+          <span class="read-btn">Read Notes →</span>
+        </div>
+      </a>
+    </div>
+  </main>
+
+  <!-- PDF Library Section -->
+  <section id="pdf-library" style="max-width: var(--max-w-content); margin: 0 auto 5rem; padding: 0 1.5rem;">
+    <div style="border-top: 1px solid var(--border-color); padding-top: 3.5rem;">
+      <div style="text-align: center; margin-bottom: 2.5rem;">
+        <span class="card-category" style="font-size: 0.8rem; padding: 0.35rem 0.85rem;">SOURCE REPOSITORY DOCUMENTS</span>
+        <h2 style="font-size: 2rem; font-weight: 800; margin-top: 0.75rem; color: var(--text-main);">Original PDF Document Library</h2>
+        <p style="color: var(--text-muted); max-width: 650px; margin: 0.5rem auto 0;">All notes on this website are extracted verbatim from these original documents stored right in the repository. You can download or view each PDF directly:</p>
+      </div>
+
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.25rem;">
+        <div class="stat-card" style="text-align: left; display: flex; flex-direction: column; justify-content: space-between;">
+          <div>
+            <div style="font-weight: 700; color: var(--text-main); margin-bottom: 0.35rem;">Amazon Aurora Architecture</div>
+            <div style="font-size: 0.825rem; color: var(--text-muted); margin-bottom: 1rem;">9 pages • LaTeX Technical Document</div>
+          </div>
+          <a href="Amazon_Aurora_Cloud_Native_Databases.pdf" target="_blank" download class="btn-secondary" style="font-size: 0.825rem; padding: 0.4rem 0.8rem; justify-content: center;">
+            <span>📥 Download PDF (134 KB)</span>
+          </a>
+        </div>
+
+        <div class="stat-card" style="text-align: left; display: flex; flex-direction: column; justify-content: space-between;">
+          <div>
+            <div style="font-weight: 700; color: var(--text-main); margin-bottom: 0.35rem;">CAP Theorem & Google Spanner</div>
+            <div style="font-size: 0.825rem; color: var(--text-muted); margin-bottom: 1rem;">5 pages • LaTeX Technical Document</div>
+          </div>
+          <a href="CAP_THEOREM_AND_GOOGLE_SPANNER.pdf" target="_blank" download class="btn-secondary" style="font-size: 0.825rem; padding: 0.4rem 0.8rem; justify-content: center;">
+            <span>📥 Download PDF (100 KB)</span>
+          </a>
+        </div>
+
+        <div class="stat-card" style="text-align: left; display: flex; flex-direction: column; justify-content: space-between;">
+          <div>
+            <div style="font-weight: 700; color: var(--text-main); margin-bottom: 0.35rem;">Grab Data Layer Architecture</div>
+            <div style="font-size: 0.825rem; color: var(--text-muted); margin-bottom: 1rem;">2 pages • Technical Architecture Note</div>
+          </div>
+          <a href="Grab_Configured_Data_Layer.pdf" target="_blank" download class="btn-secondary" style="font-size: 0.825rem; padding: 0.4rem 0.8rem; justify-content: center;">
+            <span>📥 Download PDF (123 KB)</span>
+          </a>
+        </div>
+
+        <div class="stat-card" style="text-align: left; display: flex; flex-direction: column; justify-content: space-between;">
+          <div>
+            <div style="font-weight: 700; color: var(--text-main); margin-bottom: 0.35rem;">Kafka Architecture (Parts 1 & 2)</div>
+            <div style="font-size: 0.825rem; color: var(--text-muted); margin-bottom: 1rem;">4 pages • Event Streaming Guide</div>
+          </div>
+          <div style="display: flex; gap: 0.5rem;">
+            <a href="Kafka_Architecture_Part1.pdf" target="_blank" download class="btn-secondary" style="font-size: 0.8rem; padding: 0.4rem 0.6rem; flex: 1; justify-content: center;">
+              <span>Part 1</span>
+            </a>
+            <a href="Kafka_Architecture_Part2.pdf" target="_blank" download class="btn-secondary" style="font-size: 0.8rem; padding: 0.4rem 0.6rem; flex: 1; justify-content: center;">
+              <span>Part 2</span>
+            </a>
+          </div>
+        </div>
+
+        <div class="stat-card" style="text-align: left; display: flex; flex-direction: column; justify-content: space-between;">
+          <div>
+            <div style="font-weight: 700; color: var(--text-main); margin-bottom: 0.35rem;">Microservices Design Patterns</div>
+            <div style="font-size: 0.825rem; color: var(--text-muted); margin-bottom: 1rem;">5 pages • Strangler, SAGA, Outbox</div>
+          </div>
+          <a href="Microservices_Architecture_Notes.pdf" target="_blank" download class="btn-secondary" style="font-size: 0.825rem; padding: 0.4rem 0.8rem; justify-content: center;">
+            <span>📥 Download PDF (93 KB)</span>
+          </a>
+        </div>
+
+        <div class="stat-card" style="text-align: left; display: flex; flex-direction: column; justify-content: space-between;">
+          <div>
+            <div style="font-weight: 700; color: var(--text-main); margin-bottom: 0.35rem;">System Design Complete Notes</div>
+            <div style="font-size: 0.825rem; color: var(--text-muted); margin-bottom: 1rem;">184 pages • Comprehensive Engineering Slides</div>
+          </div>
+          <a href="System_Design_Notes.pdf" target="_blank" download class="btn-secondary" style="font-size: 0.825rem; padding: 0.4rem 0.8rem; justify-content: center;">
+            <span>📥 Download PDF (51 MB)</span>
+          </a>
+        </div>
+
+        <div class="stat-card" style="text-align: left; display: flex; flex-direction: column; justify-content: space-between;">
+          <div>
+            <div style="font-weight: 700; color: var(--text-main); margin-bottom: 0.35rem;">Redis Deep Dive Notes (17 Modules)</div>
+            <div style="font-size: 0.825rem; color: var(--text-muted); margin-bottom: 1rem;">17 PDFs • Internals, Protocol & Structures</div>
+          </div>
+          <a href="Redis_Notes/01 - What Makes Redis Special.pdf" target="_blank" download class="btn-secondary" style="font-size: 0.825rem; padding: 0.4rem 0.8rem; justify-content: center;">
+            <span>📥 Download Sample PDF</span>
+          </a>
+        </div>
+
+        <div class="stat-card" style="text-align: left; display: flex; flex-direction: column; justify-content: space-between;">
+          <div>
+            <div style="font-weight: 700; color: var(--text-main); margin-bottom: 0.35rem;">Foundational Academic Papers</div>
+            <div style="font-size: 0.825rem; color: var(--text-muted); margin-bottom: 1rem;">Google Spanner & Dremel Papers</div>
+          </div>
+          <div style="display: flex; gap: 0.5rem;">
+            <a href="Papers/spanner-osdi2012.pdf" target="_blank" download class="btn-secondary" style="font-size: 0.8rem; padding: 0.4rem 0.6rem; flex: 1; justify-content: center;">
+              <span>Spanner OSDI</span>
+            </a>
+            <a href="Papers/Dremel_ interactive analysis of web-scale datasets.pdf" target="_blank" download class="btn-secondary" style="font-size: 0.8rem; padding: 0.4rem 0.6rem; flex: 1; justify-content: center;">
+              <span>Dremel Paper</span>
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="footer" id="about">
+    <div class="footer-container">
+      <div class="footer-brand">
+        <h4>System Design Notes</h4>
+        <p>Curated and published by <strong>Rishi Chowdhury</strong>. A comprehensive reference library and engineering blog dedicated to distributed systems, scalable data tier design, high-availability consensus, event streaming, and systems engineering.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Core Categories</h5>
+        <ul>
+          <li><a href="posts/amazon-aurora-cloud-native-databases.html">Amazon Aurora Architecture</a></li>
+          <li><a href="posts/cap-theorem-and-google-spanner.html">Google Spanner & TrueTime</a></li>
+          <li><a href="posts/kafka-architecture-part1.html">Apache Kafka Fundamentals</a></li>
+          <li><a href="posts/microservices-design-patterns.html">Microservices Patterns</a></li>
+          <li><a href="posts/redis-internals-and-architecture.html">Redis Internal Mechanics</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Repository</h5>
+        <ul>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank">GitHub Repository</a></li>
+          <li><a href="System_Design_Notes.pdf" target="_blank">Complete Notes (184 Pages)</a></li>
+          <li><a href="Redis_Implementation/">Java Redis Implementation</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <div>&copy; 2026 Rishi Chowdhury. Open source under MIT License.</div>
+      <div>Hosted with GitHub Pages</div>
+    </div>
+  </footer>
+
+  <button id="back-to-top" class="back-to-top" aria-label="Back to top">↑</button>
+
+  <script src="assets/js/articles-data.js"></script>
+  <script src="assets/js/main.js"></script>
+</body>
+</html>

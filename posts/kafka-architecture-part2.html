@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Apache Kafka Architecture Part 2 — Consumer Groups, Rebalancing &amp; High Availability — System Design Notes</title>
+  <meta name="description" content="Deep analysis of Kafka Consumer Groups, partition assignment semantics, __consumer_offsets internal topic management, commit strategies (At-least-once, At-most-once, Exactly-once), ISR replication, and broker leader failover.">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.body);"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <ul class="nav-links">
+          <li><a href="../index.html">← All Notes</a></li>
+        </ul>
+        <button id="theme-toggle" class="btn-icon" aria-label="Toggle Theme">
+          <span class="theme-icon">☀️</span>
+        </button>
+        <a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="btn-icon" aria-label="GitHub Repository">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+          </svg>
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="article-page">
+    <div class="article-breadcrumbs">
+      <a href="../index.html">Home</a>
+      <span>/</span>
+      <a href="../index.html#streaming-kafka">Streaming &amp; Kafka</a>
+      <span>/</span>
+      <span>Apache Kafka Architecture Part 2 — Consumer Groups, Rebalancing &amp; High Availability</span>
+    </div>
+
+    <header class="article-header">
+      <span class="article-header-badge">High Availability</span>
+      <h1 class="article-header-title">Apache Kafka Architecture Part 2 — Consumer Groups, Rebalancing &amp; High Availability</h1>
+      <div class="article-header-meta">
+        <span>👤 Author: <strong>Rishi Chowdhury</strong></span>
+        <span>📅 Published: Mar 1, 2026</span>
+        <span>⏱️ 9 min read</span>
+        <span>📁 Category: Streaming &amp; Kafka</span>
+      </div>
+      <div class="article-header-actions">
+        
+        <a href="../Kafka_Architecture_Part2.pdf" class="btn-secondary" target="_blank" download>
+          <span>📄 View / Download Original PDF</span>
+        </a>
+        <a href="../index.html" class="btn-primary">
+          <span>← Back to Blog Index</span>
+        </a>
+      </div>
+    </header>
+
+    <div class="article-container">
+      <article class="prose">
+        
+<div class="callout callout-note">
+  <div class="callout-title">📌 Consumer Groups & Cluster Reliability</div>
+  <p>Part 2 of the Kafka Architecture series explores how consumers cooperate to process vast volumes of data. We analyze Consumer Groups, partition reassignment semantics, offset commit management via <code>__consumer_offsets</code>, delivery semantics (At-Least-Once vs Exactly-Once), In-Sync Replicas (ISR), and broker leader election.</p>
+</div>
+
+<h2 id="consumer-groups">1. Consumers and Consumer Groups</h2>
+<p>A <strong>Consumer Group</strong> is a logical collection of consumers collaborating to ingest and process records from a set of topics. Consumer Groups allow Kafka to seamlessly unite queueing and publish-subscribe models:</p>
+
+<div class="diagram-container">
+  <pre class="mermaid">
+flowchart TD
+  subgraph Topic["Topic: 'transactions' (4 Partitions)"]
+    P0["Partition 0"]
+    P1["Partition 1"]
+    P2["Partition 2"]
+    P3["Partition 3"]
+  end
+
+  subgraph GroupA["Consumer Group 1 (Order Fulfillment)"]
+    C1["Consumer 1"]
+    C2["Consumer 2"]
+  end
+
+  subgraph GroupB["Consumer Group 2 (Fraud Detection)"]
+    C3["Consumer 3"]
+  end
+
+  P0 --> C1
+  P1 --> C1
+  P2 --> C2
+  P3 --> C2
+
+  P0 --> C3
+  P1 --> C3
+  P2 --> C3
+  P3 --> C3
+  </pre>
+  <div class="diagram-caption">Figure 5: Consumer Group partition assignment rules and multi-group broadcast.</div>
+</div>
+
+<div class="callout callout-tip">
+  <div class="callout-title">📏 The Two Fundamental Partition Rules</div>
+  <ul>
+    <li><strong>Rule 1 (Within a Single Group):</strong> Each partition can be assigned to <strong>at most one consumer instance</strong> in that group. Two consumers in the same group can never read from the same partition concurrently! If you have 4 partitions and 6 consumers in a group, 2 consumers will remain completely idle.</li>
+    <li><strong>Rule 2 (Across Different Groups):</strong> Multiple consumer groups operate completely independently. A consumer in Group 1 and a consumer in Group 2 can read the same partition simultaneously without interfering with each other's progress.</li>
+  </ul>
+</div>
+
+<h2 id="offsets">2. Offset Management (__consumer_offsets)</h2>
+<p>How does Kafka know where a consumer left off if it restarts? Every consumer periodically commits its current offset position.</p>
+<p>In early Kafka versions, offsets were stored in ZooKeeper. Modern Kafka stores committed offsets in an internal, high-throughput, compacted Kafka topic named <strong><code>__consumer_offsets</code></strong>. When a consumer fails, the new assigned consumer simply reads the latest committed offset from <code>__consumer_offsets</code> and resumes processing without skipping records.</p>
+
+<h2 id="commit-strategies">3. Offset Commit Strategies & Delivery Semantics</h2>
+<p>The timing of when an offset is committed determines the delivery semantics of your application:</p>
+<table>
+  <thead>
+    <tr>
+      <th>Strategy</th>
+      <th>Configuration / Mechanism</th>
+      <th>Pros & Cons</th>
+      <th>Delivery Guarantee</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Automatic Commit</strong></td>
+      <td><code>enable.auto.commit = true</code> (commits periodically, e.g. every 5s)</td>
+      <td>Simple; risk of data loss if process crashes after commit but before processing finishes</td>
+      <td>At-Most-Once / At-Least-Once</td>
+    </tr>
+    <tr>
+      <td><strong>Manual Sync Commit</strong></td>
+      <td><code>commitSync()</code> (commits after batch finishes)</td>
+      <td>Safe; blocks consumer thread until broker confirms commit, slight throughput penalty</td>
+      <td>At-Least-Once</td>
+    </tr>
+    <tr>
+      <td><strong>Manual Async Commit</strong></td>
+      <td><code>commitAsync()</code></td>
+      <td>High throughput; non-blocking, but requires careful error callback handling</td>
+      <td>At-Least-Once</td>
+    </tr>
+    <tr>
+      <td><strong>Transactional Processing</strong></td>
+      <td>Kafka Transactions API (<code>initTransactions</code>, <code>sendOffsetsToTransaction</code>)</td>
+      <td>Atomic write of output events + consumed offsets across Kafka topics</td>
+      <td><strong>Exactly-Once Processing (EOS)</strong></td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="cluster-ha">4. Kafka Cluster & High Availability</h2>
+<p>A production Kafka cluster consists of multiple brokers to provide scalability, load balancing, and fault tolerance:</p>
+<ul>
+  <li><strong>Replication Factor:</strong> Topics configure a replication factor (typically 3 in production). For each partition, 1 broker is designated as the <strong>Leader</strong> and the remaining 2 are <strong>Followers</strong>.</li>
+  <li><strong>Leader Partitions:</strong> Handle 100% of incoming produce and consume requests (ensuring total linear order).</li>
+  <li><strong>Follower Partitions:</strong> Never serve client writes. They continuously fetch log records from the leader to stay synchronized.</li>
+</ul>
+
+<h2 id="isr">5. In-Sync Replicas (ISR) and Leader Election</h2>
+<p>Followers that are actively keeping up with the leader partition's latest records are categorized in the <strong>In-Sync Replicas (ISR)</strong> pool:</p>
+<ul>
+  <li>If a follower node experiences high network latency or hardware failure and falls behind the leader (configurable via <code>replica.lag.time.max.ms</code>), the broker is evicted from the ISR pool.</li>
+  <li><strong>Producer Durability (<code>acks</code>):</strong>
+    <ul>
+      <li><code>acks=0</code>: Fire-and-forget; producer does not wait for any broker ack (fastest, lowest durability).</li>
+      <li><code>acks=1</code>: Leader writes locally to disk and acks immediately without waiting for followers.</li>
+      <li><code>acks=all</code> (or <code>acks=-1</code>): Leader waits until all replicas in the ISR confirm persisting the write. Combined with <code>min.insync.replicas=2</code>, this prevents data loss even if the leader immediately crashes!</li>
+    </ul>
+  </li>
+  <li><strong>Leader Election:</strong> When a leader broker crashes, the cluster controller selects a replacement leader exclusively from the healthy ISR pool.</li>
+</ul>
+
+      </article>
+
+      <aside class="toc-sidebar">
+        <div class="toc-title">Table of Contents</div>
+        <ul class="toc-list">
+          
+<li><a href="#consumer-groups">1. Consumers and Consumer Groups</a></li>
+<li><a href="#offsets">2. Offset Management</a></li>
+<li><a href="#commit-strategies">3. Commit Strategies & Delivery Semantics</a></li>
+<li><a href="#cluster-ha">4. Cluster & High Availability</a></li>
+<li><a href="#isr">5. In-Sync Replicas (ISR) & Failover</a></li>
+
+        </ul>
+      </aside>
+    </div>
+
+    <div class="post-navigation">
+      
+        <a href="kafka-architecture-part1.html" class="nav-card">
+          <span class="nav-label">← Previous Note</span>
+          <span class="nav-card-title">Apache Kafka Architecture Part 1 — Event-Driven Architecture &amp; Storage Fundamentals</span>
+        </a>
+      
+        <a href="microservices-design-patterns.html" class="nav-card" style="text-align: right;">
+          <span class="nav-label">Next Note →</span>
+          <span class="nav-card-title">Microservices Design Patterns — Strangler Fig, SAGA, CQRS &amp; Transactional Outbox</span>
+        </a>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-brand">
+        <h4>System Design Notes</h4>
+        <p>Curated and published by Rishi Chowdhury. Deep-dive technical analyses and reference architectures for building high-scale distributed systems, fault-tolerant databases, and resilient microservices.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Quick Links</h5>
+        <ul>
+          <li><a href="../index.html">All Notes</a></li>
+          <li><a href="../index.html#cloud-databases">Cloud Databases</a></li>
+          <li><a href="../index.html#distributed-systems">Distributed Systems</a></li>
+          <li><a href="../index.html#streaming-kafka">Kafka & Streaming</a></li>
+          <li><a href="../index.html#microservices">Microservices</a></li>
+          <li><a href="../index.html#in-memory-redis">Redis Internals</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Resources</h5>
+        <ul>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank">GitHub Repository</a></li>
+          <li><a href="../System_Design_Notes.pdf" target="_blank">System Design Notes PDF</a></li>
+          <li><a href="../Amazon_Aurora_Cloud_Native_Databases.pdf" target="_blank">Amazon Aurora PDF</a></li>
+          <li><a href="../CAP_THEOREM_AND_GOOGLE_SPANNER.pdf" target="_blank">Google Spanner PDF</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <div>&copy; 2026 Rishi Chowdhury. System Design Knowledge Base.</div>
+      <div>Hosted with GitHub Pages</div>
+    </div>
+  </footer>
+
+  <button id="back-to-top" class="back-to-top" aria-label="Back to top">↑</button>
+
+  <script src="../assets/js/articles-data.js"></script>
+  <script src="../assets/js/main.js"></script>
+</body>
+</html>
