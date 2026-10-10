@@ -9,7 +9,7 @@ const ARTICLES_DATA = [
     readTime: "18 min read",
     date: "Jan 9, 2026",
     badge: "Deep Dive",
-    pdfSource: "Amazon_Aurora_Cloud_Native_Databases.pdf",
+    pdfSource: "Docs/Amazon_Aurora_Cloud_Native_Databases.pdf",
     excerpt: "A comprehensive technical analysis of cloud-native database architecture: storage-compute separation, the 'Log is the Database' paradigm, Aurora's 4/6 quorum durability across 3 AZs, 10GB segmented storage, and instant crash recovery mechanics.",
     tags: ["Amazon Aurora", "Cloud-Native", "Quorum", "Storage-Compute", "Distributed SQL", "AWS"],
     featured: true
@@ -23,7 +23,7 @@ const ARTICLES_DATA = [
     readTime: "12 min read",
     date: "May 21, 2025",
     badge: "Consensus",
-    pdfSource: "CAP_THEOREM_AND_GOOGLE_SPANNER.pdf",
+    pdfSource: "Docs/CAP_THEOREM_AND_GOOGLE_SPANNER.pdf",
     excerpt: "Brewer's CAP Theorem unpacked (CP vs AP trade-offs) and how Google Spanner achieves external consistency (linearizability) and 99.999% availability using TrueTime API GPS clocks, atomic oscillators, and Paxos consensus groups.",
     tags: ["Google Spanner", "CAP Theorem", "TrueTime", "Paxos", "2PC", "Linearizability"],
     featured: true
@@ -37,7 +37,7 @@ const ARTICLES_DATA = [
     readTime: "14 min read",
     date: "Jan 9, 2026",
     badge: "Architecture",
-    pdfSource: "Microservices_Architecture_Notes.pdf",
+    pdfSource: "Docs/Microservices_Architecture_Notes.pdf",
     excerpt: "Essential architectural patterns for distributed microservices: monolith migration via the Strangler Fig pattern, database-per-service isolation, distributed transactions via SAGA, CQRS separation, and solving dual-writes with the Transactional Outbox pattern & CDC.",
     tags: ["Microservices", "Strangler Fig", "SAGA Pattern", "CQRS", "Transactional Outbox", "Debezium"],
     featured: true
@@ -51,7 +51,7 @@ const ARTICLES_DATA = [
     readTime: "8 min read",
     date: "Mar 1, 2026",
     badge: "Streaming",
-    pdfSource: "Kafka_Architecture_Part1.pdf",
+    pdfSource: "Docs/Kafka_Architecture_Part1.pdf",
     excerpt: "Core internals of Apache Kafka: Distributed event streaming vs Pub/Sub, Producer-Broker architecture, Partitioning strategies, Horizontal scaling, Segment files, and zero-copy sequential disk storage.",
     tags: ["Apache Kafka", "Event Streaming", "Partitions", "Log Compaction", "Storage Engine"],
     featured: false
@@ -65,7 +65,7 @@ const ARTICLES_DATA = [
     readTime: "9 min read",
     date: "Mar 1, 2026",
     badge: "High Availability",
-    pdfSource: "Kafka_Architecture_Part2.pdf",
+    pdfSource: "Docs/Kafka_Architecture_Part2.pdf",
     excerpt: "Deep analysis of Kafka Consumer Groups, partition assignment semantics, __consumer_offsets internal topic management, commit strategies (At-least-once, At-most-once, Exactly-once), ISR replication, and broker leader failover.",
     tags: ["Apache Kafka", "Consumer Groups", "Rebalance Protocol", "ISR", "High Availability"],
     featured: false
@@ -79,7 +79,7 @@ const ARTICLES_DATA = [
     readTime: "8 min read",
     date: "Feb 24, 2026",
     badge: "Real-World Architecture",
-    pdfSource: "Grab_Configured_Data_Layer.pdf",
+    pdfSource: "Docs/Grab_Configured_Data_Layer.pdf",
     excerpt: "How Grab handles spiky food delivery traffic and millions of transactions per day: Redis Cache-Aside, Read-Write Splitting, Geographic Sharding, DynamoDB Partial Indexing optimization, and Kafka pipelines.",
     tags: ["Grab", "High Concurrency", "Database Sharding", "Redis", "DynamoDB", "Kafka"],
     featured: false
@@ -93,7 +93,7 @@ const ARTICLES_DATA = [
     readTime: "22 min read",
     date: "Apr 12, 2026",
     badge: "Deep Dive",
-    pdfSource: "Redis_Notes/",
+    pdfSource: "Docs/Redis_Notes/",
     excerpt: "17-module masterclass on Redis internals: I/O multiplexing (epoll/kqueue), RESP protocol specification, Active/Passive Expiration, LRU/LFU approximation algorithms, Persistence (RDB & AOF), Quicklists, Ziplists, Intsets, Geohashing, and HyperLogLog.",
     tags: ["Redis", "Event Loop", "RESP", "IO Multiplexing", "LRU Cache", "HyperLogLog", "In-Memory DB"],
     featured: true
@@ -121,7 +121,7 @@ const ARTICLES_DATA = [
     readTime: "24 min read",
     date: "Apr 12, 2026",
     badge: "Complete Notes",
-    pdfSource: "System_Design_Notes.pdf",
+    pdfSource: "Docs/System_Design_Notes.pdf",
     excerpt: "Comprehensive notes on core system design principles: structured interview framework, Relational vs NoSQL databases, Database Scaling (Master-Slave replication, Sharding, Federation), Caching patterns, L4/L7 Load Balancing, Circuit Breakers, and Consistent Hashing.",
     tags: ["System Design", "Scalability", "Sharding", "Consistent Hashing", "Circuit Breaker", "Load Balancing"],
     featured: true
@@ -135,7 +135,7 @@ const ARTICLES_DATA = [
     readTime: "26 min read",
     date: "Apr 12, 2026",
     badge: "Real-World Systems",
-    pdfSource: "System_Design_Notes.pdf",
+    pdfSource: "Docs/System_Design_Notes.pdf",
     excerpt: "Architectural designs for production distributed systems: Distributed Rate Limiter, Multi-channel Notification Engine, URL Shortener (TinyURL) with range allocation, PasteBin / Gist object tiering, Real-time Fraud Detection Pipeline, Recommendation Engine, and Distributed Web Crawler.",
     tags: ["System Design", "Rate Limiter", "TinyURL", "Notification Service", "Web Crawler", "Fraud Detection"],
     featured: true

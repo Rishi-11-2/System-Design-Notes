@@ -22,16 +22,16 @@ A production-grade engineering blog and comprehensive system design knowledge ba
 
 | Article Title | Category | Read Time | Source Document |
 | :--- | :--- | :--- | :--- |
-| [**Cloud-Native Databases and Amazon Aurora Architecture**](posts/amazon-aurora-cloud-native-databases.html) | Cloud Databases | 18 min | `Amazon_Aurora_Cloud_Native_Databases.pdf` |
-| [**CAP Theorem and Google Spanner — The Globally-Distributed Database**](posts/cap-theorem-and-google-spanner.html) | Distributed Systems | 12 min | `CAP_THEOREM_AND_GOOGLE_SPANNER.pdf` |
-| [**How Grab Configured Their Data Layer for Multi-Million Daily Transactions**](posts/grab-data-layer-architecture.html) | Case Studies | 8 min | `Grab_Configured_Data_Layer.pdf` |
-| [**Apache Kafka Architecture Part 1 — Storage & Event Fundamentals**](posts/kafka-architecture-part1.html) | Streaming & Kafka | 8 min | `Kafka_Architecture_Part1.pdf` |
-| [**Apache Kafka Architecture Part 2 — Consumer Groups & High Availability**](posts/kafka-architecture-part2.html) | Streaming & Kafka | 9 min | `Kafka_Architecture_Part2.pdf` |
-| [**Microservices Design Patterns — Strangler, SAGA, CQRS & Outbox**](posts/microservices-design-patterns.html) | Microservices | 14 min | `Microservices_Architecture_Notes.pdf` |
-| [**Redis Deep Dive — Event Loop, RESP Protocol & Data Structures**](posts/redis-internals-and-architecture.html) | In-Memory & Redis | 22 min | `Redis_Notes/` (17 PDF Modules) |
+| [**Cloud-Native Databases and Amazon Aurora Architecture**](posts/amazon-aurora-cloud-native-databases.html) | Cloud Databases | 18 min | `Docs/Amazon_Aurora_Cloud_Native_Databases.pdf` |
+| [**CAP Theorem and Google Spanner — The Globally-Distributed Database**](posts/cap-theorem-and-google-spanner.html) | Distributed Systems | 12 min | `Docs/CAP_THEOREM_AND_GOOGLE_SPANNER.pdf` |
+| [**How Grab Configured Their Data Layer for Multi-Million Daily Transactions**](posts/grab-data-layer-architecture.html) | Case Studies | 8 min | `Docs/Grab_Configured_Data_Layer.pdf` |
+| [**Apache Kafka Architecture Part 1 — Storage & Event Fundamentals**](posts/kafka-architecture-part1.html) | Streaming & Kafka | 8 min | `Docs/Kafka_Architecture_Part1.pdf` |
+| [**Apache Kafka Architecture Part 2 — Consumer Groups & High Availability**](posts/kafka-architecture-part2.html) | Streaming & Kafka | 9 min | `Docs/Kafka_Architecture_Part2.pdf` |
+| [**Microservices Design Patterns — Strangler, SAGA, CQRS & Outbox**](posts/microservices-design-patterns.html) | Microservices | 14 min | `Docs/Microservices_Architecture_Notes.pdf` |
+| [**Redis Deep Dive — Event Loop, RESP Protocol & Data Structures**](posts/redis-internals-and-architecture.html) | In-Memory & Redis | 22 min | `Docs/Redis_Notes/` (17 PDF Modules) |
 | [**Implementing Redis from Scratch in Java — NIO Event Loop & Parser**](posts/redis-java-implementation.html) | In-Memory & Redis | 15 min | `Redis_Implementation/` (Source Code) |
-| [**System Design Foundations — Core Principles & DB Scaling**](posts/system-design-foundations-and-scaling.html) | Foundations & Scaling | 24 min | `System_Design_Notes.pdf` (Part 1) |
-| [**Large-Scale System Design Case Studies (7 Systems)**](posts/system-design-case-studies.html) | Case Studies | 26 min | `System_Design_Notes.pdf` (Part 2) |
+| [**System Design Foundations — Core Principles & DB Scaling**](posts/system-design-foundations-and-scaling.html) | Foundations & Scaling | 24 min | `Docs/System_Design_Notes.pdf` |
+| [**Large-Scale System Design Case Studies (7 Systems)**](posts/system-design-case-studies.html) | Case Studies | 26 min | `Docs/System_Design_Notes.pdf` |
 
 ---
 
@@ -72,20 +72,21 @@ A production-grade engineering blog and comprehensive system design knowledge ba
 │   ├── redis-java-implementation.html
 │   ├── system-design-foundations-and-scaling.html
 │   └── system-design-case-studies.html
-├── Redis_Implementation/                         # Custom Java implementation of Redis
-│   ├── RedisEventLoopServer.java
-│   ├── RESP.java
-│   ├── RESPDecoder.java
-│   └── RedisPingServer.java
-├── Redis_Notes/                                  # 17 Original Redis modules (Untouched)
-├── Papers/                                       # Academic papers: Spanner, Dremel (Untouched)
-├── Amazon_Aurora_Cloud_Native_Databases.pdf      # (Untouched original PDF)
-├── CAP_THEOREM_AND_GOOGLE_SPANNER.pdf            # (Untouched original PDF)
-├── Grab_Configured_Data_Layer.pdf                # (Untouched original PDF)
-├── Kafka_Architecture_Part1.pdf                  # (Untouched original PDF)
-├── Kafka_Architecture_Part2.pdf                  # (Untouched original PDF)
-├── Microservices_Architecture_Notes.pdf          # (Untouched original PDF)
-└── System_Design_Notes.pdf                       # (Untouched original PDF)
+├── Docs/                                         # Original PDFs, research papers, and notes
+│   ├── Amazon_Aurora_Cloud_Native_Databases.pdf
+│   ├── CAP_THEOREM_AND_GOOGLE_SPANNER.pdf
+│   ├── Grab_Configured_Data_Layer.pdf
+│   ├── Kafka_Architecture_Part1.pdf
+│   ├── Kafka_Architecture_Part2.pdf
+│   ├── Microservices_Architecture_Notes.pdf
+│   ├── System_Design_Notes.pdf
+│   ├── Papers/                                   # Academic papers: Spanner, Dremel
+│   └── Redis_Notes/                              # 17 Original Redis note modules
+└── Redis_Implementation/                         # Custom Java implementation of Redis
+    ├── RedisEventLoopServer.java
+    ├── RESP.java
+    ├── RESPDecoder.java
+    └── RedisPingServer.java
 ```
 
 ---
