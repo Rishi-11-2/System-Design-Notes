@@ -9,7 +9,7 @@
   <!-- KaTeX for Math Rendering -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.body);"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.body, {delimiters: [{left: '82907', right: '82907', display: true}, {left: '$', right: '$', display: false}, {left: '\(', right: '\)', display: false}, {left: '\\[', right: '\\]', display: true}], throwOnError: false});"></script>
   <!-- Mermaid for Architecture Diagrams -->
   <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 </head>
@@ -171,7 +171,7 @@ flowchart TD
 
 <ul>
   <li><strong>Range-Based Sharding:</strong> Partitioning by key ranges (e.g. User IDs 1-100K on Shard 1). Can lead to hotspotting if new sequential IDs overwhelm the latest shard.</li>
-  <li><strong>Hash-Based Sharding:</strong> Applying a hash function ($	ext{hash}(	ext{key}) \pmod N$) to distribute data uniformly across $N$ shards.</li>
+  <li><strong>Hash-Based Sharding:</strong> Applying a hash function ($\text{hash}(\text{key}) \pmod N$) to distribute data uniformly across $N$ shards.</li>
   <li><strong>Sharding Challenges:</strong> Cross-shard joins are virtually impossible; distributed transactions across shards require SAGAs; repartitioning when adding shards is complex.</li>
 </ul>
 
@@ -188,7 +188,7 @@ flowchart TD
 <p>Load Balancers distribute incoming traffic across application server pools to ensure high availability and responsiveness:</p>
 <ul>
   <li><strong>Layer 4 Load Balancing (Transport Layer):</strong> Operates at TCP/UDP level without inspecting HTTP headers or cookies. Extremely high packet throughput (millions of packets/sec). Examples: AWS NLB, IPVS.</li>
-  <li><strong>Layer 7 Load Balancing (Application Layer):</strong> Inspects HTTP request content (URL path, headers, cookies). Enables path-based routing (e.g. <code>/api/orders</code> $	o$ Order Service, <code>/images</code> $	o$ CDN), TLS termination, and sticky sessions. Examples: NGINX, HAProxy, AWS ALB.</li>
+  <li><strong>Layer 7 Load Balancing (Application Layer):</strong> Inspects HTTP request content (URL path, headers, cookies). Enables path-based routing (e.g. <code>/api/orders</code> $\to$ Order Service, <code>/images</code> $\to$ CDN), TLS termination, and sticky sessions. Examples: NGINX, HAProxy, AWS ALB.</li>
   <li><strong>Algorithms:</strong> Round Robin, Weighted Round Robin, Least Connections, IP Hash.</li>
 </ul>
 
@@ -215,14 +215,14 @@ stateDiagram-v2
 </ul>
 
 <h2 id="consistent-hashing">8. Consistent Hashing</h2>
-<p>In naive modulo hashing ($	ext{server} = 	ext{hash}(	ext{key}) \pmod N$), adding or removing a single node from $N$ to $N+1$ causes almost <strong>100% of all keys to rehash to different nodes</strong> ($rac{N}{N+1}$ keys moved), completely invalidating caches and triggering massive database stampedes.</p>
+<p>In naive modulo hashing ($\text{server} = \text{hash}(\text{key}) \pmod N$), adding or removing a single node from $N$ to $N+1$ causes almost <strong>100% of all keys to rehash to different nodes</strong> ($\frac{N}{N+1}$ keys moved), completely invalidating caches and triggering massive database stampedes.</p>
 
 <div class="callout callout-tip">
   <div class="callout-title">🔄 The Consistent Hashing Ring</div>
   <p>Consistent Hashing maps both keys and servers to a logical <strong>Hash Ring</strong> ($[0, 2^{32}-1]$):</p>
   <ul>
     <li>A key is routed to the <strong>first server encountered clockwise</strong> on the ring.</li>
-    <li>When a node is added or removed, <strong>only $rac{1}{N}$ fraction of keys are remapped</strong> on average!</li>
+    <li>When a node is added or removed, <strong>only $\frac{1}{N}$ fraction of keys are remapped</strong> on average!</li>
     <li><strong>Virtual Nodes (vnodes):</strong> To prevent non-uniform distribution and server hotspots, each physical server is mapped to multiple virtual positions on the ring (e.g. 150 vnodes per physical machine).</li>
   </ul>
 </div>

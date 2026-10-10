@@ -9,7 +9,7 @@
   <!-- KaTeX for Math Rendering -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.body);"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.body, {delimiters: [{left: '82907', right: '82907', display: true}, {left: '$', right: '$', display: false}, {left: '\(', right: '\)', display: false}, {left: '\\[', right: '\\]', display: true}], throwOnError: false});"></script>
   <!-- Mermaid for Architecture Diagrams -->
   <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 </head>
@@ -177,7 +177,7 @@ flowchart TD
   <div class="callout-title">📐 Classical Quorum Invariant</div>
   <p>For a system with $V$ total copies, a write quorum of size $V_W$, and a read quorum of size $V_R$:</p>
   <p>$$V_R + V_W > V$$</p>
-  <p>$$V_W > rac{V}{2}$$</p>
+  <p>$$V_W > \frac{V}{2}$$</p>
 </div>
 
 <p>The first condition ($V_R + V_W > V$) guarantees the <strong>Pigeonhole Principle</strong>: the set of nodes participating in a read quorum must intersect with the set of nodes that confirmed the most recent write by at least one node. The second condition ($V_W > V/2$) prevents split-brain scenarios by ensuring only one write quorum can be established simultaneously.</p>
@@ -241,7 +241,7 @@ flowchart TD
 <ol>
   <li>Aurora detects the loss and designates a new storage node to hold the replacement copy.</li>
   <li>Rebuilding a small 10GB segment over Aurora's 10Gbps/25Gbps network backbone takes approximately <strong>10 seconds</strong>!</li>
-  <li>Because repairs finish in ~10 seconds, the probability of an additional failure occurring within the same protection group during that tiny window is vanishingly small ($P pprox 0$).</li>
+  <li>Because repairs finish in ~10 seconds, the probability of an additional failure occurring within the same protection group during that tiny window is vanishingly small ($P \approx 0$).</li>
 </ol>
 
 <h2 id="probabilistic">9. Probabilistic Analysis of Data Loss</h2>

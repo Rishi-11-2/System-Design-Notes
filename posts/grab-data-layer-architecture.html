@@ -9,7 +9,7 @@
   <!-- KaTeX for Math Rendering -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.body);"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.body, {delimiters: [{left: '82907', right: '82907', display: true}, {left: '$', right: '$', display: false}, {left: '\(', right: '\)', display: false}, {left: '\\[', right: '\\]', display: true}], throwOnError: false});"></script>
   <!-- Mermaid for Architecture Diagrams -->
   <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 </head>
@@ -81,7 +81,7 @@
 <h2 id="query-types">2. Query Types: OLTP vs OLAP</h2>
 <p>To design an optimal persistence architecture, Grab segregates workloads into two distinct categories:</p>
 <ul>
-  <li><strong>Transactional Queries (OLTP):</strong> Real-time operations with low latency requirements (< 50ms). Examples: creating a new food order, driver location updates, order state transitions (Pending $	o$ Confirmed $	o$ Picked Up $	o$ Delivered).</li>
+  <li><strong>Transactional Queries (OLTP):</strong> Real-time operations with low latency requirements (< 50ms). Examples: creating a new food order, driver location updates, order state transitions (Pending $\to$ Confirmed $\to$ Picked Up $\to$ Delivered).</li>
   <li><strong>Analytical Queries (OLAP):</strong> Heavy aggregate read operations and reporting. Examples: merchant earnings calculations, fraud detection heuristics, supply-demand modeling, daily business metrics.</li>
 </ul>
 

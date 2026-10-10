@@ -9,7 +9,7 @@
   <!-- KaTeX for Math Rendering -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.body);"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.body, {delimiters: [{left: '82907', right: '82907', display: true}, {left: '$', right: '$', display: false}, {left: '\(', right: '\)', display: false}, {left: '\\[', right: '\\]', display: true}], throwOnError: false});"></script>
   <!-- Mermaid for Architecture Diagrams -->
   <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 </head>
@@ -199,7 +199,7 @@ name
 </ul>
 
 <h2 id="pipelining">Module 06: Pipelining Mechanics</h2>
-<p>In standard request-response cycles, a client sends command 1, waits for network Round-Trip Time (RTT, e.g. 20ms), receives response 1, then sends command 2. 50 commands take $50 	imes 20	ext{ms} = 1000	ext{ms}$.</p>
+<p>In standard request-response cycles, a client sends command 1, waits for network Round-Trip Time (RTT, e.g. 20ms), receives response 1, then sends command 2. 50 commands take $50 \times 20\text{ms} = 1000\text{ms}$.</p>
 <p><strong>Pipelining</strong> enables clients to queue 50 commands, transmit them as a single TCP packet burst, and read all 50 responses in one batch. Redis processes them in sequence in memory. Execution time drops from 1000ms down to ~25ms!</p>
 
 <h2 id="persistence">Module 07: Redis Persistence (RDB vs AOF)</h2>
@@ -254,7 +254,7 @@ name
 <ol>
   <li>Each <code>robj</code> stores a 24-bit timestamp (<code>lru</code> clock).</li>
   <li>When eviction is required, Redis randomly samples <strong>$N$ keys</strong> (default <code>maxmemory-samples = 5</code>).</li>
-  <li>It maintains a 16-element candidate pool sorted by idle time ($	ext{current\_time} - 	ext{lru}$).</li>
+  <li>It maintains a 16-element candidate pool sorted by idle time ($\text{current\_time} - \text{lru}$).</li>
   <li>The key with the greatest idle time in the pool is evicted.</li>
   <li>With $N=10$, Approximated LRU matches theoretical true LRU within 1% accuracy while saving gigabytes of RAM!</li>
 </ol>
@@ -264,7 +264,7 @@ name
 <p>C strings are null-terminated arrays (<code>char*</code>), which suffer from $O(N)$ strlen lookups and buffer overflow risks. Redis uses SDS:</p>
 <ul>
   <li>Stores explicit <code>len</code> ($O(1)$ length check) and <code>alloc</code> (preallocated buffer space).</li>
-  <li>Binary-safe: can store raw image bytes or serialized protobufs containing embedded null bytes (<code> </code>).</li>
+  <li>Binary-safe: can store raw image bytes or serialized protobufs containing embedded null bytes (<code>\0</code>).</li>
 </ul>
 
 <h3 id="quicklist">Ziplist & Quicklist</h3>
@@ -282,7 +282,7 @@ name
 <p>Least Frequently Used (LFU) protects against scan anomalies where a rarely accessed key is read once and stays in cache. Redis packs both the last access time and frequency into the 24-bit <code>lru</code> field:</p>
 <ul>
   <li><strong>16 bits:</strong> Last Decr Time (<code>ldt</code>) — timestamp in minutes. Used to decay frequency over time.</li>
-  <li><strong>8 bits:</strong> Logarithmic Counter (<code>logc</code>) — Uses Morris Approximate Counting. Instead of incrementing on every access ($255$ max), the counter increments with probability $rac{1}{1 + 	ext{counter} 	imes 	ext{lfu\_log\_factor}}$, allowing an 8-bit byte to represent up to 1,000,000 accesses!</li>
+  <li><strong>8 bits:</strong> Logarithmic Counter (<code>logc</code>) — Uses Morris Approximate Counting. Instead of incrementing on every access ($255$ max), the counter increments with probability $\frac{1}{1 + \text{counter} \times \text{lfu\_log\_factor}}$, allowing an 8-bit byte to represent up to 1,000,000 accesses!</li>
 </ul>
 
       </article>

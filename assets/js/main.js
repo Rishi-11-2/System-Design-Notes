@@ -235,16 +235,18 @@ function initMermaid() {
   if (typeof mermaid !== 'undefined') {
     mermaid.initialize({
       startOnLoad: true,
-      theme: document.documentElement.getAttribute('data-theme') === 'light' ? 'default' : 'dark',
+      theme: 'dark',
       themeVariables: {
-        darkMode: document.documentElement.getAttribute('data-theme') !== 'light',
-        background: '#151d30',
-        primaryColor: '#38bdf8',
-        primaryTextColor: '#f1f5f9',
-        primaryBorderColor: '#38bdf8',
-        lineColor: '#818cf8',
-        secondaryColor: '#1e293b',
-        tertiaryColor: '#111827'
+        darkMode: true,
+        background: '#1e1f1c',
+        primaryColor: '#F92672',
+        primaryTextColor: '#F8F8F2',
+        primaryBorderColor: '#F92672',
+        lineColor: '#66D9EF',
+        secondaryColor: '#272822',
+        tertiaryColor: '#3e3d32',
+        noteBkgColor: '#272822',
+        noteTextColor: '#F8F8F2'
       }
     });
   }

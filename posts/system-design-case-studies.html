@@ -9,7 +9,7 @@
   <!-- KaTeX for Math Rendering -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.body);"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.body, {delimiters: [{left: '82907', right: '82907', display: true}, {left: '$', right: '$', display: false}, {left: '\(', right: '\)', display: false}, {left: '\\[', right: '\\]', display: true}], throwOnError: false});"></script>
   <!-- Mermaid for Architecture Diagrams -->
   <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 </head>
@@ -82,7 +82,7 @@
   <li><strong>Token Bucket:</strong> A bucket holds up to $B$ tokens. Tokens refill at rate $R$ per second. Each request consumes 1 token. Allows burst traffic while bounding average rate. Widely used (Amazon API Gateway, Stripe).</li>
   <li><strong>Leaky Bucket:</strong> Requests enter a FIFO queue and leak out at a constant rate. Excess drops. Smoothes bursts into steady output.</li>
   <li><strong>Sliding Window Counter:</strong> Blends requests from previous window and current window:
-  $$	ext{count} = 	ext{current\_requests} + 	ext{previous\_requests} 	imes (1 - 	ext{elapsed\_fraction})$$
+  $$\text{count} = \text{current\_requests} + \text{previous\_requests} \times (1 - \text{elapsed\_fraction})$$
   Extremely memory-efficient and eliminates boundary spikes.</li>
 </ul>
 
@@ -146,7 +146,7 @@ flowchart TD
 <ul>
   <li><strong>Base62 Encoding:</strong> Using 62 alphanumeric characters ($[a-z, A-Z, 0-9]$).</li>
   <li>With 7 characters, total possible unique combinations:
-  $$62^7 = 3,521,614,606,208 pprox 3.5 	ext{ Trillion URLs}!$$</li>
+  $$62^7 = 3,521,614,606,208 \approx 3.5 \text{ Trillion URLs}!$$</li>
   <li>At 100M URLs per month, 3.5 trillion URLs lasts for over <strong>2,900 years</strong>.</li>
 </ul>
 
@@ -156,8 +156,8 @@ flowchart TD
   <div class="callout-title">🎯 Range Reservation Pattern</div>
   <ol>
     <li>Maintain a coordinator (e.g. ZooKeeper or central MySQL table) managing ID ranges in blocks of <strong>1,000,000 IDs</strong>.</li>
-    <li>When Shortener Server A boots up, it requests a range: it gets $[1,000,000 	o 1,999,999]$.</li>
-    <li>Server B boots up: it gets $[2,000,000 	o 2,999,999]$.</li>
+    <li>When Shortener Server A boots up, it requests a range: it gets $[1,000,000 \to 1,999,999]$.</li>
+    <li>Server B boots up: it gets $[2,000,000 \to 2,999,999]$.</li>
     <li>Each server increments its local atomic counter in RAM ($O(1)$ with zero network RPCs).</li>
     <li>The integer is converted to Base62: integer <code>1000000</code> becomes Base62 <code>4c92</code>.</li>
     <li>Zero collision probability, zero distributed locking overhead!</li>
@@ -179,8 +179,8 @@ flowchart TD
 <h2 id="fraud-detection">Case Study 5: Financial Fraud Detection Pipeline</h2>
 <p>Credit card transactions require fraud evaluation in under 50 milliseconds before authorization.</p>
 <ul>
-  <li><strong>Real-Time Path:</strong> Transaction event arrives $	o$ Fraud Inference Microservice loads pre-computed user profile from Redis (usual spending location, typical merchant categories, velocity) $	o$ Runs lightweight Random Forest / XGBoost model $	o$ Returns Score (Approve, Deny, Trigger 2FA) in < 30ms.</li>
-  <li><strong>Offline Training Path:</strong> Transactions stream into Kafka $	o$ Apache Spark / Flink processes sliding window aggregates (e.g. 5 transactions in last 2 minutes across 2 countries) $	o$ Exports features to feature store $	o$ Periodically retrains models on Amazon S3 training data.</li>
+  <li><strong>Real-Time Path:</strong> Transaction event arrives $\to$ Fraud Inference Microservice loads pre-computed user profile from Redis (usual spending location, typical merchant categories, velocity) $\to$ Runs lightweight Random Forest / XGBoost model $\to$ Returns Score (Approve, Deny, Trigger 2FA) in < 30ms.</li>
+  <li><strong>Offline Training Path:</strong> Transactions stream into Kafka $\to$ Apache Spark / Flink processes sliding window aggregates (e.g. 5 transactions in last 2 minutes across 2 countries) $\to$ Exports features to feature store $\to$ Periodically retrains models on Amazon S3 training data.</li>
 </ul>
 
 <h2 id="recommendation">Case Study 6: Machine Learning Recommendation Engine</h2>

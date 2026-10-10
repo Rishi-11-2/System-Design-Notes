@@ -9,7 +9,7 @@
   <!-- KaTeX for Math Rendering -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.body);"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.body, {delimiters: [{left: '82907', right: '82907', display: true}, {left: '$', right: '$', display: false}, {left: '\(', right: '\)', display: false}, {left: '\\[', right: '\\]', display: true}], throwOnError: false});"></script>
   <!-- Mermaid for Architecture Diagrams -->
   <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 </head>
@@ -134,9 +134,9 @@ sequenceDiagram
 
 <div class="callout callout-tip">
   <div class="callout-title">⏱️ TrueTime Bounded Interval</div>
-  <p>$$	ext{TrueTime.now()} = [t_{	ext{earliest}}, t_{	ext{latest}}]$$</p>
-  <p>Where absolute real time $t_{	ext{abs}}$ is mathematically guaranteed to fall within the interval:</p>
-  <p>$$t_{	ext{earliest}} \le t_{	ext{abs}} \le t_{	ext{latest}} \quad 	ext{and} \quad t_{	ext{latest}} - t_{	ext{earliest}} = 2\epsilon$$</p>
+  <p>$$\text{TrueTime.now()} = [t_{\text{earliest}}, t_{\text{latest}}]$$</p>
+  <p>Where absolute real time $t_{\text{abs}}$ is mathematically guaranteed to fall within the interval:</p>
+  <p>$$t_{\text{earliest}} \le t_{\text{abs}} \le t_{\text{latest}} \quad \text{and} \quad t_{\text{latest}} - t_{\text{earliest}} = 2\epsilon$$</p>
 </div>
 
 <p>Google datacenters maintain TrueTime master servers equipped with two distinct time sources with failover protection:</p>
@@ -148,18 +148,24 @@ sequenceDiagram
 
 <h3 id="commit-wait">3.3 The Commit-Wait Rule and External Consistency</h3>
 <p>Spanner guarantees <strong>External Consistency (Linearizability)</strong>: if a transaction $T_2$ begins after a transaction $T_1$ commits in real time, then $T_2$'s timestamp $s_2$ must be strictly greater than $T_1$'s timestamp $s_1$ ($s_2 > s_1$).</p>
-<p>Spanner enforces this through the elegant <strong>Commit-Wait Rule</strong>:</p>
-<ol>
-  <li>The Paxos leader picks a commit timestamp $s \ge t_{	ext{latest}}$ from TrueTime.</li>
-  <li>Before releasing locks and publishing the commit to clients, the leader waits until:
-  $$	ext{TrueTime.now()}.t_{	ext{earliest}} > s$$</li>
-  <li>By waiting out the clock uncertainty ($2\epsilon$, typically 2-7ms), the leader guarantees that absolute real time has passed timestamp $s$. Any future transaction initiated by any client anywhere in the world will receive a timestamp strictly greater than $s$!</li>
-</ol>
+
+<p>Spanner enforces this invariant through the elegant <strong>Commit-Wait Rule</strong>:</p>
+
+<div class="callout callout-important">
+  <div class="callout-title">🔒 The Commit-Wait Rule Algorithm</div>
+  <ol style="margin-bottom: 0; padding-left: 1.5rem;">
+    <li><strong>Acquire Timestamp:</strong> The Paxos leader picks a commit timestamp $s \ge t_{\text{latest}}$ from the current TrueTime bounded interval.</li>
+    <li><strong>Wait Out Clock Uncertainty:</strong> Before releasing locks and publishing the commit to clients, the leader deliberately blocks until:
+      $$\text{TrueTime.now()}.t_{\text{earliest}} > s$$
+    </li>
+    <li><strong>Guarantee of Linear Order:</strong> By waiting out the maximum clock uncertainty ($2\epsilon$, typically 1–7ms), the leader guarantees that absolute real time everywhere has passed timestamp $s$. Therefore, any future transaction initiated by any client anywhere in the world will receive a timestamp strictly greater than $s$!</li>
+  </ol>
+</div>
 
 <h3 id="concurrency">3.4 Concurrency Control & Replication</h3>
 <ul>
   <li><strong>Read-Write Transactions:</strong> Use Two-Phase Locking (2PL) for serializability combined with Two-Phase Commit (2PC) coordinated across Paxos groups.</li>
-  <li><strong>Lock-Free Read-Only Transactions:</strong> Spanner executes read queries with zero locks by reading a snapshot of data at a past timestamp $t_{	ext{read}}$. Multi-Version Concurrency Control (MVCC) ensures queries never block incoming writes.</li>
+  <li><strong>Lock-Free Read-Only Transactions:</strong> Spanner executes read queries with zero locks by reading a snapshot of data at a past timestamp $t_{\text{read}}$. Multi-Version Concurrency Control (MVCC) ensures queries never block incoming writes.</li>
   <li><strong>Paxos Groups:</strong> Every Spanner database is split into directory splits replicated across multiple datacenters via Paxos groups for automatic leader election and failover.</li>
 </ul>
 
