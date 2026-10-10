@@ -19,9 +19,7 @@
         renderMathInElement(document.body, {
           delimiters: [
             { left: '$$', right: '$$', display: true },
-            { left: '$', right: '$', display: false },
-            { left: '\\(', right: '\\)', display: false },
-            { left: '\\[', right: '\\]', display: true }
+            { left: '$', right: '$', display: false }
           ],
           ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
           ignoredClasses: ['katex', 'mermaid'],
@@ -201,8 +199,8 @@ flowchart TD
 <div class="callout callout-tip">
   <div class="callout-title">📐 Classical Quorum Invariant</div>
   <p>For a system with $V$ total copies, a write quorum of size $V_W$, and a read quorum of size $V_R$:</p>
-  <p>$$V_R + V_W > V$$</p>
-  <p>$$V_W > \frac{V}{2}$$</p>
+  $$V_R + V_W > V$$
+  $$V_W > \frac{V}{2}$$
 </div>
 
 <p>The first condition ($V_R + V_W > V$) guarantees the <strong>Pigeonhole Principle</strong>: the set of nodes participating in a read quorum must intersect with the set of nodes that confirmed the most recent write by at least one node. The second condition ($V_W > V/2$) prevents split-brain scenarios by ensuring only one write quorum can be established simultaneously.</p>
@@ -219,7 +217,7 @@ flowchart TD
 
 <div class="callout callout-important">
   <div class="callout-title">⚡ Aurora Consistency Equation</div>
-  <p>$$V_R + V_W = 3 + 4 = 7 > 6 = V$$</p>
+  $$V_R + V_W = 3 + 4 = 7 > 6 = V$$
   <p>Write quorum is strictly greater than half: $4 > 6/2 = 3$.</p>
 </div>
 

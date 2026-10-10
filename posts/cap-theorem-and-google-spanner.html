@@ -19,9 +19,7 @@
         renderMathInElement(document.body, {
           delimiters: [
             { left: '$$', right: '$$', display: true },
-            { left: '$', right: '$', display: false },
-            { left: '\\(', right: '\\)', display: false },
-            { left: '\\[', right: '\\]', display: true }
+            { left: '$', right: '$', display: false }
           ],
           ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
           ignoredClasses: ['katex', 'mermaid'],
@@ -159,9 +157,9 @@ sequenceDiagram
 
 <div class="callout callout-tip">
   <div class="callout-title">⏱️ TrueTime Bounded Interval</div>
-  <p>$$\text{TrueTime.now()} = [t_{\text{earliest}}, t_{\text{latest}}]$$</p>
+  $$\text{TrueTime.now()} = [t_{\text{earliest}}, t_{\text{latest}}]$$
   <p>Where absolute real time $t_{\text{abs}}$ is mathematically guaranteed to fall within the interval:</p>
-  <p>$$t_{\text{earliest}} \le t_{\text{abs}} \le t_{\text{latest}} \quad \text{and} \quad t_{\text{latest}} - t_{\text{earliest}} = 2\epsilon$$</p>
+  $$t_{\text{earliest}} \le t_{\text{abs}} \le t_{\text{latest}} \quad \text{and} \quad t_{\text{latest}} - t_{\text{earliest}} = 2\epsilon$$
 </div>
 
 <p>Google datacenters maintain TrueTime master servers equipped with two distinct time sources with failover protection:</p>
