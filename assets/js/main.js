@@ -8,9 +8,21 @@ document.addEventListener('DOMContentLoaded', () => {
   initBackToTop();
   initMermaid();
   initKaTeX();
+  initCodeHighlight();
 });
 
-window.addEventListener('load', initKaTeX);
+window.addEventListener('load', () => {
+  initKaTeX();
+  initCodeHighlight();
+});
+
+// Highlight.js Code Highlighting Initializer
+function initCodeHighlight() {
+  if (typeof hljs !== 'undefined') {
+    hljs.highlightAll();
+  }
+}
+window.initCodeHighlight = initCodeHighlight;
 
 // KaTeX Math Rendering Initializer
 function initKaTeX() {
@@ -268,7 +280,19 @@ function initMermaid() {
         secondaryColor: '#272822',
         tertiaryColor: '#3e3d32',
         noteBkgColor: '#272822',
-        noteTextColor: '#F8F8F2'
+        noteTextColor: '#F8F8F2',
+        noteBorderColor: '#3e3d32',
+        actorBkg: '#1e1f1c',
+        actorBorder: '#66D9EF',
+        actorTextColor: '#F8F8F2',
+        actorLineColor: '#3e3d32',
+        signalColor: '#66D9EF',
+        signalTextColor: '#F8F8F2',
+        labelBoxBkgColor: '#272822',
+        labelBoxBorderColor: '#3e3d32',
+        labelTextColor: '#F8F8F2',
+        loopTextColor: '#F8F8F2',
+        altSectionBkgColor: '#272822'
       }
     });
   }
