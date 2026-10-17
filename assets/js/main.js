@@ -1,4 +1,6 @@
 // System Design Notes & Engineering Blog - Main Application Script
+// Implements Array UI (ape-design) Interactions, Search, KaTeX & Mermaid
+
 document.addEventListener('DOMContentLoaded', () => {
   initTheme();
   initReadingProgress();
@@ -24,7 +26,7 @@ function initCodeHighlight() {
 }
 window.initCodeHighlight = initCodeHighlight;
 
-// KaTeX Math Rendering Initializer
+// KaTeX Math Rendering Initializer (Pure HTML Mode to Prevent Duplicate MathML)
 function initKaTeX() {
   if (typeof renderMathInElement !== 'undefined') {
     renderMathInElement(document.body, {
@@ -41,7 +43,7 @@ function initKaTeX() {
 }
 window.initKaTeX = initKaTeX;
 
-// Theme Management
+// Theme Management (Obsidian Carbon & Paper Light)
 function initTheme() {
   const toggleBtn = document.getElementById('theme-toggle');
   const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -153,9 +155,9 @@ function initSearchAndFilter() {
     if (filtered.length === 0) {
       articlesGrid.innerHTML = `
         <div style="grid-column: 1 / -1; text-align: center; padding: 4rem 1rem; color: var(--text-muted);">
-          <div style="font-size: 2.5rem; margin-bottom: 1rem;">🔍</div>
-          <h3 style="color: var(--text-main); margin-bottom: 0.5rem;">No matching notes found</h3>
-          <p>Try searching with different keywords like "Aurora", "Kafka", "Spanner", "Redis", or "Sharding".</p>
+          <div style="font-size: 2rem; margin-bottom: 0.75rem;">🔍</div>
+          <h3 style="color: var(--text-heading); margin-bottom: 0.5rem; font-family: var(--font-heading);">No matching notes found</h3>
+          <p style="font-size: 0.9rem;">Try searching for "Aurora", "Spanner", "Kafka", "Consistent Hashing", or "Redis".</p>
         </div>
       `;
       return;
@@ -164,8 +166,7 @@ function initSearchAndFilter() {
     articlesGrid.innerHTML = filtered.map(article => `
       <a href="posts/${article.slug}" class="article-card">
         <div class="card-top">
-          <span class="card-category">${escapeHtml(article.category)}</span>
-          <span class="card-meta-time">⏱️ ${escapeHtml(article.readTime)}</span>
+          <span class="card-category aui-badge">${escapeHtml(article.category)}</span>
         </div>
         <h3 class="card-title">${escapeHtml(article.title)}</h3>
         <p class="card-excerpt">${escapeHtml(article.excerpt)}</p>
@@ -173,7 +174,6 @@ function initSearchAndFilter() {
           ${article.tags.map(tag => `<span class="card-tag">#${escapeHtml(tag)}</span>`).join('')}
         </div>
         <div class="card-footer">
-          <span>📅 ${escapeHtml(article.date)}</span>
           <span class="read-btn">Read Notes →</span>
         </div>
       </a>
@@ -262,7 +262,7 @@ function initBackToTop() {
   });
 }
 
-// Initialize Mermaid.js
+// Initialize Mermaid.js with Array UI Palette
 function initMermaid() {
   if (typeof mermaid !== 'undefined') {
     mermaid.initialize({
@@ -270,27 +270,28 @@ function initMermaid() {
       theme: 'dark',
       themeVariables: {
         darkMode: true,
-        background: '#1e1f1c',
-        primaryColor: '#F92672',
-        primaryTextColor: '#F8F8F2',
-        primaryBorderColor: '#F92672',
-        lineColor: '#66D9EF',
-        secondaryColor: '#272822',
-        tertiaryColor: '#3e3d32',
-        noteBkgColor: '#272822',
-        noteTextColor: '#F8F8F2',
-        noteBorderColor: '#3e3d32',
-        actorBkg: '#1e1f1c',
-        actorBorder: '#66D9EF',
-        actorTextColor: '#F8F8F2',
-        actorLineColor: '#3e3d32',
-        signalColor: '#66D9EF',
-        signalTextColor: '#F8F8F2',
-        labelBoxBkgColor: '#272822',
-        labelBoxBorderColor: '#3e3d32',
-        labelTextColor: '#F8F8F2',
-        loopTextColor: '#F8F8F2',
-        altSectionBkgColor: '#272822'
+        background: '#161619',
+        primaryColor: '#e60012',
+        primaryTextColor: '#d6d6dc',
+        primaryBorderColor: '#27272c',
+        lineColor: '#8e8e99',
+        secondaryColor: '#18181b',
+        tertiaryColor: '#212126',
+        noteBkgColor: '#18181b',
+        noteTextColor: '#d6d6dc',
+        noteBorderColor: '#27272c',
+        actorBkg: '#18181b',
+        actorBorder: '#e60012',
+        actorTextColor: '#d6d6dc',
+        actorLineColor: '#27272c',
+        signalColor: '#e60012',
+        signalTextColor: '#d6d6dc',
+        labelBoxBkgColor: '#18181b',
+        labelBoxBorderColor: '#27272c',
+        labelTextColor: '#d6d6dc',
+        loopTextColor: '#d6d6dc',
+        altSectionBkgColor: '#18181b',
+        fontFamily: "'Assistant', -apple-system, BlinkMacSystemFont, sans-serif"
       }
     });
   }

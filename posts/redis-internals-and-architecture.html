@@ -7,7 +7,7 @@
   <meta name="description" content="17-module masterclass on Redis internals: I/O multiplexing (epoll/kqueue), RESP protocol specification, Active/Passive Expiration, LRU/LFU approximation algorithms, Persistence (RDB &amp; AOF), Quicklists, Ziplists, Intsets, Geohashing, and HyperLogLog.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600;700&family=Lora:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="../assets/css/style.css">
   <!-- KaTeX for Math Rendering -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
@@ -74,18 +74,11 @@
       <span class="article-header-badge">Deep Dive</span>
       <h1 class="article-header-title">Redis Deep Dive — Single-Threaded Event Loop, RESP Protocol &amp; Data Structures</h1>
       <div class="article-header-meta">
-        <span>👤 Author: <strong>Rishi Chowdhury</strong></span>
-        <span>📅 Published: Apr 12, 2026</span>
-        <span>⏱️ 22 min read</span>
         <span>📁 Category: In-Memory &amp; Redis</span>
       </div>
       <div class="article-header-actions">
-        
-        <a href="../Docs/Redis_Notes/01 - What Makes Redis Special.pdf" class="btn-secondary" target="_blank" download>
-          <span>📄 View / Download Sample PDF (Module 1)</span>
-        </a>
-        <a href="../index.html" class="btn-primary">
-          <span>← Back to Blog Index</span>
+        <a href="../index.html" class="btn-secondary">
+          <span>← Back to All Notes</span>
         </a>
       </div>
     </header>
@@ -351,32 +344,31 @@ name
     <div class="footer-container">
       <div class="footer-brand">
         <h4>System Design Notes</h4>
-        <p>Curated and published by Rishi Chowdhury. Deep-dive technical analyses and reference architectures for building high-scale distributed systems, fault-tolerant databases, and resilient microservices.</p>
+        <p>A publication-grade systems engineering knowledge base. Comprehensive technical analyses, architectural patterns, and consensus protocols.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Core Categories</h5>
+        <ul>
+          <li><a href="amazon-aurora-cloud-native-databases.html">Amazon Aurora Architecture</a></li>
+          <li><a href="cap-theorem-and-google-spanner.html">Google Spanner &amp; TrueTime</a></li>
+          <li><a href="consistent-hashing.html">Consistent Hashing Guide</a></li>
+          <li><a href="kafka-architecture-part1.html">Apache Kafka Fundamentals</a></li>
+          <li><a href="microservices-design-patterns.html">Microservices Patterns</a></li>
+          <li><a href="redis-internals-and-architecture.html">Redis Internal Mechanics</a></li>
+        </ul>
       </div>
       <div class="footer-col">
         <h5>Quick Links</h5>
         <ul>
-          <li><a href="../index.html">All Notes</a></li>
-          <li><a href="../index.html#cloud-databases">Cloud Databases</a></li>
-          <li><a href="../index.html#distributed-systems">Distributed Systems</a></li>
-          <li><a href="../index.html#streaming-kafka">Kafka & Streaming</a></li>
-          <li><a href="../index.html#microservices">Microservices</a></li>
-          <li><a href="../index.html#in-memory-redis">Redis Internals</a></li>
-        </ul>
-      </div>
-      <div class="footer-col">
-        <h5>Resources</h5>
-        <ul>
+          <li><a href="../index.html">All Notes &amp; Deep Dives</a></li>
           <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank">GitHub Repository</a></li>
-          <li><a href="../Docs/System_Design_Notes.pdf" target="_blank">System Design Notes PDF</a></li>
-          <li><a href="../Docs/Amazon_Aurora_Cloud_Native_Databases.pdf" target="_blank">Amazon Aurora PDF</a></li>
-          <li><a href="../Docs/CAP_THEOREM_AND_GOOGLE_SPANNER.pdf" target="_blank">Google Spanner PDF</a></li>
+          <li><a href="../index.html#pdf-library">Reference Documents</a></li>
         </ul>
       </div>
     </div>
     <div class="footer-bottom">
-      <div>&copy; 2026 Rishi Chowdhury. System Design Knowledge Base.</div>
-      <div>Hosted with GitHub Pages</div>
+      <div>System Design Notes · Open source under MIT License.</div>
+      <div>Hosted on GitHub Pages</div>
     </div>
   </footer>
 
