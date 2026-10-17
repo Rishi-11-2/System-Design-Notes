@@ -27,7 +27,8 @@ Designed with an authentic **Monokai Aesthetic Theme** (`#272822` canvas, `#F8F8
 | :--- | :--- | :--- | :--- |
 | [**Cloud-Native Databases and Amazon Aurora Architecture**](posts/amazon-aurora-cloud-native-databases.html) | Cloud Databases | 18 min | `Docs/Amazon_Aurora_Cloud_Native_Databases.pdf` |
 | [**CAP Theorem and Google Spanner — The Globally-Distributed Database**](posts/cap-theorem-and-google-spanner.html) | Distributed Systems | 12 min | `Docs/CAP_THEOREM_AND_GOOGLE_SPANNER.pdf` |
-| [**How Grab Configured Their Data Layer for Multi-Million Daily Transactions**](posts/grab-data-layer-architecture.html) | Case Studies | 8 min | `Docs/Grab_Configured_Data_Layer.pdf` |
+| [**Consistent Hashing — Implementation from First Principles**](posts/consistent-hashing.html) | Distributed Systems | 10 min | `Docs/Consistent_Hashing_Guide.pdf` |
+| [**Grab Data Layer Architecture**](posts/grab-data-layer-architecture.html) | Case Studies | 8 min | `Docs/Grab_Configured_Data_Layer.pdf` |
 | [**Apache Kafka Architecture Part 1 — Storage & Event Fundamentals**](posts/kafka-architecture-part1.html) | Streaming & Kafka | 8 min | `Docs/Kafka_Architecture_Part1.pdf` |
 | [**Apache Kafka Architecture Part 2 — Consumer Groups & High Availability**](posts/kafka-architecture-part2.html) | Streaming & Kafka | 9 min | `Docs/Kafka_Architecture_Part2.pdf` |
 | [**Microservices Design Patterns — Strangler, SAGA, CQRS & Outbox**](posts/microservices-design-patterns.html) | Microservices | 14 min | `Docs/Microservices_Architecture_Notes.pdf` |
@@ -84,6 +85,7 @@ Designed with an authentic **Monokai Aesthetic Theme** (`#272822` canvas, `#F8F8
 ├── posts/                                        # Standalone blog articles
 │   ├── amazon-aurora-cloud-native-databases.html
 │   ├── cap-theorem-and-google-spanner.html
+│   ├── consistent-hashing.html
 │   ├── grab-data-layer-architecture.html
 │   ├── kafka-architecture-part1.html
 │   ├── kafka-architecture-part2.html
@@ -95,6 +97,7 @@ Designed with an authentic **Monokai Aesthetic Theme** (`#272822` canvas, `#F8F8
 ├── Docs/                                         # Original PDFs, academic papers, and notes
 │   ├── Amazon_Aurora_Cloud_Native_Databases.pdf
 │   ├── CAP_THEOREM_AND_GOOGLE_SPANNER.pdf
+│   ├── Consistent_Hashing_Guide.pdf
 │   ├── Grab_Configured_Data_Layer.pdf
 │   ├── Kafka_Architecture_Part1.pdf
 │   ├── Kafka_Architecture_Part2.pdf

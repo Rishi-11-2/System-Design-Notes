@@ -29,6 +29,20 @@ const ARTICLES_DATA = [
     featured: true
   },
   {
+    id: "consistent-hashing",
+    slug: "consistent-hashing.html",
+    title: "Consistent Hashing — Implementation from First Principles",
+    category: "Distributed Systems",
+    categorySlug: "distributed-systems",
+    readTime: "10 min read",
+    date: "Oct 17, 2026",
+    badge: "Core Architecture",
+    pdfSource: "Docs/Consistent_Hashing_Guide.pdf",
+    excerpt: "A comprehensive technical guide to Consistent Hashing from first principles: solving the modulo hashing rehashing catastrophe, circular hash ring mechanics on [0, 2^32 - 1], virtual nodes (VNodes) for uniform distribution, and O(log N) binary search routing implementation.",
+    tags: ["Consistent Hashing", "Hash Ring", "Virtual Nodes", "Distributed Systems", "Cassandra", "DynamoDB"],
+    featured: true
+  },
+  {
     id: "microservices-design-patterns",
     slug: "microservices-design-patterns.html",
     title: "Microservices Design Patterns — Strangler Fig, SAGA, CQRS & Transactional Outbox",
