@@ -1,121 +1,114 @@
 /* ==========================================================================
-   Array UI (ape-design) Editorial Systems Design System
-   Specification: SKILL.md & ui.arpitbhayani.me (0% Custom CSS Invariant)
+   System Design Notes & Engineering Blog — Aesthetic Editorial Design
    Palette:
-     - Dark Mode (Obsidian Carbon): #111113 canvas | #27272c border | #d6d6dc text
-     - Light Mode (Paper Light):    #f9f8f5 canvas | #dfded9 border | #2b2a30 text
-     - Signature Crimson:           #e60012 (dark) / #e5000f (light)
-     - Amber (Maxims & Warnings):   #cc9900
-     - Emerald (Telemetry/Ping):    #10b981
-     - Rose (Error/Deletions):      #f43f5e
+     - Background: #272822 (Deep Warm Charcoal / Olive Canvas)
+     - Foreground: #F8F8F2 (Crisp Off-White Cream Typography)
+     - Accent:     #F92672 (Subtle Electric Pink / Crimson Focus)
    Typography:
-     - Assistant: Headings & Body (dense, disciplined, 15px base, tracking -0.015em)
-     - Lora: Editorial Pull Quotes & Engineering Maxims (italic serif)
-     - IBM Plex Mono: Telemetry, Code, Keycaps & Badges
+     - Plus Jakarta Sans: Editorial Headings & Body Prose (supreme legibility)
+     - JetBrains Mono: Telemetry, Monospace Code, Keycaps & Machined Badges
+     - Lora: Italic Serif for Engineering Maxims & Architectural Principles
    ========================================================================== */
 
-@import url('https://fonts.googleapis.com/css2?family=Assistant:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600;700&family=Lora:ital,wght@0,400..700;1,400..700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Lora:ital,wght@0,400..700;1,400..700&display=swap');
 
 :root {
-  /* Obsidian Carbon Theme (Dark Mode Default) */
-  --bg-color: #111113;
-  --bg-secondary: #161619;
-  --bg-card: #18181b;
-  --bg-card-hover: #1f1f24;
-  --bg-input: #141416;
-  --bg-muted: #212126;
+  /* Subtle Dark Aesthetic (Default Theme) */
+  --bg-color: #272822;          /* Primary Canvas */
+  --bg-secondary: #1e1f1c;      /* Navbar, Sidebar, Panels */
+  --bg-card: #20211d;           /* Surface & Cards */
+  --bg-card-hover: #2a2b25;     /* Interactive Hover */
+  --bg-input: #1a1b17;          /* Recessed Inputs */
+  --bg-muted: #2f3028;          /* Muted Badges & Chips */
 
-  /* 1px Hairline Borders Everywhere */
-  --border-color: #27272c;
-  --border-subtle: #212126;
-  --border-highlight: #e60012;
+  /* 1px Hairline Borders */
+  --border-color: #3e3f35;      /* Subtle Hairline Border */
+  --border-subtle: #33342a;     /* Deep hairline */
+  --border-highlight: #F92672;  /* Focus & Active */
 
-  /* Editorial Typography Tokens */
-  --text-main: #d6d6dc;
-  --text-heading: #f4f4f7;
-  --text-secondary: #a8a8b3;
-  --text-muted: #8e8e99;
+  /* Editorial Foreground Typography */
+  --text-main: #F8F8F2;         /* Primary Prose & Content (14.2:1 contrast) */
+  --text-heading: #FFFFFF;      /* Pure White Headings */
+  --text-secondary: #D4D2C5;    /* High-Legibility Body Secondary (9.6:1 contrast) */
+  --text-muted: #A6A498;        /* Captions, Badges, Secondary Meta */
 
-  /* Signature Array UI Accents */
-  --primary: #e60012;
-  --primary-hover: #c70010;
-  --primary-glow: rgba(230, 0, 18, 0.15);
-  --primary-tint: rgba(230, 0, 18, 0.08);
+  /* Subtle Signature Accent (#F92672) */
+  --primary: #F92672;
+  --primary-hover: #ff3e83;
+  --primary-glow: rgba(249, 38, 114, 0.2);
+  --primary-tint: rgba(249, 38, 114, 0.12);
 
-  --accent-amber: #cc9900;
-  --accent-amber-tint: rgba(204, 153, 0, 0.08);
-  --accent-emerald: #10b981;
-  --accent-emerald-tint: rgba(16, 185, 129, 0.08);
-  --accent-rose: #f43f5e;
-  --accent-rose-tint: rgba(244, 63, 94, 0.08);
-  --accent-blue: #3b82f6;
-  --accent-blue-tint: rgba(59, 130, 246, 0.08);
+  /* Harmonizing Monokai Accents */
+  --accent-amber: #E6DB74;      /* Soft Sunflower Gold (Maxims & Notes) */
+  --accent-amber-tint: rgba(230, 219, 116, 0.1);
+  --accent-emerald: #A6E22E;    /* Neon Lime Green (Health, Telemetry & Success) */
+  --accent-emerald-tint: rgba(166, 226, 46, 0.1);
+  --accent-cyan: #66D9EF;       /* Sky Blue (Subtle links & code) */
+  --accent-rose: #F92672;       /* Electric Pink (Warnings & Outages) */
 
   /* Code & Telemetry */
-  --code-bg: #0d0d0f;
-  --code-border: #27272c;
-  --code-header-bg: #141417;
+  --code-bg: #1a1b17;
+  --code-border: #38392e;
+  --code-header-bg: #21221d;
 
   /* Structural Radii & Shadows */
   --radius-sm: 4px;
   --radius: 6px;
   --radius-lg: 8px;
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.45);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.45);
 
-  /* Fonts */
-  --font-sans: 'Assistant', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-heading: 'Assistant', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  /* Aesthetic Typography Tokens */
+  --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-heading: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-serif: 'Lora', Georgia, Cambria, serif;
-  --font-mono: 'IBM Plex Mono', 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
 
   --max-w-content: 1200px;
   --max-w-prose: 76ch;
   --transition: all 0.16s ease-in-out;
 }
 
-/* Paper Light Theme */
+/* Light Theme Variant */
 [data-theme="light"] {
-  --bg-color: #f9f8f5;
-  --bg-secondary: #f0ede6;
+  --bg-color: #faf9f5;
+  --bg-secondary: #f0ede4;
   --bg-card: #ffffff;
-  --bg-card-hover: #f5f3ec;
+  --bg-card-hover: #f7f5ed;
   --bg-input: #ffffff;
-  --bg-muted: #eeede8;
+  --bg-muted: #eae7dd;
 
-  --border-color: #dfded9;
-  --border-subtle: #e6e5e0;
-  --border-highlight: #e5000f;
+  --border-color: #dfdbce;
+  --border-subtle: #eae6da;
+  --border-highlight: #e01b5d;
 
-  --text-main: #2b2a30;
-  --text-heading: #141316;
-  --text-secondary: #484750;
-  --text-muted: #6d6b73;
+  --text-main: #272822;
+  --text-heading: #141512;
+  --text-secondary: #4a4b42;
+  --text-muted: #7d7e73;
 
-  --primary: #e5000f;
-  --primary-hover: #c4000d;
-  --primary-glow: rgba(229, 0, 15, 0.12);
-  --primary-tint: rgba(229, 0, 15, 0.06);
+  --primary: #e01b5d;
+  --primary-hover: #c4104d;
+  --primary-glow: rgba(224, 27, 93, 0.15);
+  --primary-tint: rgba(224, 27, 93, 0.08);
 
-  --accent-amber: #cc9900;
-  --accent-amber-tint: rgba(204, 153, 0, 0.07);
-  --accent-emerald: #10b981;
-  --accent-emerald-tint: rgba(16, 185, 129, 0.07);
-  --accent-rose: #f43f5e;
-  --accent-rose-tint: rgba(244, 63, 94, 0.07);
-  --accent-blue: #2563eb;
-  --accent-blue-tint: rgba(37, 99, 235, 0.06);
+  --accent-amber: #b8860b;
+  --accent-amber-tint: rgba(184, 134, 11, 0.08);
+  --accent-emerald: #2e8b57;
+  --accent-emerald-tint: rgba(46, 139, 87, 0.08);
+  --accent-cyan: #0984e3;
+  --accent-rose: #d63031;
 
-  --code-bg: #f4f3ed;
-  --code-border: #dfded9;
-  --code-header-bg: #eae8e1;
+  --code-bg: #f4f2ea;
+  --code-border: #dfdbce;
+  --code-header-bg: #eae7dd;
 
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow-md: 0 3px 8px rgba(0, 0, 0, 0.06);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 10px rgba(0, 0, 0, 0.07);
 }
 
 /* ==========================================================================
-   Base Styles & Reset
+   Global Reset & Base Styles
    ========================================================================== */
 
 * {
@@ -126,7 +119,7 @@
 
 html {
   scroll-behavior: smooth;
-  font-size: 15px; /* Array UI disciplined 15px base size */
+  font-size: 16px;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -136,28 +129,29 @@ body {
   font-size: 1rem;
   background-color: var(--bg-color);
   color: var(--text-main);
-  line-height: 1.72;
-  letter-spacing: -0.015em;
+  line-height: 1.8;
+  letter-spacing: -0.012em;
   min-height: 100vh;
   display: flex;
   flex-direction: column;
   transition: background-color 0.2s ease, color 0.2s ease;
 }
 
-/* Top Reading Progress Bar */
+/* Subtle Top Reading Progress Bar */
 #reading-progress {
   position: fixed;
   top: 0;
   left: 0;
-  height: 2px;
+  height: 2.5px;
   background: var(--primary);
   width: 0%;
   z-index: 1000;
+  box-shadow: 0 0 8px var(--primary-glow);
   transition: width 0.05s linear;
 }
 
 /* ==========================================================================
-   Array UI Editorial Header & Navbar
+   Header & Navbar
    ========================================================================== */
 
 .navbar {
@@ -166,14 +160,14 @@ body {
   z-index: 100;
   background: var(--bg-color);
   border-bottom: 1px solid var(--border-color);
-  backdrop-filter: blur(8px);
+  backdrop-filter: blur(10px);
 }
 
 .nav-container {
   max-width: var(--max-w-content);
   margin: 0 auto;
   padding: 0 1.5rem;
-  height: 54px;
+  height: 56px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -191,8 +185,8 @@ body {
 }
 
 .brand-icon {
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -247,7 +241,7 @@ body {
 }
 
 .btn-icon:hover {
-  background: var(--bg-muted);
+  background: var(--bg-card-hover);
   color: var(--text-heading);
   border-color: var(--text-muted);
 }
@@ -291,22 +285,13 @@ body {
 }
 
 @keyframes pingPulse {
-  0% {
-    transform: scale(0.95);
-    opacity: 0.8;
-  }
-  70% {
-    transform: scale(2.2);
-    opacity: 0;
-  }
-  100% {
-    transform: scale(2.2);
-    opacity: 0;
-  }
+  0% { transform: scale(0.95); opacity: 0.8; }
+  70% { transform: scale(2.2); opacity: 0; }
+  100% { transform: scale(2.2); opacity: 0; }
 }
 
 /* ==========================================================================
-   Array UI Badges, Keycaps & Nudges
+   Machined Badges, Keycaps & Nudges
    ========================================================================== */
 
 .aui-badge,
@@ -321,7 +306,7 @@ body {
   font-weight: 600;
   letter-spacing: 0.03em;
   text-transform: uppercase;
-  padding: 2px 7px;
+  padding: 2px 8px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-color);
   background: var(--bg-card);
@@ -377,7 +362,7 @@ kbd {
 }
 
 /* ==========================================================================
-   Buttons (Array UI Tactical Controls)
+   Tactile Action Controls & Buttons
    ========================================================================== */
 
 .btn-primary {
@@ -400,6 +385,7 @@ kbd {
 .btn-primary:hover {
   background: var(--primary-hover);
   border-color: var(--primary-hover);
+  box-shadow: 0 0 10px var(--primary-glow);
 }
 
 .btn-secondary {
@@ -422,10 +408,11 @@ kbd {
 .btn-secondary:hover {
   background: var(--bg-card-hover);
   border-color: var(--text-muted);
+  color: var(--text-heading) !important;
 }
 
 /* ==========================================================================
-   Landing Page: Hero & Telemetry Archetype
+   Landing Page Hero & Telemetry
    ========================================================================== */
 
 .hero {
@@ -437,7 +424,7 @@ kbd {
 
 .hero-title {
   font-family: var(--font-heading);
-  font-size: 2.35rem;
+  font-size: 2.45rem;
   font-weight: 800;
   color: var(--text-heading);
   letter-spacing: -0.03em;
@@ -450,7 +437,7 @@ kbd {
   font-size: 1.05rem;
   color: var(--text-secondary);
   max-width: 820px;
-  line-height: 1.68;
+  line-height: 1.72;
   margin-bottom: 2rem;
 }
 
@@ -471,7 +458,8 @@ kbd {
 }
 
 .stat-card:hover {
-  border-color: var(--border-highlight);
+  border-color: var(--primary);
+  background: var(--bg-card-hover);
 }
 
 .stat-number {
@@ -490,7 +478,7 @@ kbd {
 }
 
 /* ==========================================================================
-   Controls: Search & Category Chips
+   Search & Category Controls
    ========================================================================== */
 
 .controls-container {
@@ -562,14 +550,14 @@ kbd {
 }
 
 .filter-chip.active {
-  background: var(--bg-muted);
-  color: var(--text-heading);
+  background: var(--primary-tint);
+  color: var(--primary);
   border-color: var(--primary);
   font-weight: 600;
 }
 
 /* ==========================================================================
-   Articles Grid & Machined Cards
+   Articles Grid & Cards
    ========================================================================== */
 
 .articles-section {
@@ -611,7 +599,7 @@ kbd {
 
 .card-title {
   font-family: var(--font-heading);
-  font-size: 1.15rem;
+  font-size: 1.18rem;
   font-weight: 700;
   color: var(--text-heading);
   line-height: 1.35;
@@ -622,7 +610,7 @@ kbd {
 .card-excerpt {
   font-size: 0.875rem;
   color: var(--text-secondary);
-  line-height: 1.6;
+  line-height: 1.62;
   margin-bottom: 1.25rem;
   display: -webkit-box;
   -webkit-line-clamp: 3;
@@ -654,7 +642,6 @@ kbd {
   padding-top: 0.85rem;
   border-top: 1px solid var(--border-color);
   font-size: 0.8rem;
-  color: var(--text-muted);
 }
 
 .read-btn {
@@ -665,14 +652,16 @@ kbd {
   display: inline-flex;
   align-items: center;
   gap: 0.25rem;
+  transition: var(--transition);
 }
 
 .article-card:hover .read-btn {
   color: var(--primary-hover);
+  transform: translateX(2px);
 }
 
 /* ==========================================================================
-   Article Detail Page Archetype (Deep-Dive Engineering Note)
+   Article Detail Page Archetype
    ========================================================================== */
 
 .article-page {
@@ -710,7 +699,7 @@ kbd {
 
 .article-header-title {
   font-family: var(--font-heading);
-  font-size: 2.25rem;
+  font-size: 2.35rem;
   font-weight: 800;
   color: var(--text-heading);
   letter-spacing: -0.03em;
@@ -806,8 +795,8 @@ kbd {
 .prose {
   max-width: var(--max-w-prose);
   color: var(--text-main);
-  font-size: 1rem;
-  line-height: 1.76;
+  font-size: 1.025rem;
+  line-height: 1.82;
 }
 
 .prose h1,
@@ -817,12 +806,12 @@ kbd {
   font-family: var(--font-heading);
   color: var(--text-heading);
   font-weight: 700;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.025em;
   line-height: 1.28;
 }
 
 .prose h2 {
-  font-size: 1.55rem;
+  font-size: 1.6rem;
   margin-top: 2.75rem;
   margin-bottom: 1rem;
   padding-bottom: 0.45rem;
@@ -830,7 +819,7 @@ kbd {
 }
 
 .prose h3 {
-  font-size: 1.25rem;
+  font-size: 1.3rem;
   margin-top: 2rem;
   margin-bottom: 0.75rem;
 }
@@ -855,14 +844,15 @@ kbd {
 }
 
 .prose a {
-  color: var(--primary);
+  color: var(--accent-cyan);
   text-decoration: underline;
   text-underline-offset: 3px;
   text-decoration-thickness: 1px;
+  transition: var(--transition);
 }
 
 .prose a:hover {
-  color: var(--primary-hover);
+  color: var(--primary);
 }
 
 .prose hr {
@@ -872,7 +862,7 @@ kbd {
 }
 
 /* ==========================================================================
-   Editorial Callouts, Maxims & Takeaways (Array UI Primitives)
+   Editorial Callouts, Maxims & Takeaways
    ========================================================================== */
 
 .callout {
@@ -895,7 +885,7 @@ kbd {
   gap: 0.45rem;
 }
 
-/* TakeawaysBox / Primary Invariant: Crimson Left Rail */
+/* TakeawaysBox: Signature Crimson Left Rail */
 .callout-note {
   border-left: 3px solid var(--primary);
   background: var(--bg-card);
@@ -905,7 +895,7 @@ kbd {
   color: var(--primary);
 }
 
-/* Maxim / Warning: Amber Left Rail */
+/* Maxim & Tips: Amber / Gold Left Rail */
 .callout-warning,
 .callout-tip {
   border-left: 3px solid var(--accent-amber);
@@ -917,7 +907,7 @@ kbd {
   color: var(--accent-amber);
 }
 
-/* Important / Outage: Rose Left Rail */
+/* Important: Electric Pink Rail */
 .callout-important {
   border-left: 3px solid var(--accent-rose);
   background: var(--bg-card);
@@ -948,7 +938,7 @@ blockquote {
 }
 
 /* ==========================================================================
-   Code Blocks & Terminal Primitives
+   Code Blocks & Terminal Windows
    ========================================================================== */
 
 /* Inline Code */
@@ -1006,8 +996,8 @@ pre {
   padding: 1rem 1.25rem;
   overflow-x: auto;
   font-family: var(--font-mono);
-  font-size: 0.85rem;
-  line-height: 1.6;
+  font-size: 0.875rem;
+  line-height: 1.65;
 }
 
 pre code {
@@ -1065,7 +1055,7 @@ pre code {
 }
 
 /* ==========================================================================
-   Prose Tables (ParamTable & Comparison)
+   Prose Tables
    ========================================================================== */
 
 .prose table {
@@ -1153,7 +1143,7 @@ pre code {
 }
 
 /* ==========================================================================
-   Editorial Directory Footer
+   Directory Footer
    ========================================================================== */
 
 .footer {
@@ -1257,9 +1247,9 @@ pre code {
 }
 
 .back-to-top:hover {
-  background: var(--bg-muted);
+  background: var(--bg-card-hover);
   color: var(--text-heading);
-  border-color: var(--text-muted);
+  border-color: var(--primary);
 }
 
 /* Tooltip */
@@ -1314,7 +1304,7 @@ pre code {
 
 @media (max-width: 640px) {
   .hero-title {
-    font-size: 1.85rem;
+    font-size: 1.95rem;
   }
 
   .articles-grid {

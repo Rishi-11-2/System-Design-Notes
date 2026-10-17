@@ -262,7 +262,7 @@ function initBackToTop() {
   });
 }
 
-// Initialize Mermaid.js with Array UI Palette
+// Initialize Mermaid.js with Subtle #272822 / #F8F8F2 / #F92672 Palette
 function initMermaid() {
   if (typeof mermaid !== 'undefined') {
     mermaid.initialize({
@@ -270,28 +270,28 @@ function initMermaid() {
       theme: 'dark',
       themeVariables: {
         darkMode: true,
-        background: '#161619',
-        primaryColor: '#e60012',
-        primaryTextColor: '#d6d6dc',
-        primaryBorderColor: '#27272c',
-        lineColor: '#8e8e99',
-        secondaryColor: '#18181b',
-        tertiaryColor: '#212126',
-        noteBkgColor: '#18181b',
-        noteTextColor: '#d6d6dc',
-        noteBorderColor: '#27272c',
-        actorBkg: '#18181b',
-        actorBorder: '#e60012',
-        actorTextColor: '#d6d6dc',
-        actorLineColor: '#27272c',
-        signalColor: '#e60012',
-        signalTextColor: '#d6d6dc',
-        labelBoxBkgColor: '#18181b',
-        labelBoxBorderColor: '#27272c',
-        labelTextColor: '#d6d6dc',
-        loopTextColor: '#d6d6dc',
-        altSectionBkgColor: '#18181b',
-        fontFamily: "'Assistant', -apple-system, BlinkMacSystemFont, sans-serif"
+        background: '#20211d',
+        primaryColor: '#F92672',
+        primaryTextColor: '#F8F8F2',
+        primaryBorderColor: '#3e3f35',
+        lineColor: '#66D9EF',
+        secondaryColor: '#272822',
+        tertiaryColor: '#1e1f1c',
+        noteBkgColor: '#272822',
+        noteTextColor: '#F8F8F2',
+        noteBorderColor: '#3e3f35',
+        actorBkg: '#20211d',
+        actorBorder: '#F92672',
+        actorTextColor: '#F8F8F2',
+        actorLineColor: '#3e3f35',
+        signalColor: '#F92672',
+        signalTextColor: '#F8F8F2',
+        labelBoxBkgColor: '#20211d',
+        labelBoxBorderColor: '#3e3f35',
+        labelTextColor: '#F8F8F2',
+        loopTextColor: '#F8F8F2',
+        altSectionBkgColor: '#20211d',
+        fontFamily: "'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif"
       }
     });
   }
