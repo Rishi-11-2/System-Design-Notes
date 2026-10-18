@@ -153,6 +153,42 @@ const ARTICLES_DATA = [
     excerpt: "Architectural designs for production distributed systems: Distributed Rate Limiter, Multi-channel Notification Engine, URL Shortener (TinyURL) with range allocation, PasteBin / Gist object tiering, Real-time Fraud Detection Pipeline, Recommendation Engine, and Distributed Web Crawler.",
     tags: ["System Design", "Rate Limiter", "TinyURL", "Notification Service", "Web Crawler", "Fraud Detection"],
     featured: true
+  },
+  {
+    id: "atlassian-cache-invalidation",
+    slug: "atlassian-cache-invalidation.html",
+    title: "Cache Invalidation at Atlassian: From SNS+SQS Push to S3 Pull",
+    category: "Case Studies",
+    categorySlug: "case-studies",
+    badge: "Case Study",
+    pdfSource: "Docs/Atlassian Cache Invalidation Architecture Breakdown.pdf",
+    excerpt: "Architectural decomposition of Atlassian's Tenant Context Service (TCS): why centralized Redis was rejected for 11 μs local L1 caches, the O(N) message amplification crisis of SNS+SQS push fanout, and how migrating to S3 pull batching collapsed cloud costs by >90%.",
+    tags: ["Cache Invalidation", "Atlassian", "S3 Pull", "SQS Fanout", "L1 Cache", "Distributed Systems"],
+    featured: true
+  },
+  {
+    id: "bitcask-storage-engine",
+    slug: "bitcask-storage-engine.html",
+    title: "Bitcask Explained: A Log-Structured Fast Key/Value Store",
+    category: "In-Memory & Redis",
+    categorySlug: "in-memory-redis",
+    badge: "Storage Engine",
+    pdfSource: "Docs/Bitcask Storage Engine Technical Breakdown.pdf",
+    excerpt: "A deep dive into Bitcask's log-structured storage engine: replacing B-Tree random writes with append-only sequential disk logs and in-memory KeyDir hash indexing, guaranteeing O(1) reads with 1 disk seek, background compaction, and Hint Files for instant crash recovery.",
+    tags: ["Bitcask", "Storage Engines", "LSM-Tree", "KeyDir", "Log-Structured", "Database Internals"],
+    featured: true
+  },
+  {
+    id: "kafka-exactly-once-semantics",
+    slug: "kafka-exactly-once-semantics.html",
+    title: "How Apache Kafka Actually Achieves Exactly-Once Semantics (EOS)",
+    category: "Streaming & Kafka",
+    categorySlug: "streaming-kafka",
+    badge: "Deep Dive",
+    pdfSource: "Docs/Kafka Exactly-Once Semantics Technical Breakdown.pdf",
+    excerpt: "Demystifying Kafka's Exactly-Once Semantics: distinguishing delivery from processing, producer idempotence via PID and monotonic sequence numbers, transactional IDs with zombie fencing, and atomic multi-partition writes via Two-Phase Commit and __transaction_state.",
+    tags: ["Apache Kafka", "Exactly-Once", "EOS", "Two-Phase Commit", "Idempotence", "Distributed Transactions"],
+    featured: true
   }
 ];
 

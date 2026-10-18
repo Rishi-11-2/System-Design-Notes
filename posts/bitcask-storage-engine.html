@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bitcask Explained: A Log-Structured Fast Key/Value Store — System Design Notes</title>
+  <meta name="description" content="Deep dive into Bitcask storage engine architecture: why B-Trees fail under write-heavy workloads, dual-plane append-only design, in-memory KeyDir hash indexing, O(1) reads with 1 disk seek, background compaction, and hint files for instantaneous recovery.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Lora:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">← All Notes</a></li>
+        </ul>
+        <button id="theme-toggle" class="btn-icon" data-tooltip="Toggle light/dark theme" aria-label="Toggle Theme">
+          <span class="theme-icon">☀️</span>
+        </button>
+        <a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="btn-icon" data-tooltip="View GitHub Repository" aria-label="GitHub Repository">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+          </svg>
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="article-page">
+    <div class="article-breadcrumbs">
+      <a href="../index.html">Home</a>
+      <span>/</span>
+      <a href="../index.html#in-memory-redis">Storage Engines</a>
+      <span>/</span>
+      <span>Bitcask Storage Engine</span>
+    </div>
+
+    <header class="article-header">
+      <span class="article-header-badge">Storage Engine</span>
+      <h1 class="article-header-title">Bitcask Explained: A Log-Structured Fast Key/Value Store</h1>
+      <div class="article-header-meta">
+        <span>📁 Category: Storage Engines</span>
+      </div>
+      <div class="article-header-actions">
+        <a href="../index.html" class="btn-secondary">
+          <span>← Back to All Notes</span>
+        </a>
+      </div>
+    </header>
+
+    <div class="article-container">
+      <article class="prose">
+        
+<div class="callout callout-note">
+  <div class="callout-title">📌 Primary Takeaway</div>
+  <p>Traditional disk storage engines rely on in-place updates via B-Trees, incurring high write amplification, locking contention, and multi-level disk seeks. <strong>Bitcask</strong> flips this paradigm by decoupling directory metadata from storage payloads: it marries <strong>pure append-only sequential disk writes</strong> with an in-memory hash table called <strong>KeyDir</strong> that indexes the exact byte offsets of active records. This guarantees <strong>exactly 1 sequential write per mutation</strong> and <strong>at most 1 disk seek per read</strong> ($O(1)$ random access). Space reclamation is managed through asynchronous background merge compactions that produce lightweight <strong>Hint Files</strong>, slashing crash recovery and cold-start times from minutes to seconds.</p>
+</div>
+
+<h2 id="problem-space">1. The Problem Space: Why B-Trees &amp; Random Writes Fail at Scale</h2>
+<p>Storage hardware — both traditional mechanical hard disks (HDDs) and solid-state drives (NAND flash SSDs) — exhibits an unavoidable physical invariant: <strong>sequential I/O throughput is orders of magnitude faster than random I/O</strong>.</p>
+<ul>
+  <li>On HDDs, random writes require mechanical actuator arm movement (seek time) and platter spin (rotational latency), capping throughput around $100\text{--}200\ \text{IOPS}$.</li>
+  <li>On SSDs, random updates trigger block erase cycles, heavy garbage collection, and write amplification that deteriorates flash endurance.</li>
+</ul>
+
+<div class="callout callout-important">
+  <div class="callout-title">⚠️ Classical B-Tree Bottlenecks</div>
+  <ul>
+    <li><strong>In-Place Page Modification:</strong> B-Trees update $4\text{ KB}$ or $16\text{ KB}$ pages in-place. Modifying a 10-byte column forces an entire block to be rewritten.</li>
+    <li><strong>Double-Buffering &amp; WAL:</strong> To survive mid-write crashes, engines must write changes twice: first to the sequential Write-Ahead Log (WAL), then to the dirty page buffer, and finally flushed out to the tablespace.</li>
+    <li><strong>Concurrency Latches:</strong> Modifying nodes in a tree requires coarse- or fine-grained read/write latches, creating heavy lock contention on root and internal branches under write-heavy loads.</li>
+    <li><strong>Protracted Crash Recovery:</strong> After an unclean shutdown, the engine must replay large WAL files from the last checkpoint, freezing database startup.</li>
+  </ul>
+</div>
+
+<h3 id="bitcask-objectives">Bitcask Core Design Objectives</h3>
+<p>Engineered by Justin Sheehy and David Smith at Basho for Riak (and subsequently adopted in high-throughput production at companies like Uber), Bitcask targeted a strict set of systems constraints:</p>
+<ol>
+  <li><strong>Ultra-Low Read Latency:</strong> Predictable, sub-millisecond p99 latency requiring <em>at most one disk seek</em> per read.</li>
+  <li><strong>Maximized Write Throughput:</strong> All write paths must be strictly sequential append operations to disk.</li>
+  <li><strong>Crash Friendliness:</strong> Zero recovery corruption; interrupted partial writes are safely discarded without replaying WALs.</li>
+  <li><strong>Single-Process Lockless Writer:</strong> A single process coordinates disk appends, eliminating thread synchronization and distributed locks.</li>
+</ol>
+
+<h2 id="storage-engine-comparison">2. Storage Engine Architecture Comparison</h2>
+<p>How does Bitcask compare against modern alternative storage paradigms?</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Storage Engine</th>
+      <th>Write Path Mechanics</th>
+      <th>Read Path Mechanics</th>
+      <th>Primary Architectural Trade-off</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Bitcask</strong></td>
+      <td>Direct sequential append to active log; in-memory KeyDir updated.</td>
+      <td>$O(1)$ in-memory hash lookup $\to$ <strong>at most 1 direct disk seek</strong>.</td>
+      <td><strong>RAM Bound:</strong> All keys must permanently fit in memory. Range queries unsupported.</td>
+    </tr>
+    <tr>
+      <td><strong>LSM-Tree</strong> (RocksDB, LevelDB)</td>
+      <td>Sequential append to WAL + in-memory MemTable; background tiered SSTable compactions.</td>
+      <td>MemTable $\to$ Bloom filters $\to$ multiple SSTable levels.</td>
+      <td>Higher read amplification (multiple file reads); write stalls during heavy compactions.</td>
+    </tr>
+    <tr>
+      <td><strong>B+ Tree</strong> (InnoDB, PostgreSQL)</td>
+      <td>Random write to memory buffer pool + sequential append to WAL; periodic dirty flushes.</td>
+      <td>Tree traversal (root to leaf); page hits cache or seeks disk block.</td>
+      <td>Heavy write amplification; page splits and expensive random dirty page flushing.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="dual-plane-architecture">3. The Dual-Plane Architecture: Append Log &amp; In-Memory KeyDir</h2>
+<p>A Bitcask instance operates over a dedicated directory containing multiple segmented files. At any point in time, <strong>exactly one file is the Active File</strong> (open for writing). All past files are marked <strong>Immutable</strong> (opened read-only for concurrent reads).</p>
+
+<div class="diagram-container">
+  <div class="mermaid">
+flowchart LR
+    subgraph RAM ["RAM: In-Memory KeyDir (Hash Table)"]
+        K1["'user:42'"] --> E1["{file_id: 3, offset: 512, size: 84, tstamp}"]
+        K2["'user:99'"] --> E2["{file_id: 3, offset: 596, size: 92, tstamp}"]
+        K3["'order:101'"] --> E3["{file_id: 1, offset: 2048, size: 128, tstamp}"]
+    end
+
+    subgraph Disk ["Disk: Append-Only Data Files"]
+        subgraph F3 ["Active Data File #3 (Append-Only)"]
+            D1["[512] CRC32 | Tstamp | KeySz | ValSz | 'user:42' | ValPayload"]
+            D2["[596] CRC32 | Tstamp | KeySz | ValSz | 'user:99' | ValPayload"]
+        end
+        subgraph F1 ["Immutable Data File #1 (Read-Only)"]
+            D3["[2048] CRC32 | Tstamp | KeySz | ValSz | 'order:101' | ValPayload"]
+        end
+    end
+
+    E1 -.->|Single pread Seek| D1
+    E2 -.->|Single pread Seek| D2
+    E3 -.->|Single pread Seek| D3
+
+    classDef cluster fill:#20211d,stroke:#3e3f35,stroke-width:1px,color:#F8F8F2;
+    classDef node fill:#1e1f1c,stroke:#F92672,stroke-width:1px,color:#F8F8F2;
+    class K1,K2,K3,E1,E2,E3,D1,D2,D3 node;
+  </div>
+  <div class="diagram-caption">Figure 1: Dual-plane Bitcask architecture. An in-memory hash index (KeyDir) maps keys directly to on-disk byte offsets, enabling O(1) reads with exactly 1 seek.</div>
+</div>
+
+<h3 id="record-layout">On-Disk Record Layout</h3>
+<p>Every write appends a contiguous binary entry formatted with a fixed 16-byte header followed by variable-length key and value bytes:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Field</th>
+      <th>Size</th>
+      <th>Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>crc</code></td>
+      <td>4 Bytes</td>
+      <td>IEEE 802.3 CRC32 checksum computed over the rest of the record for corruption detection.</td>
+    </tr>
+    <tr>
+      <td><code>tstamp</code></td>
+      <td>4 Bytes</td>
+      <td>32-bit Unix timestamp representing mutation time (used for conflict resolution during merges).</td>
+    </tr>
+    <tr>
+      <td><code>ksz</code></td>
+      <td>4 Bytes</td>
+      <td>Unsigned integer denoting the byte length of the key.</td>
+    </tr>
+    <tr>
+      <td><code>value_sz</code></td>
+      <td>4 Bytes</td>
+      <td>Unsigned integer denoting the byte length of the value payload.</td>
+    </tr>
+    <tr>
+      <td><code>key</code></td>
+      <td>$K$ Bytes</td>
+      <td>Raw binary key bytes ($1 \le K \le 2^{32}-1$).</td>
+    </tr>
+    <tr>
+      <td><code>value</code></td>
+      <td>$V$ Bytes</td>
+      <td>Raw binary value bytes ($0 \le V \le 2^{32}-1$).</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="keydir-anatomy">KeyDir Hash Entry Anatomy</h3>
+<p>The in-memory <code>KeyDir</code> structure is a hash map whose entries are lightweight metadata pointers:</p>
+<pre><code class="language-text">KeyDir[key] = {
+    file_id:   uint32,   // Which segmented data file holds this entry
+    value_pos: uint64,   // Absolute byte offset where record starts in file
+    value_sz:  uint32,   // Length of value bytes to read
+    tstamp:    uint32    // Mutation timestamp
+}</code></pre>
+
+<p>Because values are never stored in <code>KeyDir</code>, memory consumption scales solely with the number of unique keys and their lengths, not the size of stored values.</p>
+
+<h2 id="core-workflows">4. Core Execution Workflows: Write, Read, and Delete Paths</h2>
+
+<h3 id="write-path">1. The Write Path: Put(K, V)</h3>
+<ol>
+  <li>The active writer serializes the record: computes CRC32, packs the 16-byte header, and appends the key and value.</li>
+  <li>The bytes are written to the end of the <strong>Active File</strong> via a sequential <code>write()</code> / <code>append()</code> syscall.</li>
+  <li>The writer notes the byte offset where the record was written.</li>
+  <li>The writer updates the in-memory <code>KeyDir[K]</code> with <code>{file_id, value_pos, value_sz, tstamp}</code>.</li>
+  <li>If the active file exceeds a configured threshold (typically $2\text{ GB}$), it is closed and converted to an <strong>Immutable Data File</strong>, and a new active file is opened.</li>
+</ol>
+
+<h3 id="read-path">2. The Read Path: Get(K)</h3>
+<ol>
+  <li>Look up $K$ in the in-memory <code>KeyDir</code>.</li>
+  <li>If $K$ is not found, return <code>None</code> immediately ($0\text{ disk I/O}$).</li>
+  <li>If present, extract <code>file_id</code>, <code>value_pos</code>, and <code>value_sz</code>.</li>
+  <li>Issue a single positional read using <code>pread(fd, buffer, record_size, value_pos)</code> at the designated offset.</li>
+  <li>Verify the CRC32 checksum over the retrieved bytes. If valid, return the value slice to the client.</li>
+</ol>
+
+<h3 id="delete-path">3. The Delete Path: Delete(K)</h3>
+<p>Because files are append-only, Bitcask never removes records on disk in-place. Instead, it appends a record with a special sentinel <strong>Tombstone</strong> value (or <code>value_sz = 0</code> with a tombstone flag). Immediately upon appending the tombstone, the key is evicted from <code>KeyDir</code>, rendering it inaccessible to subsequent reads.</p>
+
+<h2 id="compaction-hints">5. Background Compaction and the Hint File Innovation</h2>
+<p>Because overwrites and deletions simply append new records, older versions and tombstones accumulate on disk, causing disk bloat. Bitcask reclaims space through an asynchronous <strong>Merge Process</strong>:</p>
+
+<div class="diagram-container">
+  <div class="mermaid">
+flowchart TD
+    subgraph Immutable ["Old Immutable Segments"]
+        F1["file_01.data (Stale updates + Tombstones)"]
+        F2["file_02.data (Old versions)"]
+    end
+
+    subgraph Merge ["Background Merge Process"]
+        F1 --> MP[Merge Scanner]
+        F2 --> MP
+        MP -->|Retains only active KeyDir entries| CD["merged_01.data (Compacted Data)"]
+        MP -->|Generates twin index file| HF["merged_01.hint (Offsets only, zero values)"]
+    end
+
+    subgraph Startup ["Server Cold Boot"]
+        HF -->|Fast sequential scan| KD[Reconstruct KeyDir in RAM in seconds]
+    end
+
+    classDef cluster fill:#20211d,stroke:#3e3f35,stroke-width:1px,color:#F8F8F2;
+    classDef node fill:#1e1f1c,stroke:#F92672,stroke-width:1px,color:#F8F8F2;
+    class F1,F2,MP,CD,HF,KD node;
+  </div>
+  <div class="diagram-caption">Figure 2: The Bitcask Merge Process coalesces immutable segments, evicts dead records, and outputs companion Hint Files for instant crash recovery.</div>
+</div>
+
+<h3 id="recovery-bottleneck">The Cold Boot Bottleneck</h3>
+<p>Because <code>KeyDir</code> lives entirely in volatile RAM, restarting the database requires rebuilding the hash table from disk. Without optimization, the engine must sequentially read and parse every gigabyte of raw data across all files. For a 100 GB database, cold-start recovery can take several minutes.</p>
+
+<h3 id="hint-file-solution">How Hint Files Solve Recovery</h3>
+<p>During the merge process, Bitcask writes a companion <strong>Hint File</strong> alongside each compacted data segment. The Hint File contains the exact same record headers and keys, but <strong>omits the value payloads entirely</strong>:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Hint File Field</th>
+      <th>Size</th>
+      <th>Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>tstamp</code></td>
+      <td>4 Bytes</td>
+      <td>Mutation timestamp.</td>
+    </tr>
+    <tr>
+      <td><code>ksz</code></td>
+      <td>4 Bytes</td>
+      <td>Key length.</td>
+    </tr>
+    <tr>
+      <td><code>value_sz</code></td>
+      <td>4 Bytes</td>
+      <td>Value length in the data file.</td>
+    </tr>
+    <tr>
+      <td><code>value_pos</code></td>
+      <td>8 Bytes</td>
+      <td>Absolute byte offset of the record inside the corresponding <code>.data</code> file.</td>
+    </tr>
+    <tr>
+      <td><code>key</code></td>
+      <td>$K$ Bytes</td>
+      <td>Key bytes.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Upon restart, the engine only reads the compact hint files. Because hint files contain no value blobs, they are tiny (typically $&lt;1\%$ of data file size) and are read sequentially at hardware memory bus speeds, reconstructing <code>KeyDir</code> in <strong>seconds</strong>.</p>
+
+<h2 id="python-implementation">6. Complete Python Implementation</h2>
+<p>Here is a complete, working implementation of the Bitcask storage engine featuring dual-plane architecture, binary record packing, <code>KeyDir</code> indexing, and hint file generation:</p>
+
+<div class="code-wrapper">
+  <div class="code-header">
+    <span>bitcask_engine.py</span>
+    <button class="btn-copy">Copy</button>
+  </div>
+  <pre><code class="language-python">import os
+import time
+import struct
+import zlib
+from typing import Dict, Optional, Tuple
+
+HEADER_FORMAT = "<IIII"  # crc (4B), tstamp (4B), ksz (4B), value_sz (4B)
+HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
+TOMBSTONE = b"__BITCASK_TOMBSTONE_VAL__"
+
+class KeyDirEntry:
+    __slots__ = ("file_id", "value_sz", "value_pos", "tstamp")
+    def __init__(self, file_id: int, value_sz: int, value_pos: int, tstamp: int):
+        self.file_id = file_id
+        self.value_sz = value_sz
+        self.value_pos = value_pos
+        self.tstamp = tstamp
+
+class Bitcask:
+    def __init__(self, data_dir: str, max_file_size: int = 10 * 1024 * 1024):
+        self.data_dir = data_dir
+        self.max_file_size = max_file_size
+        self.keydir: Dict[str, KeyDirEntry] = {}
+        self.active_file_id: int = 1
+        self.active_file = None
+        self.read_handles: Dict[int, Any] = {}
+
+        os.makedirs(data_dir, exist_ok=True)
+        self._bootstrap()
+
+    def _file_path(self, file_id: int, ext: str = ".data") -> str:
+        return os.path.join(self.data_dir, f"{file_id:06d}{ext}")
+
+    def _bootstrap(self):
+        """Discovers existing data files and hint files to reconstruct KeyDir."""
+        files = sorted([f for f in os.listdir(self.data_dir) if f.endswith(".data")])
+        if not files:
+            self.active_file_id = 1
+            self.active_file = open(self._file_path(1), "a+b")
+            return
+
+        for fname in files:
+            fid = int(fname.split(".")[0])
+            self.active_file_id = max(self.active_file_id, fid)
+            hint_path = self._file_path(fid, ".hint")
+
+            if os.path.exists(hint_path):
+                self._load_hint_file(hint_path, fid)
+            else:
+                self._load_data_file(self._file_path(fid), fid)
+
+        # Open latest file for appending
+        self.active_file = open(self._file_path(self.active_file_id), "a+b")
+
+    def _load_data_file(self, path: str, file_id: int):
+        with open(path, "rb") as f:
+            while True:
+                pos = f.tell()
+                header_bytes = f.read(HEADER_SIZE)
+                if len(header_bytes) < HEADER_SIZE:
+                    break
+                crc, tstamp, ksz, val_sz = struct.unpack(HEADER_FORMAT, header_bytes)
+                key = f.read(ksz).decode("utf-8")
+                val = f.read(val_sz)
+
+                # Validate CRC
+                calc_crc = zlib.crc32(header_bytes[4:] + key.encode() + val)
+                if crc != calc_crc:
+                    break  # Truncate on partial/corrupted write
+
+                if val == TOMBSTONE:
+                    self.keydir.pop(key, None)
+                else:
+                    self.keydir[key] = KeyDirEntry(file_id, val_sz, pos, tstamp)
+
+    def _load_hint_file(self, path: str, file_id: int):
+        HINT_FORMAT = "<IIIQ"  # tstamp (4B), ksz (4B), val_sz (4B), val_pos (8B)
+        HINT_SZ = struct.calcsize(HINT_FORMAT)
+        with open(path, "rb") as f:
+            while True:
+                raw = f.read(HINT_SZ)
+                if len(raw) < HINT_SZ:
+                    break
+                tstamp, ksz, val_sz, val_pos = struct.unpack(HINT_FORMAT, raw)
+                key = f.read(ksz).decode("utf-8")
+                self.keydir[key] = KeyDirEntry(file_id, val_sz, val_pos, tstamp)
+
+    def put(self, key: str, value: bytes):
+        """Append record to active file and update in-memory KeyDir."""
+        now = int(time.time())
+        key_bytes = key.encode("utf-8")
+        ksz = len(key_bytes)
+        val_sz = len(value)
+
+        # Header payload for CRC: tstamp + ksz + val_sz + key + value
+        pre_crc_header = struct.pack("<III", now, ksz, val_sz)
+        crc = zlib.crc32(pre_crc_header + key_bytes + value)
+        full_record = struct.pack("<I", crc) + pre_crc_header + key_bytes + value
+
+        pos = self.active_file.tell()
+        self.active_file.write(full_record)
+        self.active_file.flush()
+
+        self.keydir[key] = KeyDirEntry(self.active_file_id, val_sz, pos, now)
+
+        # Roll over active file if threshold exceeded
+        if pos + len(full_record) >= self.max_file_size:
+            self.active_file.close()
+            self.active_file_id += 1
+            self.active_file = open(self._file_path(self.active_file_id), "a+b")
+
+    def get(self, key: str) -> Optional[bytes]:
+        """O(1) memory lookup + single pread disk seek."""
+        entry = self.keydir.get(key)
+        if not entry:
+            return None
+
+        # Reuse or open file descriptor
+        fd = self.read_handles.get(entry.file_id)
+        if not fd:
+            fd = open(self._file_path(entry.file_id), "rb")
+            self.read_handles[entry.file_id] = fd
+
+        fd.seek(entry.value_pos)
+        header_bytes = fd.read(HEADER_SIZE)
+        crc, tstamp, ksz, val_sz = struct.unpack(HEADER_FORMAT, header_bytes)
+        k_bytes = fd.read(ksz)
+        v_bytes = fd.read(val_sz)
+
+        # Verify integrity
+        calc_crc = zlib.crc32(header_bytes[4:] + k_bytes + v_bytes)
+        if crc != calc_crc:
+            raise IOError("Bitcask data corruption detected via CRC32 mismatch")
+
+        return v_bytes
+
+    def delete(self, key: str):
+        """Appends tombstone and removes from KeyDir."""
+        if key in self.keydir:
+            self.put(key, TOMBSTONE)
+            self.keydir.pop(key, None)
+
+    def close(self):
+        if self.active_file:
+            self.active_file.close()
+        for fd in self.read_handles.values():
+            fd.close()
+
+
+if __name__ == "__main__":
+    db = Bitcask("/tmp/bitcask_demo", max_file_size=1024)
+    db.put("driver:101", b'{"lat": 37.7749, "lon": -122.4194}')
+    db.put("driver:102", b'{"lat": 40.7128, "lon": -74.0060}')
+    
+    print("Driver 101:", db.get("driver:101").decode())
+    db.delete("driver:101")
+    print("Driver 101 after delete:", db.get("driver:101"))
+    db.close()
+</code></pre>
+</div>
+
+<h2 id="production-tradeoffs">7. Crash Guarantees &amp; Production Trade-Offs</h2>
+
+<div class="callout callout-warning">
+  <div class="callout-title">⚖️ Bitcask Architectural Fit Matrix</div>
+  <ul>
+    <li><strong>Crash Resilience:</strong> Writes are atomic sequential appends. If an unexpected power loss or kernel panic halts a write midway, the trailing record fails its CRC32 check and is cleanly truncated during bootstrap without affecting prior historical entries.</li>
+    <li><strong>Ideal Workloads:</strong>
+      <ul>
+        <li>Key-value stores where the entire key set comfortably fits in RAM (e.g. driver coordinates at Uber, active user sessions, API rate-limiting tokens).</li>
+        <li>High-write ingestion systems requiring predictable sub-millisecond p99 latencies without B-Tree lock contention.</li>
+      </ul>
+    </li>
+    <li><strong>Disqualifying Constraints:</strong>
+      <ul>
+        <li><strong>RAM Limit:</strong> If key cardinality exceeds physical RAM, Bitcask cannot operate. LSM-Trees (RocksDB) or B+ Trees (InnoDB) must be chosen.</li>
+        <li><strong>Range Scans:</strong> Because the append log is ordered chronologically by insertion time rather than lexicographically by key, range queries (e.g., <code>scan("user:001".."user:100")</code>) require scanning the entire disk and are strictly unsupported.</li>
+      </ul>
+    </li>
+  </ul>
+</div>
+
+      </article>
+
+      <aside class="toc-sidebar">
+        <div class="toc-title">Table of Contents</div>
+        <ul class="toc-list">
+          <li><a href="#problem-space">1. The Problem Space</a></li>
+          <li class="toc-sub"><a href="#bitcask-objectives">Design Objectives</a></li>
+          <li><a href="#storage-engine-comparison">2. Engine Comparison</a></li>
+          <li><a href="#dual-plane-architecture">3. Dual-Plane Architecture</a></li>
+          <li class="toc-sub"><a href="#record-layout">Record Layout</a></li>
+          <li class="toc-sub"><a href="#keydir-anatomy">KeyDir Anatomy</a></li>
+          <li><a href="#core-workflows">4. Core Workflows</a></li>
+          <li class="toc-sub"><a href="#write-path">Write Path</a></li>
+          <li class="toc-sub"><a href="#read-path">Read Path</a></li>
+          <li class="toc-sub"><a href="#delete-path">Delete Path</a></li>
+          <li><a href="#compaction-hints">5. Merging &amp; Hint Files</a></li>
+          <li class="toc-sub"><a href="#recovery-bottleneck">Boot Bottleneck</a></li>
+          <li class="toc-sub"><a href="#hint-file-solution">Hint File Solution</a></li>
+          <li><a href="#python-implementation">6. Python Implementation</a></li>
+          <li><a href="#production-tradeoffs">7. Production Trade-Offs</a></li>
+        </ul>
+      </aside>
+    </div>
+
+    <div class="post-navigation">
+      <a href="redis-internals-and-architecture.html" class="nav-card">
+        <span class="nav-label">← Previous Engine Note</span>
+        <span class="nav-card-title">Redis Internal Mechanics</span>
+      </a>
+      <a href="atlassian-cache-invalidation.html" class="nav-card" style="text-align: right;">
+        <span class="nav-label">Next Note →</span>
+        <span class="nav-card-title">Cache Invalidation at Atlassian</span>
+      </a>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-brand">
+        <h4>System Design Notes</h4>
+        <p>A publication-grade systems engineering knowledge base. Comprehensive technical analyses, architectural patterns, and consensus protocols.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Core Categories</h5>
+        <ul>
+          <li><a href="amazon-aurora-cloud-native-databases.html">Amazon Aurora Architecture</a></li>
+          <li><a href="cap-theorem-and-google-spanner.html">Google Spanner &amp; TrueTime</a></li>
+          <li><a href="consistent-hashing.html">Consistent Hashing Guide</a></li>
+          <li><a href="kafka-architecture-part1.html">Apache Kafka Fundamentals</a></li>
+          <li><a href="microservices-design-patterns.html">Microservices Patterns</a></li>
+          <li><a href="redis-internals-and-architecture.html">Redis Internal Mechanics</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Quick Links</h5>
+        <ul>
+          <li><a href="../index.html">All Notes &amp; Deep Dives</a></li>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank">GitHub Repository</a></li>
+          <li><a href="../index.html#pdf-library">Reference Documents</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <div>System Design Notes · Open source under MIT License.</div>
+      <div>Hosted on GitHub Pages</div>
+    </div>
+  </footer>
+
+  <button id="back-to-top" class="back-to-top" aria-label="Back to top">↑</button>
+
+  <script src="../assets/js/articles-data.js"></script>
+  <script src="../assets/js/main.js"></script>
+</body>
+</html>

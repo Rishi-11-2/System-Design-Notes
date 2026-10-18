@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>How Apache Kafka Actually Achieves Exactly-Once Semantics — System Design Notes</title>
+  <meta name="description" content="Technical deep-dive into Apache Kafka's Exactly-Once Semantics (EOS): delivery vs processing nuances, PID and sequence number deduplication, transactional IDs with zombie fencing, and 2-phase commit multi-partition coordination.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Lora:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">← All Notes</a></li>
+        </ul>
+        <button id="theme-toggle" class="btn-icon" data-tooltip="Toggle light/dark theme" aria-label="Toggle Theme">
+          <span class="theme-icon">☀️</span>
+        </button>
+        <a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="btn-icon" data-tooltip="View GitHub Repository" aria-label="GitHub Repository">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+          </svg>
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="article-page">
+    <div class="article-breadcrumbs">
+      <a href="../index.html">Home</a>
+      <span>/</span>
+      <a href="../index.html#streaming-kafka">Kafka &amp; Streaming</a>
+      <span>/</span>
+      <span>Kafka Exactly-Once Semantics</span>
+    </div>
+
+    <header class="article-header">
+      <span class="article-header-badge">Deep Dive</span>
+      <h1 class="article-header-title">How Apache Kafka Actually Achieves Exactly-Once Semantics (EOS)</h1>
+      <div class="article-header-meta">
+        <span>📁 Category: Streaming &amp; Kafka</span>
+      </div>
+      <div class="article-header-actions">
+        <a href="../index.html" class="btn-secondary">
+          <span>← Back to All Notes</span>
+        </a>
+      </div>
+    </header>
+
+    <div class="article-container">
+      <article class="prose">
+        
+<div class="callout callout-note">
+  <div class="callout-title">📌 Primary Takeaway</div>
+  <p>A widespread misconception across distributed systems engineering is that Apache Kafka provides magic end-to-end "exactly-once processing" covering external databases or REST endpoints. In reality, Kafka guarantees <strong>Exactly-Once Delivery (EOS) to its log storage</strong>. Kafka has zero visibility into downstream execution side-effects. To guarantee exactly-once persistence across transport failures, process crashes, and distributed streaming topologies, Kafka implements a rigorous 3-layer architecture: <strong>Layer 1 (Producer Idempotence via PID + Sequence Numbers)</strong>, <strong>Layer 2 (Transactional IDs + Producer Epochs for Zombie Fencing)</strong>, and <strong>Layer 3 (Atomic Multi-Partition Writes via Two-Phase Commit and the <code>__transaction_state</code> coordinator)</strong>.</p>
+</div>
+
+<h2 id="delivery-vs-processing">1. The Fundamental Caveat: Delivery vs. Processing</h2>
+<p>Before diving into protocol internals, engineers must draw a strict boundary between two distinct concepts:</p>
+
+<div class="callout callout-warning">
+  <div class="callout-title">⚠️ Delivery Semantics vs. Processing Semantics</div>
+  <ul>
+    <li><strong>Exactly-Once Delivery (Kafka Guarantee):</strong> When a producer publishes a stream of messages to Kafka brokers, each record is persisted to the broker's commit log <em>exactly once</em>, regardless of network retries, broker failovers, or producer restarts.</li>
+    <li><strong>Exactly-Once Processing (Application Responsibility):</strong> When a consumer reads a message and executes an external side-effect (e.g., executing a credit card charge via Stripe, mutating a PostgreSQL row, or triggering an email), Kafka cannot roll back the outside world. Achieving end-to-end processing requires either <strong>idempotent downstream sinks</strong> (e.g., natural primary key upserts) or <strong>distributed two-phase commit transactions</strong>.</li>
+  </ul>
+</div>
+
+<h2 id="problem-space">2. The Problem Space: The Fallacy of At-Least-Once Delivery</h2>
+<p>By default, distributed message brokers operate with at-least-once delivery semantics. In the presence of network unreliability, the classical <strong>Two Generals' Paradox</strong> manifests:</p>
+
+<div class="callout callout-important">
+  <div class="callout-title">💥 The Network ACK Loss Failure Mode</div>
+  <ol>
+    <li>The Producer sends a record batch $B$ over the network to the broker partition leader.</li>
+    <li>The broker successfully appends $B$ to its append-only disk commit log and replicates it across in-sync replicas (ISRs).</li>
+    <li>The broker dispatches a network acknowledgment (ACK) back to the Producer.</li>
+    <li><strong>Transport Failure:</strong> A transient network partition, router reset, or client timeout drops the ACK packet.</li>
+    <li>The Producer, unaware that $B$ was committed, retransmits batch $B$.</li>
+    <li>The broker treats the retry as a brand new write, appending $B$ a second time. <strong>Duplicates now permanently corrupt the log!</strong></li>
+  </ol>
+</div>
+
+<h3 id="solution-hierarchy">The 3-Layer Solution Hierarchy</h3>
+<p>Kafka solves this without high-overhead payload inspections through a disciplined layered protocol:</p>
+<ol>
+  <li><strong>Layer 1: Producer Idempotence:</strong> Deduplicates retried batches within a single client session using internal PIDs and per-partition sequence counters.</li>
+  <li><strong>Layer 2: Transactional IDs &amp; Epochs:</strong> Fences out stale "zombie" producer instances across process crashes and JVM garbage collection freezes.</li>
+  <li><strong>Layer 3: 2-Phase Commit (2PC) Coordinator:</strong> Enables atomic, all-or-nothing writes across multiple output topics, partitions, and consumer offset commits.</li>
+</ol>
+
+<h2 id="semantics-comparison">3. Delivery Semantics Comparison Matrix</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>Semantic Model</th>
+      <th>Producer Configuration</th>
+      <th>Broker Behavior on Retries</th>
+      <th>Failure Trade-Off</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>At-Most-Once</strong></td>
+      <td><code>acks=0</code>, retries disabled.</td>
+      <td>Fire and forget; broker never sends ACK, producer never retries.</td>
+      <td>Zero duplicates, but high probability of message loss during network drops.</td>
+    </tr>
+    <tr>
+      <td><strong>At-Least-Once</strong></td>
+      <td><code>acks=all</code>, retries enabled, <code>enable.idempotence=false</code>.</td>
+      <td>Broker appends every retried batch as a new monotonic offset.</td>
+      <td>Zero message loss, but duplicate records are injected into the log during transient network timeouts.</td>
+    </tr>
+    <tr>
+      <td><strong>Exactly-Once (EOS)</strong></td>
+      <td><code>enable.idempotence=true</code>, <code>transactional.id</code> configured.</td>
+      <td>Broker evaluates PID + sequence window; transparently drops duplicate batches.</td>
+      <td>Minimal throughput overhead ($\sim 3\%$), completely eliminates duplicate records and zombie writes.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="layer-1-idempotence">4. Layer 1: Producer Idempotence (Single-Session Deduplication)</h2>
+<p>Why not deduplicate messages by hashing their contents (e.g., SHA-256)? In high-throughput streaming systems, computing cryptographic hashes over every message introduces heavy CPU bottlenecks. Furthermore, hashing fails when an application legitimately produces two identical payloads at different points in time.</p>
+
+<p>Kafka resolves this purely via <strong>protocol-level metadata</strong>:</p>
+
+<div class="diagram-container">
+  <div class="mermaid">
+sequenceDiagram
+    autonumber
+    participant P as Producer (PID: 9042)
+    participant B as Broker Partition Leader
+
+    Note over P,B: Session Initialized: enable.idempotence=true
+    P->>B: Produce Batch [Seq: 8]
+    Note over B: Persists to Log. Updates PID 9042 cache: last_seq = 8
+    B--xP: ACK dropped by network timeout!
+    
+    Note over P: Timeout triggers client retry
+    P->>B: Retry Produce Batch [Seq: 8]
+    Note over B: Sequence check: Incoming Seq (8) <= Cached Seq (8)
+    Note over B: DUPLICATE DETECTED! Drop body, do not append to log
+    B->>P: Return ACK (Success)
+  </div>
+  <div class="diagram-caption">Figure 1: Broker-side deduplication pipeline using unique Producer ID (PID) and per-partition sliding sequence validation.</div>
+</div>
+
+<h3 id="idempotence-mechanics">The Mechanics of Producer Idempotence</h3>
+<ul>
+  <li><strong>Producer ID (PID):</strong> When a client boots with <code>enable.idempotence=true</code>, the broker assigns it an internal 64-bit integer PID.</li>
+  <li><strong>Sequence Numbers:</strong> For every target topic-partition, the producer maintains an internal monotonic counter starting at $0$. Every batch header includes <code>[PID, Sequence_Number]</code>.</li>
+  <li><strong>Broker Sequence Cache:</strong> The partition leader broker keeps an in-memory sliding window tracking the last 5 sequence numbers received from each active PID.</li>
+</ul>
+
+<h3 id="broker-evaluation-rules">Broker Evaluation Rules</h3>
+<p>When batch $[PID, s]$ arrives at the broker partition leader:</p>
+<ol>
+  <li><strong>Expected Batch ($s = \text{last\_seq} + 1$):</strong> The broker appends the batch to the commit log, advances the sequence pointer ($\text{last\_seq} = s$), and returns a success ACK.</li>
+  <li><strong>Duplicate Batch ($s \le \text{last\_seq}$):</strong> The broker detects that this batch was already committed. It <em>discards the payload</em> without writing to disk and returns an immediate success ACK to unblock the producer.</li>
+  <li><strong>Out-of-Order Batch ($s &gt; \text{last\_seq} + 1$):</strong> A message was lost or skipped in flight. The broker rejects the batch with an <code>OutOfOrderSequenceException</code>, preventing out-of-order log corruption.</li>
+</ol>
+
+<h2 id="layer-2-zombie-fencing">5. Layer 2: Transactional IDs &amp; Zombie Fencing</h2>
+<p>While Layer 1 solves retries within a running process session, it fails completely during <strong>producer crashes and process replacements</strong>:</p>
+
+<div class="callout callout-important">
+  <div class="callout-title">🧟 The Zombie Producer Problem</div>
+  <p>Suppose Producer 1 experiences a severe 60-second JVM Stop-The-World garbage collection pause or network blip. The cluster orchestrator assumes Producer 1 is dead and boots Producer 2. Producer 2 registers with the broker and receives a <em>new, random PID</em>. Moments later, Producer 1 wakes up from its GC pause, completely unaware that it was replaced. Both Producer 1 and Producer 2 now concurrently publish conflicting updates to the same partition!</p>
+</div>
+
+<h3 id="solution-transactional-id">The Solution: Stable Transactional IDs + Monotonic Epochs</h3>
+<p>To eliminate zombie splits, engineers assign each producer an explicit, logical identifier that survives restarts:</p>
+<pre><code class="language-properties">transactional.id = "payment-processor-us-east-1"</code></pre>
+
+<p>When the producer starts up, it calls <code>producer.initTransactions()</code>:</p>
+<ol>
+  <li>The <strong>Transaction Coordinator</strong> looks up the <code>transactional.id</code> in the internal <code>__transaction_state</code> topic.</li>
+  <li>The coordinator increments the associated <strong>Producer Epoch</strong> (e.g., from Epoch 4 to Epoch 5).</li>
+  <li>The coordinator returns the PID and the new Epoch to the newly initialized producer.</li>
+  <li><strong>Zombie Fencing:</strong> If the old Producer 1 wakes up and attempts to produce using Epoch 4, the broker intercepts the request, verifies that $4 &lt; 5$, and rejects the write with a fatal <code>ProducerFencedException</code>. The zombie process is immediately terminated.</li>
+</ol>
+
+<h2 id="layer-3-two-phase-commit">6. Layer 3: Atomic Multi-Partition Writes via 2-Phase Commit (2PC)</h2>
+<p>In stream processing pipelines (such as Kafka Streams read-process-write loops), an application reads an event from Input Topic $A$, modifies state, writes an event to Output Topic $B$, and commits consumer offsets to <code>__consumer_offsets</code>. If a crash occurs midway, either the output is duplicated or the input is skipped.</p>
+
+<p>Kafka provides atomic cross-partition consistency through a lightweight <strong>Two-Phase Commit protocol</strong> coordinated by the <strong>Transaction Coordinator</strong>:</p>
+
+<div class="diagram-container">
+  <div class="mermaid">
+flowchart TD
+    subgraph Client ["Transactional Producer"]
+        P[Producer Instance]
+    end
+
+    subgraph Coord ["Transaction Coordinator"]
+        TC["Transaction Coordinator (Hash(TxnId) % 50)"]
+        TS[("__transaction_state Topic")]
+    end
+
+    subgraph Partitions ["Topic Partitions"]
+        PartA["Partition Leader: orders-0"]
+        PartB["Partition Leader: payments-2"]
+        OffsetP["__consumer_offsets-12"]
+    end
+
+    P -->|1. AddPartitionsToTxn| TC
+    TC -->|Log Ongoing State| TS
+    P -->|2. Produce Messages| PartA
+    P -->|2. Produce Messages| PartB
+    P -->|3. SendOffsetsToTxn| TC
+    P -->|4. EndTxn(COMMIT)| TC
+    TC -->|5. Log PREPARE_COMMIT| TS
+    TC -->|6. Write COMMIT Marker| PartA
+    TC -->|6. Write COMMIT Marker| PartB
+    TC -->|6. Write COMMIT Marker| OffsetP
+    TC -->|7. Log COMMITTED State| TS
+
+    classDef cluster fill:#20211d,stroke:#3e3f35,stroke-width:1px,color:#F8F8F2;
+    classDef node fill:#1e1f1c,stroke:#F92672,stroke-width:1px,color:#F8F8F2;
+    class P,TC,TS,PartA,PartB,OffsetP node;
+  </div>
+  <div class="diagram-caption">Figure 2: Kafka's lightweight Two-Phase Commit protocol. The Transaction Coordinator writes PREPARE intent to __transaction_state before distributing COMMIT markers to partition logs.</div>
+</div>
+
+<h3 id="two-phase-commit-steps">The 7-Step 2PC Execution Flow</h3>
+<ol>
+  <li><strong>Find &amp; Register Coordinator:</strong> The producer hashes its <code>transactional.id</code> to discover which of the 50 partitions in the internal <code>__transaction_state</code> topic owns its state:
+  $$\text{Coordinator Partition} = \text{Hash}(\text{transactional.id}) \pmod{50}$$</li>
+  <li><strong>Add Partitions to Transaction:</strong> Before producing to <code>orders-0</code> or <code>payments-2</code>, the client notifies the Coordinator, which appends an <code>ONGOING</code> state log entry.</li>
+  <li><strong>Produce Data:</strong> The producer writes data batches to the partition leader brokers normally. The brokers append the records to disk, but they remain in an <em>uncommitted</em> state.</li>
+  <li><strong>Send Offsets:</strong> The producer registers consumer input offset commits through the transaction coordinator.</li>
+  <li><strong>Phase 1 (Prepare Commit):</strong> The producer invokes <code>commitTransaction()</code>. The Coordinator appends a <code>PREPARE_COMMIT</code> record to <code>__transaction_state</code>. Once this log entry is replicated, the transaction is guaranteed to commit regardless of subsequent broker failures.</li>
+  <li><strong>Phase 2 (Commit Markers):</strong> The Coordinator sends a special <strong>Control Marker</strong> (a tiny non-data commit message) to every partition leader involved in the transaction.</li>
+  <li><strong>Finalized State:</strong> Once all partition leaders acknowledge the commit marker, the Coordinator writes <code>COMMITTED</code> to <code>__transaction_state</code>.</li>
+</ol>
+
+<h3 id="consumer-isolation">Consumer Isolation: read_committed</h3>
+<p>How do downstream consumers prevent reading dirty, uncommitted records while a transaction is in-flight?</p>
+<ul>
+  <li>Consumers set <code>isolation.level = read_committed</code>.</li>
+  <li>The consumer client reads the partition log sequentially but maintains an internal buffer. It refuses to release records to user code past the <strong>Last Stable Offset (LSO)</strong> — the offset of the earliest uncommitted transaction.</li>
+  <li>When the partition leader receives the <code>COMMIT</code> marker from the Coordinator, the LSO advances, and the consumer immediately releases all newly committed records.</li>
+  <li>If an <code>ABORT</code> marker arrives, the consumer quietly purges the buffered aborted batch from memory.</li>
+</ul>
+
+<h2 id="code-walkthrough">7. Production Code: Transactional Producer &amp; Consumer Pattern</h2>
+<p>The following Python snippet demonstrates the canonical read-process-write loop using Kafka transactions:</p>
+
+<div class="code-wrapper">
+  <div class="code-header">
+    <span>kafka_transactional_pipeline.py</span>
+    <button class="btn-copy">Copy</button>
+  </div>
+  <pre><code class="language-python">from kafka import KafkaConsumer, KafkaProducer
+from kafka.errors import ProducerFencedException
+import json
+
+# 1. Initialize Transactional Producer
+producer = KafkaProducer(
+    bootstrap_servers=["localhost:9092"],
+    transactional_id="order-stream-processor-v1",
+    enable_idempotence=True,
+    acks="all",
+    retries=5,
+    value_serializer=lambda v: json.dumps(v).encode("utf-8")
+)
+
+# 2. Initialize Read-Committed Consumer
+consumer = KafkaConsumer(
+    "raw-orders",
+    bootstrap_servers=["localhost:9092"],
+    group_id="order-processors",
+    isolation_level="read_committed",  # Prevents reading dirty uncommitted batches
+    enable_auto_commit=False,
+    value_deserializer=lambda m: json.loads(m.decode("utf-8"))
+)
+
+# Bootstrap Transaction Coordinator
+producer.init_transactions()
+
+try:
+    for message in consumer:
+        # Begin Atomic Transaction Boundary
+        producer.begin_transaction()
+        
+        try:
+            # Business Logic: Filter / Enrich Order
+            order = message.value
+            processed_order = {
+                "order_id": order["id"],
+                "total": order["amount"] * 1.08,
+                "status": "APPROVED"
+            }
+            
+            # Step A: Publish enriched event to output topic
+            producer.send("validated-orders", value=processed_order)
+            
+            # Step B: Attach consumed input offsets to the transaction
+            # Note: In Java, this is producer.sendOffsetsToTransaction(...)
+            # This ensures input offset commit and output message commit atomically together
+            
+            # Step C: Two-Phase Commit Finalization
+            producer.commit_transaction()
+            print(f"Transaction Committed: {order['id']}")
+            
+        except Exception as err:
+            print(f"Transaction Aborting due to failure: {err}")
+            producer.abort_transaction()
+
+except ProducerFencedException:
+    # A newer instance of this transactional.id booted up; terminate immediately!
+    print("FATAL: Producer fenced by newer epoch instance. Exiting.")
+    producer.close()
+</code></pre>
+</div>
+
+<h2 id="architectural-summary">8. Architectural Summary &amp; Key Engineering Takeaways</h2>
+
+<div class="callout callout-tip">
+  <div class="callout-title">💡 The Four Pillars of Kafka EOS</div>
+  <ol>
+    <li><strong>Retries Without Duplicates:</strong> Producer ID (PID) + monotonic sequence numbers eliminate network-drop duplicate writes at negligible CPU overhead.</li>
+    <li><strong>Crash Recovery Without Zombies:</strong> <code>transactional.id</code> + monotonic Producer Epochs fence out stale, partitioned instances across process restarts.</li>
+    <li><strong>Multi-Partition Atomicity:</strong> Lightweight Two-Phase Commit via <code>__transaction_state</code> guarantees all-or-nothing writes across arbitrary topics and partitions.</li>
+    <li><strong>Downstream Boundary:</strong> Kafka guarantees exactly-once delivery <em>to its log</em>. End-to-end exactly-once business computation requires downstream databases to be idempotent (e.g. natural primary keys or transactional sinks).</li>
+  </ol>
+</div>
+
+      </article>
+
+      <aside class="toc-sidebar">
+        <div class="toc-title">Table of Contents</div>
+        <ul class="toc-list">
+          <li><a href="#delivery-vs-processing">1. Delivery vs. Processing</a></li>
+          <li><a href="#problem-space">2. The Problem Space</a></li>
+          <li class="toc-sub"><a href="#solution-hierarchy">3-Layer Solution</a></li>
+          <li><a href="#semantics-comparison">3. Semantics Matrix</a></li>
+          <li><a href="#layer-1-idempotence">4. Layer 1: Idempotence</a></li>
+          <li class="toc-sub"><a href="#idempotence-mechanics">Protocol Mechanics</a></li>
+          <li class="toc-sub"><a href="#broker-evaluation-rules">Broker Evaluation</a></li>
+          <li><a href="#layer-2-zombie-fencing">5. Layer 2: Zombie Fencing</a></li>
+          <li class="toc-sub"><a href="#solution-transactional-id">Transactional ID &amp; Epoch</a></li>
+          <li><a href="#layer-3-two-phase-commit">6. Layer 3: Two-Phase Commit</a></li>
+          <li class="toc-sub"><a href="#two-phase-commit-steps">7-Step 2PC Flow</a></li>
+          <li class="toc-sub"><a href="#consumer-isolation">Consumer Isolation</a></li>
+          <li><a href="#code-walkthrough">7. Production Code</a></li>
+          <li><a href="#architectural-summary">8. Architectural Summary</a></li>
+        </ul>
+      </aside>
+    </div>
+
+    <div class="post-navigation">
+      <a href="kafka-architecture-part2.html" class="nav-card">
+        <span class="nav-label">← Previous Kafka Note</span>
+        <span class="nav-card-title">Kafka Architecture Part 2 — Consumer Groups</span>
+      </a>
+      <a href="bitcask-storage-engine.html" class="nav-card" style="text-align: right;">
+        <span class="nav-label">Next Note →</span>
+        <span class="nav-card-title">Bitcask Storage Engine Explained</span>
+      </a>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-brand">
+        <h4>System Design Notes</h4>
+        <p>A publication-grade systems engineering knowledge base. Comprehensive technical analyses, architectural patterns, and consensus protocols.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Core Categories</h5>
+        <ul>
+          <li><a href="amazon-aurora-cloud-native-databases.html">Amazon Aurora Architecture</a></li>
+          <li><a href="cap-theorem-and-google-spanner.html">Google Spanner &amp; TrueTime</a></li>
+          <li><a href="consistent-hashing.html">Consistent Hashing Guide</a></li>
+          <li><a href="kafka-architecture-part1.html">Apache Kafka Fundamentals</a></li>
+          <li><a href="microservices-design-patterns.html">Microservices Patterns</a></li>
+          <li><a href="redis-internals-and-architecture.html">Redis Internal Mechanics</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Quick Links</h5>
+        <ul>
+          <li><a href="../index.html">All Notes &amp; Deep Dives</a></li>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank">GitHub Repository</a></li>
+          <li><a href="../index.html#pdf-library">Reference Documents</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <div>System Design Notes · Open source under MIT License.</div>
+      <div>Hosted on GitHub Pages</div>
+    </div>
+  </footer>
+
+  <button id="back-to-top" class="back-to-top" aria-label="Back to top">↑</button>
+
+  <script src="../assets/js/articles-data.js"></script>
+  <script src="../assets/js/main.js"></script>
+</body>
+</html>

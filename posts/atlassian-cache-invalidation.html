@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cache Invalidation at Atlassian: From SNS+SQS Push to S3 Pull — System Design Notes</title>
+  <meta name="description" content="In-depth architectural analysis of Atlassian's Tenant Context Service (TCS): why centralized L2 caches were rejected, the O(N) message explosion of SNS+SQS push fanout, and how migrating to a batched, epoch-versioned S3 pull architecture reduced costs by 90% at 600,000 rps scale.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Lora:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">← All Notes</a></li>
+        </ul>
+        <button id="theme-toggle" class="btn-icon" data-tooltip="Toggle light/dark theme" aria-label="Toggle Theme">
+          <span class="theme-icon">☀️</span>
+        </button>
+        <a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="btn-icon" data-tooltip="View GitHub Repository" aria-label="GitHub Repository">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+          </svg>
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="article-page">
+    <div class="article-breadcrumbs">
+      <a href="../index.html">Home</a>
+      <span>/</span>
+      <a href="../index.html#case-studies">Case Studies</a>
+      <span>/</span>
+      <span>Cache Invalidation at Atlassian</span>
+    </div>
+
+    <header class="article-header">
+      <span class="article-header-badge">Case Study</span>
+      <h1 class="article-header-title">Cache Invalidation at Atlassian: From SNS+SQS Push to S3 Pull</h1>
+      <div class="article-header-meta">
+        <span>📁 Category: Case Studies</span>
+      </div>
+      <div class="article-header-actions">
+        <a href="../index.html" class="btn-secondary">
+          <span>← Back to All Notes</span>
+        </a>
+      </div>
+    </header>
+
+    <div class="article-container">
+      <article class="prose">
+        
+<div class="callout callout-note">
+  <div class="callout-title">📌 Primary Takeaway</div>
+  <p>Serving over <strong>600,000 requests per second</strong> across 10,000+ compute nodes with a strict <strong>11 μs p50 latency</strong> budget forced Atlassian's Tenant Context Service (TCS) to reject centralized L2 caches (Redis/Memcached) in favor of node-local L1 in-memory caches. However, keeping 10,000+ independent caches synchronized via an AWS-native <strong>SNS + SQS push fanout</strong> triggered an explosive $O(N)$ message storm: 100 metadata updates/sec created over <strong>1,080,000 SQS messages/sec</strong>, racking up astronomical cloud bills and queue lag. By replacing push fanout with a batched, epoch-versioned <strong>S3 pull/polling model</strong>, Atlassian eliminated message amplification, cut cloud messaging costs by <strong>&gt;90%</strong>, and established six-nines operational stability.</p>
+</div>
+
+<h2 id="operational-challenge">1. The Operational Challenge: Invalidation at Six-Nines Scale</h2>
+<p>Atlassian's <strong>Tenant Context Service (TCS)</strong> is the foundational security and authorization backbone for products like Jira, Confluence, and Bitbucket. Every incoming HTTP request must resolve:</p>
+<ul>
+  <li><strong>Tenant Metadata:</strong> Tenant identification, license state, and feature toggles.</li>
+  <li><strong>Permission Descriptors:</strong> Role-based access control and tenant isolation rules.</li>
+  <li><strong>Cryptographic Keys:</strong> Per-tenant encryption keys for database and object stores.</li>
+</ul>
+
+<p>Because every single API call across Atlassian's entire cloud platform depends on TCS, it operates under stringent requirements:</p>
+<ul>
+  <li><strong>Throughput:</strong> &gt; 600,000 requests per second globally.</li>
+  <li><strong>Latency:</strong> Target p50 latency of <strong>11 microseconds ($\mu\text{s}$)</strong>; p99 under 1 millisecond.</li>
+  <li><strong>Availability:</strong> Six-nines ($99.9999\%$) reliability — any downtime in TCS halts all customer applications globally.</li>
+</ul>
+
+<h3 id="why-redis-rejected">Why Centralized L2 Caches (Redis/Memcached) Were Rejected</h3>
+<p>When architects look at caching tenant metadata, the immediate default is to deploy an ElastiCache Redis or Memcached cluster. Atlassian rigorously benchmarked and rejected this approach due to three fundamental disqualifiers:</p>
+
+<div class="callout callout-important">
+  <div class="callout-title">🚫 Centralized L2 Cache Disqualifiers</div>
+  <ol>
+    <li><strong>Network Round-Trip Penalty:</strong> Even within the same AWS Availability Zone, network hops take between $1\text{ ms}$ and $3\text{ ms}$. This is roughly <strong>100x to 250x slower</strong> than the TCS $11\ \mu\text{s}$ target. In-memory local RAM lookups (via Caffeine in Java) complete in <strong>hundreds of nanoseconds</strong>.</li>
+    <li><strong>Catastrophic Blast Radius:</strong> If a centralized Redis cluster experiences network partitions, CPU saturation, or memory eviction storms, every upstream Jira and Confluence compute instance halts synchronously.</li>
+    <li><strong>Connection Pool & Socket Saturation:</strong> Over 10,000 compute nodes attempting to maintain persistent TCP connection pools to a Redis cluster leads to socket exhaustion, ephemeral port starvation, and connection churn.</li>
+  </ol>
+</div>
+
+<p>Consequently, Atlassian chose <strong>Node-Local L1 In-Memory Caches</strong> running directly inside the JVM heap. Local L1 caching achieved a <strong>&gt;99.5% cache hit ratio</strong> with zero network I/O. However, this introduced the fundamental distributed systems challenge: <em>How do you invalidate stale entries across 10,000+ independent nodes when a tenant modifies their settings?</em></p>
+
+<h2 id="architecture-models">2. Invalidation Architectural Models Compared</h2>
+<p>Distributed systems offer three primary architectural strategies for cache invalidation. Atlassian evaluated each against their scale:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Architecture Model</th>
+      <th>Data Propagation Mechanics</th>
+      <th>Message Amplification</th>
+      <th>Scaling Bottleneck &amp; Trade-off</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Short TTL Polling</strong></td>
+      <td>Local cache expires after fixed duration (e.g. 5 seconds); fetches DynamoDB on miss.</td>
+      <td>Zero amplification; continuous steady backend queries.</td>
+      <td>Massive database read load; serves stale data throughout the TTL window ($5\text{s}$).</td>
+    </tr>
+    <tr>
+      <td><strong>SNS + SQS Push Fanout</strong></td>
+      <td>TCS publishes mutate events to SNS; SNS fans out to dedicated SQS queues on each node.</td>
+      <td><strong>$O(N)$ Amplification:</strong> 1 write event triggers 10,000+ SQS message operations.</td>
+      <td>Explosive AWS API costs, queue sprawl, lingering dead queues, and consumer queue lag.</td>
+    </tr>
+    <tr>
+      <td><strong>S3-Based Pull Batching</strong></td>
+      <td>TCS aggregates mutations and writes versioned epoch changelogs to S3. Sidecars periodically poll S3.</td>
+      <td><strong>Zero Queue Fanout:</strong> Bounded HTTP GET requests hitting S3 prefix caches.</td>
+      <td>Slightly higher invalidation latency ($1\text{--}2\text{ s}$) balanced by extreme stability and minimal cost.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="push-fanout">3. The Initial Design: The SNS + SQS Push Fanout Architecture</h2>
+<p>To achieve instantaneous cache invalidation, Atlassian initially built an event-driven push topology leveraging AWS Simple Notification Service (SNS) and Simple Queue Service (SQS):</p>
+
+<div class="diagram-container">
+  <div class="mermaid">
+flowchart TD
+    subgraph Core ["TCS Core Tier"]
+        W[Tenant Metadata Mutation] -->|1 Message| SNS[AWS SNS Regional Topic]
+    end
+
+    subgraph Fanout ["AWS Fanout Pipeline (O(N) Multiplier)"]
+        SNS -->|Deliver| Q1["Node 1 Queue (SQS)"]
+        SNS -->|Deliver| Q2["Node 2 Queue (SQS)"]
+        SNS -->|Deliver| Q3["Node 3 Queue (SQS)"]
+        SNS -.->|Deliver 10,000+ copies| QN["Node 10,000+ Queue (SQS)"]
+    end
+
+    subgraph Compute ["Application Compute Nodes"]
+        Q1 -->|Long Poll & Evict| S1[Sidecar 1: L1 Cache]
+        Q2 -->|Long Poll & Evict| S2[Sidecar 2: L1 Cache]
+        Q3 -->|Long Poll & Evict| S3[Sidecar 3: L1 Cache]
+        QN -->|Long Poll & Evict| SN[Sidecar N: L1 Cache]
+    end
+
+    classDef cluster fill:#20211d,stroke:#3e3f35,stroke-width:1px,color:#F8F8F2;
+    classDef node fill:#1e1f1c,stroke:#F92672,stroke-width:1px,color:#F8F8F2;
+    class W,SNS,Q1,Q2,Q3,QN,S1,S2,S3,SN node;
+  </div>
+  <div class="diagram-caption">Figure 1: The SNS + SQS fanout pipeline demonstrating how a single metadata write triggers an O(N) messaging storm across 10,000+ individual queues.</div>
+</div>
+
+<h3 id="push-mechanics">The Mechanics of the Push Model</h3>
+<ul>
+  <li>Every application instance booted with an embedded sidecar worker process.</li>
+  <li>Upon startup, the sidecar programmatically called the AWS SQS API to create a unique, ephemeral queue and subscribed it to the central regional SNS topic.</li>
+  <li>When a tenant administrator modified user permissions in Jira, TCS published a JSON invalidation message containing the <code>tenant_id</code> to SNS.</li>
+  <li>SNS handled the fanout, cloning the message and pushing it into every single active SQS queue.</li>
+  <li>The sidecars continuously long-polled their dedicated SQS queues, received the message, and evicted the corresponding keys from their local Caffeine cache.</li>
+</ul>
+
+<h3 id="math-amplification">The Mathematics of the O(N) Amplification Storm</h3>
+<p>While elegant on paper, the mathematical reality of $O(N)$ fanout broke the architecture under production load:</p>
+
+$$\text{Message Operations/sec} = \text{Write Rate} \times N_{\text{nodes}}$$
+
+<p>Atlassian's production fleet comprised approximately $10,800$ compute nodes. During business hours, tenant metadata mutations occurred at an average of $100\text{ writes/sec}$.</p>
+
+$$\text{Throughput} = 100 \times 10,800 = 1,080,000\ \text{SQS operations / second}$$
+
+<p>Every single write caused over <strong>one million message deliveries per second</strong> across AWS infrastructure!</p>
+
+<h2 id="why-push-failed">4. The Breaking Point: The 3 Failure Modes of SQS Fanout</h2>
+<p>As the fleet grew, three critical operational bottlenecks manifested:</p>
+
+<div class="callout callout-warning">
+  <div class="callout-title">⚠️ The 3 Crippling Failures of SQS Push</div>
+  <ol>
+    <li><strong>Explosive AWS Infrastructure Costs:</strong> AWS SQS billing is metered per API request (SendMessage, ReceiveMessage, DeleteMessage). At over 1 million operations per second, monthly AWS billing surged by hundreds of thousands of dollars purely to discard cache keys that many nodes had not even loaded into RAM!</li>
+    <li><strong>Ephemeral Queue Sprawl in Kubernetes:</strong> In modern containerized environments, pods constantly autoscale, roll out deployments, and terminate. When nodes crashed or pods rescheduled without clean graceful shutdowns, orphaned SQS queues remained active, accumulating messages and eventually hitting hard AWS account-level SQS limits.</li>
+    <li><strong>Consumer Queue Lag &amp; Split-Brain Stale Reads:</strong> If a subset of nodes experienced JVM Stop-The-World GC pauses or CPU throttling, their sidecars fell behind on SQS polling. Stale permission descriptors persisted on lagging nodes, leading to inconsistent security states where a revoked user was blocked on Node A but allowed on Node B.</li>
+  </ol>
+</div>
+
+<h2 id="s3-pull-architecture">5. The Migration: The Bespoke S3 Pull/Polling Architecture</h2>
+<p>To eliminate the $O(N)$ fanout crisis, Atlassian made a radical architectural pivot: <strong>stop pushing individual messages to nodes; let nodes pull batched changelogs from scalable object storage (Amazon S3).</strong></p>
+
+<div class="diagram-container">
+  <div class="mermaid">
+flowchart TD
+    subgraph Mutation ["TCS Write Path"]
+        M1[Tenant Mutation 1] --> Agg[TCS Batch Aggregator]
+        M2[Tenant Mutation 2] --> Agg
+        M3[Tenant Mutation N] --> Agg
+        Agg -->|1 PUT per epoch| S3[(Amazon S3 Storage)]
+    end
+
+    subgraph Changelog ["Partitioned Invalidation Changelog"]
+        S3 --- F1["s3://tcs/inval/epoch_1710000001.json"]
+        S3 --- F2["s3://tcs/inval/epoch_1710000002.json"]
+    end
+
+    subgraph Fleet ["Fleet Sidecar Workers (10,000+ Nodes)"]
+        S3 -->|Conditional GET: If-Modified-Since| Node1[Node 1: Evict Keys]
+        S3 -->|Conditional GET: If-Modified-Since| Node2[Node 2: Evict Keys]
+        S3 -->|Conditional GET: If-Modified-Since| NodeN[Node 10,000+: Evict Keys]
+    end
+
+    classDef cluster fill:#20211d,stroke:#3e3f35,stroke-width:1px,color:#F8F8F2;
+    classDef node fill:#1e1f1c,stroke:#F92672,stroke-width:1px,color:#F8F8F2;
+    class M1,M2,M3,Agg,S3,F1,F2,Node1,Node2,NodeN node;
+  </div>
+  <div class="diagram-caption">Figure 2: The decoupled S3 pull pattern. Coalescing mutations into immutable, versioned changelogs on S3 eliminates discrete message queues and O(N) multipliers.</div>
+</div>
+
+<h3 id="batching-micro-changelogs">Batching &amp; Micro-Changelogs</h3>
+<p>Instead of dispatching discrete notifications immediately, TCS introduced an in-memory <strong>Batch Aggregator</strong>:</p>
+<ul>
+  <li>Mutations occurring within a short time window (e.g., $1\text{ second}$) are buffered in memory.</li>
+  <li>Duplicate invalidations for the same tenant are deduplicated into a single entry.</li>
+  <li>The aggregator serializes the batch into a compressed JSON changelog object and writes it to S3 using an incrementing timestamp epoch:
+    <code>s3://tcs-invalidation-prod/changelogs/2026/10/18/epoch_1710000001.json.gz</code></li>
+  <li>Writing 1 file per second represents exactly <strong>86,400 S3 PUT operations per day</strong> — costing fractions of a cent.</li>
+</ul>
+
+<h3 id="s3-caching-mechanics">S3 HTTP Caching &amp; Cost Collapse</h3>
+<p>Amazon S3 natively handles thousands of concurrent read requests per second per prefix. Sidecars execute a periodic HTTP request every second:</p>
+<ul>
+  <li>Sidecars send an HTTP <code>HEAD</code> or <code>GET</code> request using the <code>If-Modified-Since</code> or <code>If-None-Match</code> header with their local epoch tracker.</li>
+  <li>If no new changelog has been published, S3 returns a lightweight <code>304 Not Modified</code> with zero payload transfer.</li>
+  <li>When a new epoch appears, sidecars fetch the tiny compressed file, inspect the list of modified <code>tenant_id</code> keys, and invalidate only those entries from their local Caffeine cache.</li>
+  <li>Total AWS messaging infrastructure cost dropped by <strong>over 90%</strong> immediately upon deployment.</li>
+</ul>
+
+<h2 id="implementation">6. Python Simulation: S3 Invalidation Pipeline</h2>
+<p>The following production simulation demonstrates the core architecture of the TCS Batch Aggregator and the Client Sidecar Poller:</p>
+
+<div class="code-wrapper">
+  <div class="code-header">
+    <span>atlassian_cache_invalidation.py</span>
+    <button class="btn-copy">Copy</button>
+  </div>
+  <pre><code class="language-python">import time
+import json
+import gzip
+from typing import Set, Dict, Any, List
+
+class S3MockStorage:
+    """Simulates Amazon S3 with epoch-versioned immutable changelog objects."""
+    def __init__(self):
+        self.objects: Dict[str, bytes] = {}
+        self.latest_epoch: int = 0
+
+    def put_changelog(self, epoch: int, keys: Set[str]) -> str:
+        payload = json.dumps({"epoch": epoch, "invalidated_keys": list(keys)}).encode("utf-8")
+        compressed = gzip.compress(payload)
+        key_path = f"tcs/changelogs/epoch_{epoch}.json.gz"
+        self.objects[key_path] = compressed
+        self.latest_epoch = epoch
+        return key_path
+
+    def get_latest_epoch(self) -> int:
+        return self.latest_epoch
+
+    def get_changelog(self, epoch: int) -> List[str]:
+        key_path = f"tcs/changelogs/epoch_{epoch}.json.gz"
+        if key_path not in self.objects:
+            return []
+        raw = gzip.decompress(self.objects[key_path])
+        data = json.loads(raw.decode("utf-8"))
+        return data.get("invalidated_keys", [])
+
+
+class TCSBatchAggregator:
+    """Gathers discrete mutations and flushes batched epoch manifests to S3."""
+    def __init__(self, s3: S3MockStorage, flush_interval_sec: float = 1.0):
+        self.s3 = s3
+        self.flush_interval = flush_interval_sec
+        self.pending_keys: Set[str] = set()
+        self.last_flush = time.time()
+        self.current_epoch = int(time.time())
+
+    def record_mutation(self, tenant_id: str):
+        """Called when a tenant configuration changes in Jira/Confluence."""
+        self.pending_keys.add(tenant_id)
+
+    def maybe_flush(self) -> bool:
+        now = time.time()
+        if now - self.last_flush >= self.flush_interval and self.pending_keys:
+            self.current_epoch += 1
+            flushed_count = len(self.pending_keys)
+            path = self.s3.put_changelog(self.current_epoch, self.pending_keys)
+            print(f"[TCS Aggregator] Epoch {self.current_epoch}: Flushed {flushed_count} invalidations -> {path}")
+            self.pending_keys.clear()
+            self.last_flush = now
+            return True
+        return False
+
+
+class NodeLocalCacheSidecar:
+    """Sidecar running alongside each compute instance managing L1 Caffeine cache."""
+    def __init__(self, node_id: str, s3: S3MockStorage):
+        self.node_id = node_id
+        self.s3 = s3
+        self.local_cache: Dict[str, str] = {}
+        self.last_applied_epoch: int = s3.get_latest_epoch()
+
+    def set_local(self, key: str, value: str):
+        self.local_cache[key] = value
+
+    def get_local(self, key: str) -> str:
+        return self.local_cache.get(key, None)
+
+    def poll_and_sync(self):
+        """Executed periodically (e.g., every 1s) by the background daemon."""
+        latest_available = self.s3.get_latest_epoch()
+        if latest_available <= self.last_applied_epoch:
+            return  # HTTP 304 Not Modified equivalent: Zero work
+
+        # Replay all missed epochs up to the latest
+        for epoch in range(self.last_applied_epoch + 1, latest_available + 1):
+            keys_to_evict = self.s3.get_changelog(epoch)
+            for k in keys_to_evict:
+                if k in self.local_cache:
+                    del self.local_cache[k]
+                    print(f"[{self.node_id}] EVICTED stale key '{k}' from L1 cache (Epoch {epoch})")
+
+        self.last_applied_epoch = latest_available
+
+
+# Demonstration
+if __name__ == "__main__":
+    s3 = S3MockStorage()
+    aggregator = TCSBatchAggregator(s3, flush_interval_sec=0.1)
+
+    # 2 Compute Node Sidecars
+    node_a = NodeLocalCacheSidecar("Node-Jira-1", s3)
+    node_b = NodeLocalCacheSidecar("Node-Confluence-2", s3)
+
+    # Seed L1 caches
+    node_a.set_local("tenant:alpha", "v1_permissions")
+    node_b.set_local("tenant:alpha", "v1_permissions")
+    node_b.set_local("tenant:beta", "v1_permissions")
+
+    # Invalidation events trigger in core TCS
+    aggregator.record_mutation("tenant:alpha")
+    aggregator.record_mutation("tenant:gamma")
+    time.sleep(0.15)
+    aggregator.maybe_flush()
+
+    # Sidecars poll on timer
+    node_a.poll_and_sync()
+    node_b.poll_and_sync()
+
+    print(f"Node A 'tenant:alpha' exists: {node_a.get_local('tenant:alpha') is not None}")
+    print(f"Node B 'tenant:beta' exists:  {node_b.get_local('tenant:beta') is not None}")
+</code></pre>
+</div>
+
+<h2 id="engineering-takeaways">7. Architectural Lessons &amp; Key Engineering Takeaways</h2>
+
+<div class="callout callout-tip">
+  <div class="callout-title">💡 Core Systems Engineering Maxims</div>
+  <ol>
+    <li><strong>The Push vs. Pull Trade-Off:</strong> Push messaging (SNS + SQS) achieves sub-100ms latency but scales at $O(N)$ with respect to consumers. When consumer fleets reach $10^4$ instances, push architectures collapse under API fees and queue sprawl. Pull/polling architectures bound scale cleanly.</li>
+    <li><strong>Challenge Latency Assumptions:</strong> Engineers often reflexively design for zero-latency cache consistency. In practice, tenant permissions and administrative setting changes easily tolerate a <strong>$1\text{ to }2\text{ second}$ propagation window</strong>. Trading sub-second invalidation for a $1\text{s}$ polling lag enabled a $90\%$ reduction in system complexity and cost.</li>
+    <li><strong>Stateless Resilience via Object Storage:</strong> S3 has no message queues to deadlock, no head-of-line blocking, and no consumer group rebalances. If a compute pod restarts after hours of downtime, it simply reads the latest monotonic epoch and synchronizes its state instantly.</li>
+  </ol>
+</div>
+
+      </article>
+
+      <aside class="toc-sidebar">
+        <div class="toc-title">Table of Contents</div>
+        <ul class="toc-list">
+          <li><a href="#operational-challenge">1. Operational Challenge</a></li>
+          <li class="toc-sub"><a href="#why-redis-rejected">Why L2 Redis Rejected</a></li>
+          <li><a href="#architecture-models">2. Invalidation Models</a></li>
+          <li><a href="#push-fanout">3. SNS + SQS Push Fanout</a></li>
+          <li class="toc-sub"><a href="#push-mechanics">Fanout Mechanics</a></li>
+          <li class="toc-sub"><a href="#math-amplification">O(N) Math Breakdown</a></li>
+          <li><a href="#why-push-failed">4. The 3 Failure Modes</a></li>
+          <li><a href="#s3-pull-architecture">5. S3 Pull Migration</a></li>
+          <li class="toc-sub"><a href="#batching-micro-changelogs">Batching Changelogs</a></li>
+          <li class="toc-sub"><a href="#s3-caching-mechanics">S3 HTTP Caching</a></li>
+          <li><a href="#implementation">6. Python Simulation</a></li>
+          <li><a href="#engineering-takeaways">7. Key Engineering Takeaways</a></li>
+        </ul>
+      </aside>
+    </div>
+
+    <div class="post-navigation">
+      <a href="grab-data-layer-architecture.html" class="nav-card">
+        <span class="nav-label">← Previous Case Study</span>
+        <span class="nav-card-title">Grab Data Layer Architecture</span>
+      </a>
+      <a href="consistent-hashing.html" class="nav-card" style="text-align: right;">
+        <span class="nav-label">Next Note →</span>
+        <span class="nav-card-title">Consistent Hashing — First Principles</span>
+      </a>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-brand">
+        <h4>System Design Notes</h4>
+        <p>A publication-grade systems engineering knowledge base. Comprehensive technical analyses, architectural patterns, and consensus protocols.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Core Categories</h5>
+        <ul>
+          <li><a href="amazon-aurora-cloud-native-databases.html">Amazon Aurora Architecture</a></li>
+          <li><a href="cap-theorem-and-google-spanner.html">Google Spanner &amp; TrueTime</a></li>
+          <li><a href="consistent-hashing.html">Consistent Hashing Guide</a></li>
+          <li><a href="kafka-architecture-part1.html">Apache Kafka Fundamentals</a></li>
+          <li><a href="microservices-design-patterns.html">Microservices Patterns</a></li>
+          <li><a href="redis-internals-and-architecture.html">Redis Internal Mechanics</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Quick Links</h5>
+        <ul>
+          <li><a href="../index.html">All Notes &amp; Deep Dives</a></li>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank">GitHub Repository</a></li>
+          <li><a href="../index.html#pdf-library">Reference Documents</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <div>System Design Notes · Open source under MIT License.</div>
+      <div>Hosted on GitHub Pages</div>
+    </div>
+  </footer>
+
+  <button id="back-to-top" class="back-to-top" aria-label="Back to top">↑</button>
+
+  <script src="../assets/js/articles-data.js"></script>
+  <script src="../assets/js/main.js"></script>
+</body>
+</html>

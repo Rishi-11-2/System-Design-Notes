@@ -28,6 +28,9 @@ Designed strictly following the **Array UI (`ape-design`) Editorial Systems Desi
 | [**Cloud-Native Databases and Amazon Aurora Architecture**](posts/amazon-aurora-cloud-native-databases.html) | Cloud Databases | `Docs/Amazon_Aurora_Cloud_Native_Databases.pdf` |
 | [**CAP Theorem and Google Spanner — The Globally-Distributed Database**](posts/cap-theorem-and-google-spanner.html) | Distributed Systems | `Docs/CAP_THEOREM_AND_GOOGLE_SPANNER.pdf` |
 | [**Consistent Hashing — Implementation from First Principles**](posts/consistent-hashing.html) | Distributed Systems | `Docs/Consistent_Hashing_Guide.pdf` |
+| [**Cache Invalidation at Atlassian: From SNS+SQS Push to S3 Pull**](posts/atlassian-cache-invalidation.html) | Case Studies | `Docs/Atlassian Cache Invalidation Architecture Breakdown.pdf` |
+| [**Bitcask Explained: A Log-Structured Fast Key/Value Store**](posts/bitcask-storage-engine.html) | Storage Engines | `Docs/Bitcask Storage Engine Technical Breakdown.pdf` |
+| [**How Apache Kafka Actually Achieves Exactly-Once Semantics (EOS)**](posts/kafka-exactly-once-semantics.html) | Streaming & Kafka | `Docs/Kafka Exactly-Once Semantics Technical Breakdown.pdf` |
 | [**Grab Data Layer Architecture**](posts/grab-data-layer-architecture.html) | Case Studies | `Docs/Grab_Configured_Data_Layer.pdf` |
 | [**Apache Kafka Architecture Part 1 — Storage & Event Fundamentals**](posts/kafka-architecture-part1.html) | Streaming & Kafka | `Docs/Kafka_Architecture_Part1.pdf` |
 | [**Apache Kafka Architecture Part 2 — Consumer Groups & High Availability**](posts/kafka-architecture-part2.html) | Streaming & Kafka | `Docs/Kafka_Architecture_Part2.pdf` |
@@ -42,11 +45,11 @@ Designed strictly following the **Array UI (`ape-design`) Editorial Systems Desi
 ## 🎨 Design & Aesthetic Features (Array UI / ape-design)
 
 - 🎨 **Editorial Systems Palette:**
-  - **Dark Mode (Obsidian Carbon):** `#111113` canvas, `#27272c` 1px hairline border, `#d6d6dc` soft readable text.
-  - **Light Mode (Paper Light):** `#f9f8f5` warm paper canvas, `#dfded9` hairline border, `#2b2a30` dark carbon text.
-  - **Signature Accents:** Signature Crimson `#e60012` (actions & active states), Amber `#cc9900` (maxims & callouts), Emerald `#10b981` (telemetry & health), Rose `#f43f5e` (outages & errors).
+  - **Dark Mode (Obsidian Carbon):** `#272822` canvas, `#3e3f35` 1px hairline border, `#F8F8F2` soft readable text.
+  - **Light Mode (Paper Light):** `#faf9f5` warm paper canvas, `#dfdbce` hairline border, `#272822` dark carbon text.
+  - **Signature Accents:** Signature Crimson `#F92672` (actions & active states), Amber `#E6DB74` (maxims & callouts), Emerald `#A6E22E` (telemetry & health), Cyan `#66D9EF` (links & details).
 - 📖 **Disciplined Editorial Typography:**
-  - High-performance pairing: **Assistant** for dense headings & body prose (15px base, `-0.015em` tracking), **Lora** for engineering maxims (italic serif), and **IBM Plex Mono** for code, telemetry, and badges.
+  - High-performance pairing: **Plus Jakarta Sans** for dense headings & body prose, **Lora** for engineering maxims (italic serif), and **JetBrains Mono** for code, telemetry, and badges.
   - Clean reading spine capped near `76ch` for optimal reading flow and zero eye fatigue.
 - 📐 **Pure KaTeX LaTeX Typesetting:**
   - Mathematical equations rendered in pure HTML mode to eliminate duplicate MathML artifacts.
@@ -79,11 +82,14 @@ Designed strictly following the **Array UI (`ape-design`) Editorial Systems Desi
 │       └── main.js                               # Search, theme toggle, KaTeX, Highlight.js, TOC
 ├── posts/                                        # Standalone blog articles
 │   ├── amazon-aurora-cloud-native-databases.html
+│   ├── atlassian-cache-invalidation.html
+│   ├── bitcask-storage-engine.html
 │   ├── cap-theorem-and-google-spanner.html
 │   ├── consistent-hashing.html
 │   ├── grab-data-layer-architecture.html
 │   ├── kafka-architecture-part1.html
 │   ├── kafka-architecture-part2.html
+│   ├── kafka-exactly-once-semantics.html
 │   ├── microservices-design-patterns.html
 │   ├── redis-internals-and-architecture.html
 │   ├── redis-java-implementation.html
@@ -91,12 +97,16 @@ Designed strictly following the **Array UI (`ape-design`) Editorial Systems Desi
 │   └── system-design-foundations-and-scaling.html
 ├── Docs/                                         # Original PDFs, academic papers, and notes
 │   ├── Amazon_Aurora_Cloud_Native_Databases.pdf
+│   ├── Atlassian Cache Invalidation Architecture Breakdown.pdf
+│   ├── Bitcask Storage Engine Technical Breakdown.pdf
 │   ├── CAP_THEOREM_AND_GOOGLE_SPANNER.pdf
 │   ├── Consistent_Hashing_Guide.pdf
 │   ├── Grab_Configured_Data_Layer.pdf
+│   ├── Kafka Exactly-Once Semantics Technical Breakdown.pdf
 │   ├── Kafka_Architecture_Part1.pdf
 │   ├── Kafka_Architecture_Part2.pdf
 │   ├── Microservices_Architecture_Notes.pdf
+│   ├── Storage_Compute_Separation_Aurora_Architecture.pdf
 │   ├── System_Design_Notes.pdf
 │   ├── Papers/                                   # Google Spanner, Dremel papers
 │   └── Redis_Notes/                              # 17 Original Redis note modules
