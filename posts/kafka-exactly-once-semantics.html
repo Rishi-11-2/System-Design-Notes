@@ -95,7 +95,10 @@
   <p>A widespread misconception across distributed systems engineering is that Apache Kafka provides magic end-to-end "exactly-once processing" covering external databases or REST endpoints. In reality, Kafka guarantees <strong>Exactly-Once Delivery (EOS) to its log storage</strong>. Kafka has zero visibility into downstream execution side-effects. To guarantee exactly-once persistence across transport failures, process crashes, and distributed streaming topologies, Kafka implements a rigorous 3-layer architecture: <strong>Layer 1 (Producer Idempotence via PID + Sequence Numbers)</strong>, <strong>Layer 2 (Transactional IDs + Producer Epochs for Zombie Fencing)</strong>, and <strong>Layer 3 (Atomic Multi-Partition Writes via Two-Phase Commit and the <code>__transaction_state</code> coordinator)</strong>.</p>
 </div>
 
-<h2 id="delivery-vs-processing">1. The Fundamental Caveat: Delivery vs. Processing</h2>
+<div class="callout callout-note">
+  <div class="callout-title">📌 The Fundamental Caveat: Delivery vs. Processing</div>
+  <p>A widespread misconception across industry systems engineering is that Kafka provides end-to-end "exactly-once processing" across external side-effects. In reality, Kafka guarantees <strong>Exactly-Once Delivery (EOS)</strong> to its log storage. Kafka has zero visibility into downstream consumer execution side-effects (e.g., REST calls or database writes). End-to-end exactly-once computation requires downstream idempotency or transactional sink coordination.</p>
+</div>
 <p>Before diving into protocol internals, engineers must draw a strict boundary between two distinct concepts:</p>
 
 <div class="callout callout-warning">
@@ -106,7 +109,7 @@
   </ul>
 </div>
 
-<h2 id="problem-space">2. The Problem Space: The Fallacy of At-Least-Once Delivery</h2>
+<h2 id="problem-space">1. The Problem Space: The Fallacy of At-Least-Once Delivery</h2>
 <p>By default, distributed message brokers operate with at-least-once delivery semantics. In the presence of network unreliability, the classical <strong>Two Generals' Paradox</strong> manifests:</p>
 
 <div class="callout callout-important">
@@ -129,7 +132,7 @@
   <li><strong>Layer 3: 2-Phase Commit (2PC) Coordinator:</strong> Enables atomic, all-or-nothing writes across multiple output topics, partitions, and consumer offset commits.</li>
 </ol>
 
-<h2 id="semantics-comparison">3. Delivery Semantics Comparison Matrix</h2>
+<h2 id="semantics-comparison">2. Delivery Semantics Comparison Matrix</h2>
 
 <table>
   <thead>
@@ -162,7 +165,7 @@
   </tbody>
 </table>
 
-<h2 id="layer-1-idempotence">4. Layer 1: Producer Idempotence (Single-Session Deduplication)</h2>
+<h2 id="layer-1-idempotence">3. Layer 1: Producer Idempotence (Deduplicating Single-Session Retries)</h2>
 <p>Why not deduplicate messages by hashing their contents (e.g., SHA-256)? In high-throughput streaming systems, computing cryptographic hashes over every message introduces heavy CPU bottlenecks. Furthermore, hashing fails when an application legitimately produces two identical payloads at different points in time.</p>
 
 <p>Kafka resolves this purely via <strong>protocol-level metadata</strong>:</p>
@@ -203,7 +206,7 @@ sequenceDiagram
   <li><strong>Out-of-Order Batch ($s &gt; \text{last\_seq} + 1$):</strong> A message was lost or skipped in flight. The broker rejects the batch with an <code>OutOfOrderSequenceException</code>, preventing out-of-order log corruption.</li>
 </ol>
 
-<h2 id="layer-2-zombie-fencing">5. Layer 2: Transactional IDs &amp; Zombie Fencing</h2>
+<h2 id="layer-2-zombie-fencing">4. Layer 2: Transactional IDs &amp; Zombie Fencing</h2>
 <p>While Layer 1 solves retries within a running process session, it fails completely during <strong>producer crashes and process replacements</strong>:</p>
 
 <div class="callout callout-important">
@@ -223,7 +226,7 @@ sequenceDiagram
   <li><strong>Zombie Fencing:</strong> If the old Producer 1 wakes up and attempts to produce using Epoch 4, the broker intercepts the request, verifies that $4 &lt; 5$, and rejects the write with a fatal <code>ProducerFencedException</code>. The zombie process is immediately terminated.</li>
 </ol>
 
-<h2 id="layer-3-two-phase-commit">6. Layer 3: Atomic Multi-Partition Writes via 2-Phase Commit (2PC)</h2>
+<h2 id="layer-3-two-phase-commit">5. Layer 3: Atomic Multi-Partition Writes via 2-Phase Commit (2PC)</h2>
 <p>In stream processing pipelines (such as Kafka Streams read-process-write loops), an application reads an event from Input Topic $A$, modifies state, writes an event to Output Topic $B$, and commits consumer offsets to <code>__consumer_offsets</code>. If a crash occurs midway, either the output is duplicated or the input is skipped.</p>
 
 <p>Kafka provides atomic cross-partition consistency through a lightweight <strong>Two-Phase Commit protocol</strong> coordinated by the <strong>Transaction Coordinator</strong>:</p>
@@ -286,81 +289,10 @@ flowchart TD
   <li>If an <code>ABORT</code> marker arrives, the consumer quietly purges the buffered aborted batch from memory.</li>
 </ul>
 
-<h2 id="code-walkthrough">7. Production Code: Transactional Producer &amp; Consumer Pattern</h2>
-<p>The following Python snippet demonstrates the canonical read-process-write loop using Kafka transactions:</p>
-
-<div class="code-wrapper">
-  <div class="code-header">
-    <span>kafka_transactional_pipeline.py</span>
-    <button class="btn-copy">Copy</button>
-  </div>
-  <pre><code class="language-python">from kafka import KafkaConsumer, KafkaProducer
-from kafka.errors import ProducerFencedException
-import json
-
-# 1. Initialize Transactional Producer
-producer = KafkaProducer(
-    bootstrap_servers=["localhost:9092"],
-    transactional_id="order-stream-processor-v1",
-    enable_idempotence=True,
-    acks="all",
-    retries=5,
-    value_serializer=lambda v: json.dumps(v).encode("utf-8")
-)
-
-# 2. Initialize Read-Committed Consumer
-consumer = KafkaConsumer(
-    "raw-orders",
-    bootstrap_servers=["localhost:9092"],
-    group_id="order-processors",
-    isolation_level="read_committed",  # Prevents reading dirty uncommitted batches
-    enable_auto_commit=False,
-    value_deserializer=lambda m: json.loads(m.decode("utf-8"))
-)
-
-# Bootstrap Transaction Coordinator
-producer.init_transactions()
-
-try:
-    for message in consumer:
-        # Begin Atomic Transaction Boundary
-        producer.begin_transaction()
-        
-        try:
-            # Business Logic: Filter / Enrich Order
-            order = message.value
-            processed_order = {
-                "order_id": order["id"],
-                "total": order["amount"] * 1.08,
-                "status": "APPROVED"
-            }
-            
-            # Step A: Publish enriched event to output topic
-            producer.send("validated-orders", value=processed_order)
-            
-            # Step B: Attach consumed input offsets to the transaction
-            # Note: In Java, this is producer.sendOffsetsToTransaction(...)
-            # This ensures input offset commit and output message commit atomically together
-            
-            # Step C: Two-Phase Commit Finalization
-            producer.commit_transaction()
-            print(f"Transaction Committed: {order['id']}")
-            
-        except Exception as err:
-            print(f"Transaction Aborting due to failure: {err}")
-            producer.abort_transaction()
-
-except ProducerFencedException:
-    # A newer instance of this transactional.id booted up; terminate immediately!
-    print("FATAL: Producer fenced by newer epoch instance. Exiting.")
-    producer.close()
-</code></pre>
-</div>
-
-<h2 id="architectural-summary">8. Architectural Summary &amp; Key Engineering Takeaways</h2>
+<h2 id="architectural-summary">6. Architectural Summary &amp; Key Engineering Takeaways</h2>
 
 <div class="callout callout-tip">
-  <div class="callout-title">💡 The Four Pillars of Kafka EOS</div>
+  <div class="callout-title">The Complete Kafka Exactly-Once Guarantee Paradigm</div>
   <ol>
     <li><strong>Retries Without Duplicates:</strong> Producer ID (PID) + monotonic sequence numbers eliminate network-drop duplicate writes at negligible CPU overhead.</li>
     <li><strong>Crash Recovery Without Zombies:</strong> <code>transactional.id</code> + monotonic Producer Epochs fence out stale, partitioned instances across process restarts.</li>
@@ -374,20 +306,18 @@ except ProducerFencedException:
       <aside class="toc-sidebar">
         <div class="toc-title">Table of Contents</div>
         <ul class="toc-list">
-          <li><a href="#delivery-vs-processing">1. Delivery vs. Processing</a></li>
-          <li><a href="#problem-space">2. The Problem Space</a></li>
-          <li class="toc-sub"><a href="#solution-hierarchy">3-Layer Solution</a></li>
-          <li><a href="#semantics-comparison">3. Semantics Matrix</a></li>
-          <li><a href="#layer-1-idempotence">4. Layer 1: Idempotence</a></li>
+          <li><a href="#problem-space">1. The Problem Space</a></li>
+          <li class="toc-sub"><a href="#solution-hierarchy">3-Layer Solution Hierarchy</a></li>
+          <li><a href="#semantics-comparison">2. Delivery Semantics Matrix</a></li>
+          <li><a href="#layer-1-idempotence">3. Layer 1: Idempotence</a></li>
           <li class="toc-sub"><a href="#idempotence-mechanics">Protocol Mechanics</a></li>
           <li class="toc-sub"><a href="#broker-evaluation-rules">Broker Evaluation</a></li>
-          <li><a href="#layer-2-zombie-fencing">5. Layer 2: Zombie Fencing</a></li>
+          <li><a href="#layer-2-zombie-fencing">4. Layer 2: Zombie Fencing</a></li>
           <li class="toc-sub"><a href="#solution-transactional-id">Transactional ID &amp; Epoch</a></li>
-          <li><a href="#layer-3-two-phase-commit">6. Layer 3: Two-Phase Commit</a></li>
+          <li><a href="#layer-3-two-phase-commit">5. Layer 3: 2-Phase Commit</a></li>
           <li class="toc-sub"><a href="#two-phase-commit-steps">7-Step 2PC Flow</a></li>
           <li class="toc-sub"><a href="#consumer-isolation">Consumer Isolation</a></li>
-          <li><a href="#code-walkthrough">7. Production Code</a></li>
-          <li><a href="#architectural-summary">8. Architectural Summary</a></li>
+          <li><a href="#architectural-summary">6. Key Takeaways</a></li>
         </ul>
       </aside>
     </div>

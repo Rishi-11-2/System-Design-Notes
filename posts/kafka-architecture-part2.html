@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Apache Kafka Architecture Part 2 — Consumer Groups, Rebalancing &amp; High Availability — System Design Notes</title>
-  <meta name="description" content="Deep analysis of Kafka Consumer Groups, partition assignment semantics, __consumer_offsets internal topic management, commit strategies (At-least-once, At-most-once, Exactly-once), ISR replication, and broker leader failover.">
+  <title>Apache Kafka Architecture Part 2 — Consumer Groups &amp; High Availability — System Design Notes</title>
+  <meta name="description" content="Technical notes on Apache Kafka Architecture Part 2: Consumer groups, partition assignment rules, __consumer_offsets internal management, commit strategies, clusters, and Leader-Follower replication.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Lora:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet">
@@ -30,7 +30,7 @@
     }
     document.addEventListener('DOMContentLoaded', initKaTeX);
   </script>
-  <!-- Highlight.js for Monokai Code Highlighting -->
+  <!-- Highlight.js for Code Highlighting -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
   <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
   <!-- Mermaid for Architecture Diagrams -->
@@ -46,14 +46,18 @@
         <span>System Design Notes</span>
       </a>
       <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
         <ul class="nav-links">
           <li><a href="../index.html">← All Notes</a></li>
         </ul>
-        <button id="theme-toggle" class="btn-icon" aria-label="Toggle Theme">
+        <button id="theme-toggle" class="btn-icon" data-tooltip="Toggle light/dark theme" aria-label="Toggle Theme">
           <span class="theme-icon">☀️</span>
         </button>
-        <a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="btn-icon" aria-label="GitHub Repository">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+        <a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="btn-icon" data-tooltip="View GitHub Repository" aria-label="GitHub Repository">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
             <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
           </svg>
         </a>
@@ -65,16 +69,16 @@
     <div class="article-breadcrumbs">
       <a href="../index.html">Home</a>
       <span>/</span>
-      <a href="../index.html#streaming-kafka">Streaming &amp; Kafka</a>
+      <a href="../index.html#message-brokers">Message Brokers</a>
       <span>/</span>
-      <span>Apache Kafka Architecture Part 2 — Consumer Groups, Rebalancing &amp; High Availability</span>
+      <span>Kafka Architecture Part 2</span>
     </div>
 
     <header class="article-header">
-      <span class="article-header-badge">High Availability</span>
-      <h1 class="article-header-title">Apache Kafka Architecture Part 2 — Consumer Groups, Rebalancing &amp; High Availability</h1>
+      <span class="article-header-badge">Event Driven Architecture</span>
+      <h1 class="article-header-title">Kafka Architecture - Part 2</h1>
       <div class="article-header-meta">
-        <span>📁 Category: Streaming &amp; Kafka</span>
+        <span>📁 Category: Event Streaming &amp; Message Brokers</span>
       </div>
       <div class="article-header-actions">
         <a href="../index.html" class="btn-secondary">
@@ -87,116 +91,74 @@
       <article class="prose">
         
 <div class="callout callout-note">
-  <div class="callout-title">📌 Consumer Groups & Cluster Reliability</div>
-  <p>Part 2 of the Kafka Architecture series explores how consumers cooperate to process vast volumes of data. We analyze Consumer Groups, partition reassignment semantics, offset commit management via <code>__consumer_offsets</code>, delivery semantics (At-Least-Once vs Exactly-Once), In-Sync Replicas (ISR), and broker leader election.</p>
+  <div class="callout-title">📌 Architectural Overview</div>
+  <p>Part 2 examines the consumption and fault-tolerance mechanics of Apache Kafka: how consumers organize into groups to scale reads, how partition offsets are tracked in internal topics, commit trade-offs, and cluster high availability via Leader-Follower replication.</p>
 </div>
 
-<h2 id="consumer-groups">1. Consumers and Consumer Groups</h2>
-<p>A <strong>Consumer Group</strong> is a logical collection of consumers collaborating to ingest and process records from a set of topics. Consumer Groups allow Kafka to seamlessly unite queueing and publish-subscribe models:</p>
+<h2 id="consumers-groups">1. Consumers and Consumer Groups</h2>
+<ul>
+  <li><strong>Consumer Groups:</strong> Consumers are logically grouped together. A consumer can join any group (e.g., a "Notification" group or an "Analytics" group).</li>
+  <li><strong>Rule 1 (Within a Group):</strong> Different consumers in the same group can only read from different partitions. Multiple consumers in the same group cannot read the same partition simultaneously.</li>
+  <li><strong>Rule 2 (Across Groups):</strong> Consumers in different groups can read from the same partition independently.</li>
+</ul>
 
-<div class="diagram-container">
-  <pre class="mermaid">
+<div class="diagram-wrapper">
+  <div class="mermaid">
 flowchart TD
-  subgraph Topic["Topic: 'transactions' (4 Partitions)"]
+  subgraph Partitions["Topic Partitions"]
     P0["Partition 0"]
     P1["Partition 1"]
-    P2["Partition 2"]
-    P3["Partition 3"]
   end
 
-  subgraph GroupA["Consumer Group 1 (Order Fulfillment)"]
-    C1["Consumer 1"]
-    C2["Consumer 2"]
+  subgraph GroupA["Consumer Group A (Notification)"]
+    C1["Consumer A1"]
+    C2["Consumer A2"]
   end
 
-  subgraph GroupB["Consumer Group 2 (Fraud Detection)"]
-    C3["Consumer 3"]
+  subgraph GroupB["Consumer Group B (Analytics)"]
+    CB1["Consumer B1 (Reads P0 + P1)"]
   end
 
   P0 --> C1
-  P1 --> C1
-  P2 --> C2
-  P3 --> C2
-
-  P0 --> C3
-  P1 --> C3
-  P2 --> C3
-  P3 --> C3
-  </pre>
-  <div class="diagram-caption">Figure 5: Consumer Group partition assignment rules and multi-group broadcast.</div>
+  P1 --> C2
+  P0 --> CB1
+  P1 --> CB1
+  </div>
+  <div class="diagram-caption">Figure 1: Consumer group partition assignment: exclusive within group, independent across groups.</div>
 </div>
 
-<div class="callout callout-tip">
-  <div class="callout-title">📏 The Two Fundamental Partition Rules</div>
-  <ul>
-    <li><strong>Rule 1 (Within a Single Group):</strong> Each partition can be assigned to <strong>at most one consumer instance</strong> in that group. Two consumers in the same group can never read from the same partition concurrently! If you have 4 partitions and 6 consumers in a group, 2 consumers will remain completely idle.</li>
-    <li><strong>Rule 2 (Across Different Groups):</strong> Multiple consumer groups operate completely independently. A consumer in Group 1 and a consumer in Group 2 can read the same partition simultaneously without interfering with each other's progress.</li>
-  </ul>
-</div>
-
-<h2 id="offsets">2. Offset Management (__consumer_offsets)</h2>
-<p>How does Kafka know where a consumer left off if it restarts? Every consumer periodically commits its current offset position.</p>
-<p>In early Kafka versions, offsets were stored in ZooKeeper. Modern Kafka stores committed offsets in an internal, high-throughput, compacted Kafka topic named <strong><code>__consumer_offsets</code></strong>. When a consumer fails, the new assigned consumer simply reads the latest committed offset from <code>__consumer_offsets</code> and resumes processing without skipping records.</p>
-
-<h2 id="commit-strategies">3. Offset Commit Strategies & Delivery Semantics</h2>
-<p>The timing of when an offset is committed determines the delivery semantics of your application:</p>
-<table>
-  <thead>
-    <tr>
-      <th>Strategy</th>
-      <th>Configuration / Mechanism</th>
-      <th>Pros & Cons</th>
-      <th>Delivery Guarantee</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td><strong>Automatic Commit</strong></td>
-      <td><code>enable.auto.commit = true</code> (commits periodically, e.g. every 5s)</td>
-      <td>Simple; risk of data loss if process crashes after commit but before processing finishes</td>
-      <td>At-Most-Once / At-Least-Once</td>
-    </tr>
-    <tr>
-      <td><strong>Manual Sync Commit</strong></td>
-      <td><code>commitSync()</code> (commits after batch finishes)</td>
-      <td>Safe; blocks consumer thread until broker confirms commit, slight throughput penalty</td>
-      <td>At-Least-Once</td>
-    </tr>
-    <tr>
-      <td><strong>Manual Async Commit</strong></td>
-      <td><code>commitAsync()</code></td>
-      <td>High throughput; non-blocking, but requires careful error callback handling</td>
-      <td>At-Least-Once</td>
-    </tr>
-    <tr>
-      <td><strong>Transactional Processing</strong></td>
-      <td>Kafka Transactions API (<code>initTransactions</code>, <code>sendOffsetsToTransaction</code>)</td>
-      <td>Atomic write of output events + consumed offsets across Kafka topics</td>
-      <td><strong>Exactly-Once Processing (EOS)</strong></td>
-    </tr>
-  </tbody>
-</table>
-
-<h2 id="cluster-ha">4. Kafka Cluster & High Availability</h2>
-<p>A production Kafka cluster consists of multiple brokers to provide scalability, load balancing, and fault tolerance:</p>
+<h2 id="offset-management">2. Offset Management (__consumer_offsets)</h2>
 <ul>
-  <li><strong>Replication Factor:</strong> Topics configure a replication factor (typically 3 in production). For each partition, 1 broker is designated as the <strong>Leader</strong> and the remaining 2 are <strong>Followers</strong>.</li>
-  <li><strong>Leader Partitions:</strong> Handle 100% of incoming produce and consume requests (ensuring total linear order).</li>
-  <li><strong>Follower Partitions:</strong> Never serve client writes. They continuously fetch log records from the leader to stay synchronized.</li>
+  <li>Each consumer group maintains its partition-wise offsets independently. It tracks till which offset events have been successfully processed.</li>
+  <li><strong>Group-Wise Storage:</strong> Offsets are stored per consumer group, not per individual consumer. This ensures that if a consumer crashes, a new one can take over and know exactly where to resume from by checking the group's committed offset.</li>
+  <li><strong>Where are offsets stored?</strong> Kafka internally creates a special topic called <code>__consumer_offsets</code> (by default, it has 50 partitions). All offset data is stored here just like regular topic messages.</li>
+  <li><strong>Partition Assignment for Offsets:</strong> To determine which partition of the <code>__consumer_offsets</code> topic holds a specific group's offset, Kafka hashes the Group ID and performs a modulo operation against the number of partitions:
+  $$\text{Offset Partition} = \text{Hash}(\text{GroupID}) \pmod{50}$$
+  </li>
 </ul>
 
-<h2 id="isr">5. In-Sync Replicas (ISR) and Leader Election</h2>
-<p>Followers that are actively keeping up with the leader partition's latest records are categorized in the <strong>In-Sync Replicas (ISR)</strong> pool:</p>
+<h2 id="commit-strategies">3. Offset Commit Strategies</h2>
 <ul>
-  <li>If a follower node experiences high network latency or hardware failure and falls behind the leader (configurable via <code>replica.lag.time.max.ms</code>), the broker is evicted from the ISR pool.</li>
-  <li><strong>Producer Durability (<code>acks</code>):</strong>
+  <li><strong>Auto-Commit:</strong> Kafka automatically commits the current offset at regular time intervals (e.g., every 5 seconds).
     <ul>
-      <li><code>acks=0</code>: Fire-and-forget; producer does not wait for any broker ack (fastest, lowest durability).</li>
-      <li><code>acks=1</code>: Leader writes locally to disk and acks immediately without waiting for followers.</li>
-      <li><code>acks=all</code> (or <code>acks=-1</code>): Leader waits until all replicas in the ISR confirm persisting the write. Combined with <code>min.insync.replicas=2</code>, this prevents data loss even if the leader immediately crashes!</li>
+      <li><strong>Risk:</strong> If a consumer processes events but crashes before the auto-commit interval, or if auto-commit happens before full processing finishes, data loss or duplicate processing can occur.</li>
     </ul>
   </li>
-  <li><strong>Leader Election:</strong> When a leader broker crashes, the cluster controller selects a replacement leader exclusively from the healthy ISR pool.</li>
+  <li><strong>Manual Commit (Recommended):</strong> The application explicitly tells Kafka when to commit. Typically done after fully processing a batch of polled events.</li>
+</ul>
+
+<h2 id="cluster-ha">4. Kafka Cluster &amp; High Availability</h2>
+<ul>
+  <li><strong>Kafka Cluster:</strong> A group of Kafka brokers working together to provide scalability, fault tolerance, and high availability. There is no single point of failure.</li>
+  <li><strong>Replication Factor:</strong> Defines how many copies of a partition should exist across the cluster. For example, a replication factor of 2 means 1 Leader and 1 Follower.</li>
+</ul>
+
+<h2 id="leader-follower">5. Leader and Follower Partitions</h2>
+<p>Partitions are distributed across multiple brokers. Each partition has one Leader and zero or more Followers.</p>
+<ul>
+  <li><strong>Leader Responsibilities:</strong> The Leader handles all read and write requests from producers and consumers. It maintains the partition logs and coordinates with followers.</li>
+  <li><strong>Follower Responsibilities:</strong> Followers act as backups. Their only job is to replicate data and stay in sync with the Leader. Followers never serve clients. If a Leader fails, a Follower takes over as the new Leader.</li>
+  <li><strong>Broker Distribution:</strong> A single broker can host the Leader for one partition (e.g., Partition 0) while simultaneously hosting the Follower for a completely different partition (e.g., Partition 1).</li>
 </ul>
 
       </article>
@@ -204,28 +166,24 @@ flowchart TD
       <aside class="toc-sidebar">
         <div class="toc-title">Table of Contents</div>
         <ul class="toc-list">
-          
-<li><a href="#consumer-groups">1. Consumers and Consumer Groups</a></li>
-<li><a href="#offsets">2. Offset Management</a></li>
-<li><a href="#commit-strategies">3. Commit Strategies & Delivery Semantics</a></li>
-<li><a href="#cluster-ha">4. Cluster & High Availability</a></li>
-<li><a href="#isr">5. In-Sync Replicas (ISR) & Failover</a></li>
-
+          <li><a href="#consumers-groups">1. Consumers &amp; Groups</a></li>
+          <li><a href="#offset-management">2. Offset Management</a></li>
+          <li><a href="#commit-strategies">3. Offset Commit Strategies</a></li>
+          <li><a href="#cluster-ha">4. Cluster &amp; High Availability</a></li>
+          <li><a href="#leader-follower">5. Leader &amp; Follower Partitions</a></li>
         </ul>
       </aside>
     </div>
 
     <div class="post-navigation">
-      
-        <a href="kafka-architecture-part1.html" class="nav-card">
-          <span class="nav-label">← Previous Note</span>
-          <span class="nav-card-title">Apache Kafka Architecture Part 1 — Event-Driven Architecture &amp; Storage Fundamentals</span>
-        </a>
-      
-        <a href="microservices-design-patterns.html" class="nav-card" style="text-align: right;">
-          <span class="nav-label">Next Note →</span>
-          <span class="nav-card-title">Microservices Design Patterns — Strangler Fig, SAGA, CQRS &amp; Transactional Outbox</span>
-        </a>
+      <a href="kafka-architecture-part1.html" class="nav-card">
+        <span class="nav-label">← Previous Note</span>
+        <span class="nav-card-title">Kafka Architecture Part 1</span>
+      </a>
+      <a href="kafka-exactly-once-semantics.html" class="nav-card" style="text-align: right;">
+        <span class="nav-label">Next Note →</span>
+        <span class="nav-card-title">Kafka Exactly-Once Semantics</span>
+      </a>
     </div>
   </main>
 
@@ -238,12 +196,12 @@ flowchart TD
       <div class="footer-col">
         <h5>Core Categories</h5>
         <ul>
-          <li><a href="amazon-aurora-cloud-native-databases.html">Amazon Aurora Architecture</a></li>
-          <li><a href="cap-theorem-and-google-spanner.html">Google Spanner &amp; TrueTime</a></li>
-          <li><a href="consistent-hashing.html">Consistent Hashing Guide</a></li>
+          <li><a href="kafka-architecture-part2.html">Kafka Consumers &amp; HA</a></li>
           <li><a href="kafka-architecture-part1.html">Apache Kafka Fundamentals</a></li>
-          <li><a href="microservices-design-patterns.html">Microservices Patterns</a></li>
-          <li><a href="redis-internals-and-architecture.html">Redis Internal Mechanics</a></li>
+          <li><a href="kafka-exactly-once-semantics.html">Kafka Exactly-Once Semantics</a></li>
+          <li><a href="grab-data-layer-architecture.html">Grab Data Layer Architecture</a></li>
+          <li><a href="consistent-hashing.html">Consistent Hashing Guide</a></li>
+          <li><a href="storage-compute-separation-aurora.html">Aurora Storage-Compute Separation</a></li>
         </ul>
       </div>
       <div class="footer-col">

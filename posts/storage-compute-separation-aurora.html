@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Storage-Compute Separation: The Amazon Aurora Paradigm — System Design Notes</title>
+  <meta name="description" content="Architectural decomposition of Amazon Aurora's storage-compute separation, log-structured storage engine, 4/6 quorum durability, and asynchronous page materialization based on Arpit Bhayani's engineering lecture and the landmark ACM SIGMOD paper.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Lora:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">← All Notes</a></li>
+        </ul>
+        <button id="theme-toggle" class="btn-icon" data-tooltip="Toggle light/dark theme" aria-label="Toggle Theme">
+          <span class="theme-icon">☀️</span>
+        </button>
+        <a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="btn-icon" data-tooltip="View GitHub Repository" aria-label="GitHub Repository">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+          </svg>
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="article-page">
+    <div class="article-breadcrumbs">
+      <a href="../index.html">Home</a>
+      <span>/</span>
+      <a href="../index.html#cloud-databases">Cloud Databases</a>
+      <span>/</span>
+      <span>Storage-Compute Separation: The Amazon Aurora Paradigm</span>
+    </div>
+
+    <header class="article-header">
+      <span class="article-header-badge">Paper Deep-Dive • Section 1</span>
+      <h1 class="article-header-title">Storage-Compute Separation: The Amazon Aurora Paradigm</h1>
+      <div class="article-header-meta">
+        <span>📁 Category: Cloud Databases &amp; Storage Architecture</span>
+      </div>
+      <div class="article-header-actions">
+        <a href="../index.html" class="btn-secondary">
+          <span>← Back to All Notes</span>
+        </a>
+      </div>
+    </header>
+
+    <div class="article-container">
+      <article class="prose">
+        
+<div class="callout callout-note">
+  <div class="callout-title">📌 Architectural Decomposition &amp; Foundational Axiom</div>
+  <p><strong>Source Foundation:</strong> Based on the engineering lecture by Arpit Bhayani (Asli Engineering, Video ID: <code>DA5W8tO_7Nw</code>) and the landmark ACM SIGMOD research paper (Verbitski et al., Amazon Web Services).</p>
+  <p><strong>The Foundational Axiom: "The Log is the Database"</strong><br>
+  In traditional monolithic relational databases, the bottleneck in the cloud is neither CPU compute nor disk I/O operations per second (IOPS)—it is <strong>network I/O packet amplification</strong>. Amazon Aurora fundamentally reshaped cloud database design by decoupling compute instances from storage nodes and establishing a radical principle: <em>the database engine only writes redo log records over the network; the storage tier itself materializes database data pages asynchronously.</em></p>
+</div>
+
+<h2 id="monolithic-bottleneck">1. The Monolithic Bottleneck: Why Classical RDBMS Fails in the Cloud</h2>
+<p>In legacy architectures (e.g., standard MySQL running on AWS EC2 with mirrored EBS volumes across multiple Availability Zones), the database engine tightly couples SQL parsing, query optimization, buffer cache management, transaction isolation, and storage management into a single process.</p>
+
+<div class="comparison-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin: 1.5rem 0;">
+  <div class="callout callout-important" style="margin: 0;">
+    <div class="callout-title">The Monolithic Cloud Failure Mode</div>
+    <p><strong>Network I/O Amplification:</strong></p>
+    <ul>
+      <li><strong>Heavy Page Writes:</strong> Flushes full 16 KB dirty pages to disk, even if only a 10-byte column changed.</li>
+      <li><strong>Doublewrite Buffer:</strong> Writes pages twice to avoid partial/torn page corruption during crashes.</li>
+      <li><strong>Synchronous Replication Multipliers:</strong> Redo log, binary log (binlog), and data pages are replicated across AZ network boundaries independently, saturating network queues.</li>
+    </ul>
+  </div>
+
+  <div class="callout callout-tip" style="margin: 0;">
+    <div class="callout-title">Storage-Compute Separation Strategy</div>
+    <p><strong>Smart Storage Offloading:</strong></p>
+    <ul>
+      <li><strong>Stateless Compute:</strong> SQL parsing, optimization, and buffer cache remain on compute instances.</li>
+      <li><strong>Log-Only Network Traffic:</strong> Compute sends small incremental redo log records; zero dirty page flushes.</li>
+      <li><strong>Database-Aware Storage Fleet:</strong> Multi-tenant storage nodes understand the redo log format and continuously apply changes to disk blocks independently.</li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="architectural-comparison">2. Architectural Comparison: Monolithic RDBMS vs. Disaggregated Aurora</h2>
+<p>The following architectural comparison summarizes the critical technical dimensions separating traditional monolithic database engines from Aurora's decoupled engine:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Dimension</th>
+      <th>Traditional Engine (MySQL + EBS Replica)</th>
+      <th>Decoupled Engine (Amazon Aurora)</th>
+      <th>Architectural Impact</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Network Payload</strong></td>
+      <td>Redo log + binlog + doublewrite + dirty data pages (16 KB each).</td>
+      <td>Append-only redo log records (~100 to 200 bytes). Zero data pages.</td>
+      <td>Reduces network traffic by up to <strong>9x</strong>, removing network transit bottlenecks.</td>
+    </tr>
+    <tr>
+      <td><strong>Durability &amp; Quorum</strong></td>
+      <td>2 AZ synchronous/asynchronous mirror replication (EBS level).</td>
+      <td>6 storage replicas across 3 AZs with <strong>4/6 write quorum</strong> and <strong>3/6 read quorum</strong>.</td>
+      <td>Tolerates loss of an entire AZ plus an additional storage node without losing write availability.</td>
+    </tr>
+    <tr>
+      <td><strong>Crash Recovery</strong></td>
+      <td>Cold replay of WAL redo logs from the last checkpoint across all tables.</td>
+      <td>Instantaneous startup; redo replay is pushed down to background storage threads.</td>
+      <td>Near-zero crash recovery time; no waiting for checkpoint roll-forward.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="offloading-shift">3. The Offloading Shift: Moving Redo Processing Down to Storage</h2>
+<p>The core conceptual breakthrough explained by Arpit Bhayani is shifting the line of abstraction. In traditional systems, storage is dumb block storage (EBS/SAN). In Aurora, storage is an intelligent, database-aware actor:</p>
+
+<div class="diagram-wrapper">
+  <div class="mermaid">
+flowchart TD
+  subgraph Traditional["Traditional Monolithic (EBS)"]
+    ComputeOld["Compute Instance (MySQL)"]
+    StorageOld["Dumb Block Storage (EBS)"]
+    ComputeOld -->|"Writes Redo + Binlog + Doublewrite + Dirty Pages (Heavy Network I/O Saturation)"| StorageOld
+  end
+
+  subgraph Aurora["Aurora Disaggregated Architecture"]
+    ComputeNew["Aurora Compute Instance<br/>(Buffer Cache + SQL Engine)"]
+    StorageFleet["Intelligent Storage Tier<br/>(Multi-Tenant SSD Storage Nodes)"]
+    ComputeNew -->|"Sends REDO Log Records Only"| StorageFleet
+    StorageFleet -->|"1. Append log to in-mem queue<br/>2. Materialize pages asynchronously"| StorageFleet
+  end
+  </div>
+  <div class="diagram-caption">Figure 1: Architectural shift from noisy monolithic page flushing to compute log-pushing and intelligent storage materialization.</div>
+</div>
+
+<div class="comparison-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin: 1.5rem 0;">
+  <div>
+    <h4>The Compute Node Duties</h4>
+    <ul>
+      <li>Parses incoming SQL and runs query execution plans.</li>
+      <li>Retains the in-memory <strong>Buffer Cache</strong> for zero-IO reads.</li>
+      <li>Generates ordered <strong>Log Sequence Numbers (LSNs)</strong>.</li>
+      <li>Emits only redo log deltas to the storage fleet via concurrent UDP/TCP, avoiding expensive synchronous double-page writes.</li>
+    </ul>
+  </div>
+
+  <div>
+    <h4>The Storage Node Background Pipeline</h4>
+    <ul>
+      <li><strong>Step 1 (Fast Path):</strong> Append redo record to memory buffer + disk; send immediate ACK to compute.</li>
+      <li><strong>Step 2 (Async):</strong> Coalesce log records into on-disk pages.</li>
+      <li><strong>Step 3 (Async):</strong> Perform continuous peer-to-peer gossip repair.</li>
+      <li><strong>Step 4 (Async):</strong> Stream incremental backups directly to Amazon S3.</li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="read-path-mechanics">4. Asynchronous Page Materialization &amp; Read Path Mechanics</h2>
+<p>How does read processing work if data pages are not explicitly flushed by compute?</p>
+
+<h3>Buffer Cache Hits vs. Storage Page Reconstruction</h3>
+<ul>
+  <li><strong>Cache Hit (In-Memory):</strong> If the requested page resides in the compute node's local buffer cache, it is served immediately in RAM with zero storage interaction.</li>
+  <li><strong>Cache Miss (Storage Fetch):</strong> If the page is evicted, compute requests the page from storage at a specific LSN. The storage node takes its latest base snapshot page on SSD, replays any newer redo log records up to that requested LSN, and returns the fully reconstituted 16 KB data page.</li>
+</ul>
+
+<h2 id="durability-and-quorum">5. Quorum Durability and Crash Recovery Without Log Replay</h2>
+<p>Separating compute and storage allows durability to be solved at the storage layer via quorum consensus. Aurora partitions the database volume into <strong>10 GB Protection Groups (PGs)</strong>, each replicated 6 times across 3 distinct Availability Zones (2 copies per AZ).</p>
+
+<div class="diagram-wrapper">
+  <div class="mermaid">
+flowchart LR
+  subgraph AZ_A["Availability Zone A"]
+    SegA1["Segment A1"]
+    SegA2["Segment A2"]
+  end
+  subgraph AZ_B["Availability Zone B"]
+    SegB1["Segment B1"]
+    SegB2["Segment B2"]
+  end
+  subgraph AZ_C["Availability Zone C"]
+    SegC1["Segment C1"]
+    SegC2["Segment C2"]
+  end
+
+  Compute["Aurora Compute Node"] -->|"Write Quorum: 4/6 ACKs"| SegA1
+  Compute --> SegA2
+  Compute --> SegB1
+  Compute --> SegB2
+  Compute --> SegC1
+  Compute --> SegC2
+  </div>
+  <div class="diagram-caption">Figure 2: Aurora's 6-way storage allocation: write quorum $V_w = 4/6$, read quorum $V_r = 3/6$ across three distinct AZs.</div>
+</div>
+
+<div class="callout callout-important">
+  <div class="callout-title">The 4/6 Write Quorum Guarantee</div>
+  <p>Writing requires acknowledgments from <strong>4 out of 6 storage copies</strong> ($V_w = 4/6$). This ensures the system can withstand the <strong>complete catastrophic loss of an entire AZ (2 copies) PLUS one additional node failure elsewhere (1 copy)</strong> without dropping committed writes.</p>
+</div>
+
+<div class="callout callout-tip">
+  <div class="callout-title">Instantaneous Crash Recovery</div>
+  <p>Traditional engines freeze during recovery while replaying hours of WAL logs from the last checkpoint. In Aurora, redo processing happens continuously in the storage nodes. When compute crashes, a new instance boots up and is ready immediately.</p>
+</div>
+
+<h2 id="industry-impact">6. Architectural Industry Impact &amp; Engineering Synthesis</h2>
+<h3>The Broader Cloud Revolution: Snowflake, AlloyDB, and Modern Warehouses</h3>
+<p>The storage-compute separation pioneered by AWS Aurora sparked an industry-wide paradigm shift:</p>
+<ol>
+  <li><strong>Independent Elastic Scaling:</strong> Compute instances can scale up or down (or pause entirely to zero) in seconds without migrating terabytes of underlying data disks.</li>
+  <li><strong>Zero-Lag Read Replicas:</strong> Up to 15 read replicas can mount the identical shared storage tier with minimal replica lag (typically sub-10ms), eliminating physical data replication.</li>
+  <li><strong>Industry Standardization:</strong> Cloud data warehouses (Snowflake, BigQuery) and modern OLTP databases (Google AlloyDB, Neon Serverless Postgres) all adopt variants of this disaggregated log architecture.</li>
+</ol>
+
+      </article>
+
+      <aside class="toc-sidebar">
+        <div class="toc-title">Table of Contents</div>
+        <ul class="toc-list">
+          <li><a href="#monolithic-bottleneck">1. Monolithic Bottleneck</a></li>
+          <li><a href="#architectural-comparison">2. Architectural Comparison</a></li>
+          <li><a href="#offloading-shift">3. Moving Redo to Storage</a></li>
+          <li><a href="#read-path-mechanics">4. Read Path Mechanics</a></li>
+          <li><a href="#durability-and-quorum">5. Quorum Durability</a></li>
+          <li><a href="#industry-impact">6. Industry Impact &amp; Synthesis</a></li>
+        </ul>
+      </aside>
+    </div>
+
+    <div class="post-navigation">
+      <a href="amazon-aurora-cloud-native-databases.html" class="nav-card">
+        <span class="nav-label">← Previous Analysis</span>
+        <span class="nav-card-title">Cloud-Native Databases &amp; Aurora Architecture</span>
+      </a>
+      <a href="atlassian-cache-invalidation.html" class="nav-card" style="text-align: right;">
+        <span class="nav-label">Next Note →</span>
+        <span class="nav-card-title">Cache Invalidation at Atlassian</span>
+      </a>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-brand">
+        <h4>System Design Notes</h4>
+        <p>A publication-grade systems engineering knowledge base. Comprehensive technical analyses, architectural patterns, and consensus protocols.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Core Categories</h5>
+        <ul>
+          <li><a href="storage-compute-separation-aurora.html">Aurora Storage-Compute Separation</a></li>
+          <li><a href="amazon-aurora-cloud-native-databases.html">Amazon Aurora Architecture</a></li>
+          <li><a href="cap-theorem-and-google-spanner.html">Google Spanner &amp; TrueTime</a></li>
+          <li><a href="consistent-hashing.html">Consistent Hashing Guide</a></li>
+          <li><a href="kafka-architecture-part1.html">Apache Kafka Fundamentals</a></li>
+          <li><a href="microservices-design-patterns.html">Microservices Patterns</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Quick Links</h5>
+        <ul>
+          <li><a href="../index.html">All Notes &amp; Deep Dives</a></li>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank">GitHub Repository</a></li>
+          <li><a href="../index.html#pdf-library">Reference Documents</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <div>System Design Notes · Open source under MIT License.</div>
+      <div>Hosted on GitHub Pages</div>
+    </div>
+  </footer>
+
+  <button id="back-to-top" class="back-to-top" aria-label="Back to top">↑</button>
+
+  <script src="../assets/js/articles-data.js"></script>
+  <script src="../assets/js/main.js"></script>
+</body>
+</html>

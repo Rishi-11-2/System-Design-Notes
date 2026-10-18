@@ -26,6 +26,7 @@ Designed strictly following the **Array UI (`ape-design`) Editorial Systems Desi
 | Article Title | Category | Source Document |
 | :--- | :--- | :--- |
 | [**Cloud-Native Databases and Amazon Aurora Architecture**](posts/amazon-aurora-cloud-native-databases.html) | Cloud Databases | `Docs/Amazon_Aurora_Cloud_Native_Databases.pdf` |
+| [**Storage-Compute Separation: The Amazon Aurora Paradigm**](posts/storage-compute-separation-aurora.html) | Cloud Databases | `Docs/Storage_Compute_Separation_Aurora_Architecture.pdf` |
 | [**CAP Theorem and Google Spanner — The Globally-Distributed Database**](posts/cap-theorem-and-google-spanner.html) | Distributed Systems | `Docs/CAP_THEOREM_AND_GOOGLE_SPANNER.pdf` |
 | [**Consistent Hashing — Implementation from First Principles**](posts/consistent-hashing.html) | Distributed Systems | `Docs/Consistent_Hashing_Guide.pdf` |
 | [**Cache Invalidation at Atlassian: From SNS+SQS Push to S3 Pull**](posts/atlassian-cache-invalidation.html) | Case Studies | `Docs/Atlassian Cache Invalidation Architecture Breakdown.pdf` |
@@ -93,6 +94,7 @@ Designed strictly following the **Array UI (`ape-design`) Editorial Systems Desi
 │   ├── microservices-design-patterns.html
 │   ├── redis-internals-and-architecture.html
 │   ├── redis-java-implementation.html
+│   ├── storage-compute-separation-aurora.html
 │   ├── system-design-case-studies.html
 │   └── system-design-foundations-and-scaling.html
 ├── Docs/                                         # Original PDFs, academic papers, and notes

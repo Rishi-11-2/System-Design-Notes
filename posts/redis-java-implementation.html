@@ -46,6 +46,10 @@
         <span>System Design Notes</span>
       </a>
       <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
         <ul class="nav-links">
           <li><a href="../index.html">← All Notes</a></li>
         </ul>
@@ -88,7 +92,7 @@
         
 <div class="callout callout-note">
   <div class="callout-title">📌 Hands-On Engineering Walkthrough</div>
-  <p>To truly understand Redis internals, Rishi built a lightweight, fully functional in-memory Redis server from scratch in Java. This guide walks through the actual implementation code located in the <code>Redis_Implementation/</code> directory of this repository: designing the <strong>RESP protocol decoder</strong>, handling arbitrary bulk strings and arrays, building the <strong>Java NIO Selector non-blocking event loop</strong>, and responding to <code>PING</code> / <code>PONG</code> commands via standard <code>redis-cli</code>.</p>
+  <p>To truly understand Redis internals, We built a lightweight, fully functional in-memory Redis server from scratch in Java. This guide walks through the actual implementation code located in the <code>Redis_Implementation/</code> directory of this repository: designing the <strong>RESP protocol decoder</strong>, handling arbitrary bulk strings and arrays, building the <strong>Java NIO Selector non-blocking event loop</strong>, and responding to <code>PING</code> / <code>PONG</code> commands via standard <code>redis-cli</code>.</p>
 </div>
 
 <h2 id="arch">1. High-Level Architecture</h2>

@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Apache Kafka Architecture Part 1 — Event-Driven Architecture &amp; Storage Fundamentals — System Design Notes</title>
-  <meta name="description" content="Core internals of Apache Kafka: Distributed event streaming vs Pub/Sub, Producer-Broker architecture, Partitioning strategies, Horizontal scaling, Segment files, and zero-copy sequential disk storage.">
+  <title>Apache Kafka Architecture Part 1 — Event Driven Architecture — System Design Notes</title>
+  <meta name="description" content="Technical notes on Apache Kafka Architecture Part 1: Event-driven streaming model, topics, partitions, offsets, segments, sparse index files, and producer partition assignment strategies.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Lora:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet">
@@ -30,7 +30,7 @@
     }
     document.addEventListener('DOMContentLoaded', initKaTeX);
   </script>
-  <!-- Highlight.js for Monokai Code Highlighting -->
+  <!-- Highlight.js for Code Highlighting -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
   <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
   <!-- Mermaid for Architecture Diagrams -->
@@ -46,14 +46,18 @@
         <span>System Design Notes</span>
       </a>
       <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
         <ul class="nav-links">
           <li><a href="../index.html">← All Notes</a></li>
         </ul>
-        <button id="theme-toggle" class="btn-icon" aria-label="Toggle Theme">
+        <button id="theme-toggle" class="btn-icon" data-tooltip="Toggle light/dark theme" aria-label="Toggle Theme">
           <span class="theme-icon">☀️</span>
         </button>
-        <a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="btn-icon" aria-label="GitHub Repository">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+        <a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="btn-icon" data-tooltip="View GitHub Repository" aria-label="GitHub Repository">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
             <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
           </svg>
         </a>
@@ -65,16 +69,16 @@
     <div class="article-breadcrumbs">
       <a href="../index.html">Home</a>
       <span>/</span>
-      <a href="../index.html#streaming-kafka">Streaming &amp; Kafka</a>
+      <a href="../index.html#message-brokers">Message Brokers</a>
       <span>/</span>
-      <span>Apache Kafka Architecture Part 1 — Event-Driven Architecture &amp; Storage Fundamentals</span>
+      <span>Kafka Architecture Part 1</span>
     </div>
 
     <header class="article-header">
-      <span class="article-header-badge">Streaming</span>
-      <h1 class="article-header-title">Apache Kafka Architecture Part 1 — Event-Driven Architecture &amp; Storage Fundamentals</h1>
+      <span class="article-header-badge">Event Driven Architecture</span>
+      <h1 class="article-header-title">Kafka Architecture - Part 1</h1>
       <div class="article-header-meta">
-        <span>📁 Category: Streaming &amp; Kafka</span>
+        <span>📁 Category: Event Streaming &amp; Message Brokers</span>
       </div>
       <div class="article-header-actions">
         <a href="../index.html" class="btn-secondary">
@@ -87,80 +91,72 @@
       <article class="prose">
         
 <div class="callout callout-note">
-  <div class="callout-title">📌 Event-Driven Architecture Fundamentals</div>
-  <p>Apache Kafka is a distributed event streaming platform designed for high-throughput, fault-tolerant ingestion and storage of event streams. This first installment covers Kafka's fundamental building blocks: the difference between Pub/Sub and Streaming, Producers, Topics, Partitions, Segment Files, Indexing, and how horizontal scalability is achieved through sequential append-only disk storage.</p>
+  <div class="callout-title">📌 Architectural Overview</div>
+  <p>Apache Kafka is a distributed event streaming platform engineered for high-throughput, fault-tolerant publish, store, and consume workflows. Unlike ephemeral pub/sub queues, Kafka treats logs as persistent, replayable data structures partitioned across a cluster.</p>
 </div>
 
-<h2 id="intro">1. Introduction to Kafka</h2>
+<h2 id="introduction">1. Introduction to Kafka</h2>
 <ul>
-  <li><strong>What is Kafka?</strong> A distributed, horizontally-scalable, fault-tolerant event streaming platform that enables applications to publish, store, and consume streams of records in real time.</li>
-  <li><strong>Streaming Model vs Simple Pub/Sub:</strong> Traditional message queues (e.g., standard RabbitMQ or JMS) delete messages as soon as a consumer acknowledges receipt. Kafka uses an append-only commit log: events are persisted to disk for a configurable retention window (e.g., 7 days or indefinitely), allowing multiple independent consumers to read and replay events at their own pace.</li>
+  <li><strong>What is Kafka?</strong> It is a distributed event streaming platform that allows you to publish, store, and consume events.</li>
+  <li><strong>Streaming Model:</strong> Unlike simple pub/sub models, streaming allows events to be stored so they can be replayed or consumed at a later time.</li>
 </ul>
 
-<h2 id="components">2. Core Components of Kafka</h2>
-<div class="diagram-container">
-  <pre class="mermaid">
+<h2 id="core-components">2. Core Components of Kafka</h2>
+<ul>
+  <li><strong>Producer:</strong> An application that publishes events to Kafka. It simply sends out the event and does not care about who or what will consume it.</li>
+  <li><strong>Topic:</strong> Think of a topic as a logical category or "folder" to which events are published. Many producers can write to the same topic.</li>
+  <li><strong>Broker:</strong> A single Kafka server instance. A broker physically stores data (some partitions of some topics) and serves clients.</li>
+</ul>
+
+<h2 id="partitions">3. Partitions</h2>
+<p>A topic is divided into multiple partitions. A partition is a physical, ordered, and append-only log.</p>
+<ul>
+  <li><strong>Physical:</strong> Partitions are where the actual events/logs are stored on the disk.</li>
+  <li><strong>Ordered (Offsets):</strong> Events are written sequentially. Whenever an event enters a partition, it is assigned an incrementing ID called an <strong>offset</strong>.
+    <ul>
+      <li>Each partition maintains its own independent offset counter.</li>
+      <li><strong>Crucial Rule:</strong> Order is only guaranteed within a single partition. Kafka does not guarantee global ordering across multiple partitions in the same topic.</li>
+      <li>Consumers must read these events sequentially by their offset.</li>
+    </ul>
+  </li>
+  <li><strong>Append-Only Log:</strong> New events are strictly appended to the end of the partition file.</li>
+</ul>
+
+<div class="diagram-wrapper">
+  <div class="mermaid">
 flowchart LR
-  Producer["Producer Application"] -->|"Publish Events"| Broker["Kafka Broker / Cluster"]
-  
-  subgraph BrokerCluster["Kafka Topic: 'orders'"]
+  subgraph Topic["Topic: Orders"]
     subgraph P0["Partition 0 (Append-Only Log)"]
-      M0["0"] --- M1["1"] --- M2["2"] --- M3["3"]
+      O0["Offset 0"] --> O1["Offset 1"] --> O2["Offset 2"] --> O3["Offset 3"]
     end
     subgraph P1["Partition 1 (Append-Only Log)"]
-      M4["0"] --- M5["1"] --- M6["2"]
-    end
-    subgraph P2["Partition 2 (Append-Only Log)"]
-      M7["0"] --- M8["1"] --- M9["2"] --- M10["3"] --- M11["4"]
+      O10["Offset 0"] --> O11["Offset 1"] --> O12["Offset 2"]
     end
   end
-
-  Broker --> BrokerCluster
-  BrokerCluster -->|"Read from Offset"| ConsumerA["Consumer (Analytics)"]
-  BrokerCluster -->|"Read from Offset"| ConsumerB["Consumer (Notifications)"]
-  </pre>
-  <div class="diagram-caption">Figure 4: Core Apache Kafka model with partitioned topics and multiple independent consumers.</div>
+  </div>
+  <div class="diagram-caption">Figure 1: Topic partitioning with independent sequential offset ordering.</div>
 </div>
 
+<h2 id="segments-and-indexes">4. Segments and Index Files</h2>
+<p>To prevent a single partition log from becoming too massive and slow to search, Kafka breaks partition logs into smaller segments.</p>
 <ul>
-  <li><strong>Producer:</strong> Applications that create and publish events to Kafka topics. Producers decide which partition an event belongs to.</li>
-  <li><strong>Consumer:</strong> Applications that subscribe to topics and process records. Consumers maintain their own position (offset) in each partition log.</li>
-  <li><strong>Broker:</strong> A single Kafka server process. A collection of coordinated brokers forms a Kafka cluster.</li>
-  <li><strong>Topic:</strong> A logical channel or category to which records are published (e.g., <code>user-signups</code>, <code>payment-events</code>).</li>
-  <li><strong>Partition:</strong> The fundamental unit of scalability in Kafka. Topics are divided into one or more partitions distributed across different brokers.</li>
-  <li><strong>Offset:</strong> A sequential integer ID assigned to each record as it is appended to a partition. Offsets are immutable and unique within a specific partition.</li>
+  <li><strong>Segment Naming:</strong> Segments are named based on their starting offset (e.g., a segment named <code>0000500.log</code> holds offsets starting from 500).</li>
+  <li><strong>Efficiency:</strong> This allows Kafka to directly jump to the specific file chunk that contains the requested offset range, speeding up memory loading.</li>
+  <li><strong>Index Files:</strong> Instead of scanning a whole segment linearly, Kafka maintains index files. These map specific offsets to their physical byte positions in the memory.
+    <ul>
+      <li>To save memory, not every offset is indexed. An index entry is created every $N$ bytes (which is configurable).</li>
+    </ul>
+  </li>
 </ul>
 
-<h2 id="partitions">3. Partitions and Scalability</h2>
-<p>Partitions enable Kafka to achieve horizontal scalability and high throughput:</p>
-<ul>
-  <li><strong>Parallelism:</strong> A single topic can handle gigabytes of data per second by splitting load across 50+ partitions hosted on different physical servers.</li>
-  <li><strong>Ordering Guarantees:</strong> Kafka guarantees total ordering of records <strong>only within a single partition</strong>, NOT across the entire topic! If an application requires strict causal ordering (e.g., all balance updates for Account #1042 must execute sequentially), all events for Account #1042 must be mapped to the exact same partition.</li>
-</ul>
-
-<h2 id="segments">4. Segments and Index Files</h2>
-<p>To prevent partition logs on disk from becoming massive monolithic files that are slow to manage and clean up, Kafka divides every partition into smaller <strong>Segment Files</strong>:</p>
-
-<div class="callout callout-tip">
-  <div class="callout-title">📂 Partition Storage Structure</div>
-  <p>Inside the broker filesystem, a partition directory contains paired log and index files:</p>
-  <ul>
-    <li><code>00000000000000000000.log</code> — Contains the actual raw serialized message payloads.</li>
-    <li><code>00000000000000000000.index</code> — Maps message logical offsets to physical byte offsets in the log file ($O(\log N)$ binary search).</li>
-    <li><code>00000000000000000000.timeindex</code> — Maps timestamps to logical offsets for time-based seeking.</li>
-  </ul>
-</div>
-
-<p>When the active segment reaches a size limit (default 1GB) or time threshold (default 7 days), Kafka rolls the segment: it closes the current segment file, marks it read-only, and opens a new active segment. This makes log retention and cleanup (deleting old segments or compaction) lightning-fast via simple filesystem file deletions.</p>
-
-<h2 id="assignment">5. How Producers Assign Partitions</h2>
-<p>When a producer publishes a record, Kafka chooses the target partition using one of three strategies:</p>
+<h2 id="partition-assignment">5. How Producers Assign Partitions</h2>
+<p>How does a producer know which partition to send an event to? Kafka uses partitioning algorithms:</p>
 <ol>
-  <li><strong>Key-Based Partitioning:</strong> If the producer provides a message key (e.g., <code>userId</code>), Kafka hashes the key using the Murmur2 algorithm:
-  $$\text{partition} = \text{murmur2}(\text{key}) \pmod{\text{numPartitions}}$$
-  This guarantees that all messages sharing the same key always land on the identical partition in exact order!</li>
-  <li><strong>Round-Robin / Sticky Partitioner:</strong> If no key is provided, Kafka distributes messages evenly across available partitions. Modern Kafka clients use the Sticky Partitioner, which batches records destined for the same partition to reduce network RPCs.</li>
-  <li><strong>Custom Partitioner:</strong> Developers can implement custom routing logic based on geographic region, tenant priority, or payload attributes.</li>
+  <li><strong>Key-Based Partitioning:</strong> The producer provides a key (like an Order ID). Kafka computes a hash of this key modulo the total number of partitions:
+  $$\text{Target Partition} = \text{hash}(\text{key}) \pmod{\text{Total Partitions}}$$
+  This ensures all events with the same key always go to the same partition.</li>
+  <li><strong>Round-Robin:</strong> If no key is provided, Kafka simply distributes the events evenly across available partitions in a sequential loop.</li>
+  <li><strong>Custom Partitioning:</strong> You can write custom logic (e.g., routing events from India to Partition 0, and US to Partition 1).</li>
 </ol>
 
       </article>
@@ -168,28 +164,24 @@ flowchart LR
       <aside class="toc-sidebar">
         <div class="toc-title">Table of Contents</div>
         <ul class="toc-list">
-          
-<li><a href="#intro">1. Introduction to Kafka</a></li>
-<li><a href="#components">2. Core Components</a></li>
-<li><a href="#partitions">3. Partitions & Scalability</a></li>
-<li><a href="#segments">4. Segments and Index Files</a></li>
-<li><a href="#assignment">5. Producer Partition Assignment</a></li>
-
+          <li><a href="#introduction">1. Introduction to Kafka</a></li>
+          <li><a href="#core-components">2. Core Components</a></li>
+          <li><a href="#partitions">3. Partitions &amp; Offsets</a></li>
+          <li><a href="#segments-and-indexes">4. Segments &amp; Index Files</a></li>
+          <li><a href="#partition-assignment">5. Producer Partitioning</a></li>
         </ul>
       </aside>
     </div>
 
     <div class="post-navigation">
-      
-        <a href="grab-data-layer-architecture.html" class="nav-card">
-          <span class="nav-label">← Previous Note</span>
-          <span class="nav-card-title">How Grab Configured Their Data Layer for Multi-Million Daily Transactions</span>
-        </a>
-      
-        <a href="kafka-architecture-part2.html" class="nav-card" style="text-align: right;">
-          <span class="nav-label">Next Note →</span>
-          <span class="nav-card-title">Apache Kafka Architecture Part 2 — Consumer Groups, Rebalancing &amp; High Availability</span>
-        </a>
+      <a href="grab-data-layer-architecture.html" class="nav-card">
+        <span class="nav-label">← Previous Note</span>
+        <span class="nav-card-title">Grab Data Layer Architecture</span>
+      </a>
+      <a href="kafka-architecture-part2.html" class="nav-card" style="text-align: right;">
+        <span class="nav-label">Next Note →</span>
+        <span class="nav-card-title">Kafka Architecture Part 2</span>
+      </a>
     </div>
   </main>
 
@@ -202,12 +194,12 @@ flowchart LR
       <div class="footer-col">
         <h5>Core Categories</h5>
         <ul>
-          <li><a href="amazon-aurora-cloud-native-databases.html">Amazon Aurora Architecture</a></li>
-          <li><a href="cap-theorem-and-google-spanner.html">Google Spanner &amp; TrueTime</a></li>
-          <li><a href="consistent-hashing.html">Consistent Hashing Guide</a></li>
           <li><a href="kafka-architecture-part1.html">Apache Kafka Fundamentals</a></li>
-          <li><a href="microservices-design-patterns.html">Microservices Patterns</a></li>
-          <li><a href="redis-internals-and-architecture.html">Redis Internal Mechanics</a></li>
+          <li><a href="kafka-architecture-part2.html">Kafka Consumers &amp; HA</a></li>
+          <li><a href="kafka-exactly-once-semantics.html">Kafka Exactly-Once Semantics</a></li>
+          <li><a href="grab-data-layer-architecture.html">Grab Data Layer Architecture</a></li>
+          <li><a href="consistent-hashing.html">Consistent Hashing Guide</a></li>
+          <li><a href="storage-compute-separation-aurora.html">Aurora Storage-Compute Separation</a></li>
         </ul>
       </div>
       <div class="footer-col">

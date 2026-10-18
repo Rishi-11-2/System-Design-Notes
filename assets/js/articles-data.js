@@ -15,6 +15,18 @@ const ARTICLES_DATA = [
     featured: true
   },
   {
+    id: "storage-compute-separation-aurora",
+    slug: "storage-compute-separation-aurora.html",
+    title: "Storage-Compute Separation: The Amazon Aurora Paradigm",
+    category: "Cloud Databases",
+    categorySlug: "cloud-databases",
+    badge: "Paper Deep-Dive",
+    pdfSource: "Docs/Storage_Compute_Separation_Aurora_Architecture.pdf",
+    excerpt: "Architectural decomposition based on Arpit Bhayani's engineering dissection and the landmark ACM SIGMOD paper: why network packet amplification is the cloud bottleneck, the 'Log is the Database' principle, smart storage offloading, and 4/6 quorum durability across 3 AZs.",
+    tags: ["Amazon Aurora", "Storage-Compute", "Distributed SQL", "Quorum", "Log-Structured", "Cloud Databases"],
+    featured: true
+  },
+  {
     id: "cap-theorem-and-google-spanner",
     slug: "cap-theorem-and-google-spanner.html",
     title: "CAP Theorem and Google Spanner — The Globally-Distributed Database",

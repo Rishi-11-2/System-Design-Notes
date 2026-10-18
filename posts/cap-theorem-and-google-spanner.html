@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CAP Theorem and Google Spanner — The Globally-Distributed Database — System Design Notes</title>
-  <meta name="description" content="Brewer&#x27;s CAP Theorem unpacked (CP vs AP trade-offs) and how Google Spanner achieves external consistency (linearizability) and 99.999% availability using TrueTime API GPS clocks, atomic oscillators, and Paxos consensus groups.">
+  <title>CAP Theorem and Google's Spanner — System Design Notes</title>
+  <meta name="description" content="Technical analysis of Brewer's CAP Theorem, network partition trade-offs (CP vs AP), and Google Spanner's pragmatic CA approach using TrueTime API and private fiber infrastructure.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Lora:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet">
@@ -30,7 +30,7 @@
     }
     document.addEventListener('DOMContentLoaded', initKaTeX);
   </script>
-  <!-- Highlight.js for Monokai Code Highlighting -->
+  <!-- Highlight.js for Code Highlighting -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
   <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
   <!-- Mermaid for Architecture Diagrams -->
@@ -46,14 +46,18 @@
         <span>System Design Notes</span>
       </a>
       <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
         <ul class="nav-links">
           <li><a href="../index.html">← All Notes</a></li>
         </ul>
-        <button id="theme-toggle" class="btn-icon" aria-label="Toggle Theme">
+        <button id="theme-toggle" class="btn-icon" data-tooltip="Toggle light/dark theme" aria-label="Toggle Theme">
           <span class="theme-icon">☀️</span>
         </button>
-        <a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="btn-icon" aria-label="GitHub Repository">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+        <a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="btn-icon" data-tooltip="View GitHub Repository" aria-label="GitHub Repository">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
             <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
           </svg>
         </a>
@@ -67,14 +71,14 @@
       <span>/</span>
       <a href="../index.html#distributed-systems">Distributed Systems</a>
       <span>/</span>
-      <span>CAP Theorem and Google Spanner — The Globally-Distributed Database</span>
+      <span>CAP Theorem and Google's Spanner</span>
     </div>
 
     <header class="article-header">
-      <span class="article-header-badge">Consensus</span>
-      <h1 class="article-header-title">CAP Theorem and Google Spanner — The Globally-Distributed Database</h1>
+      <span class="article-header-badge">Distributed Consensus &amp; Storage</span>
+      <h1 class="article-header-title">CAP Theorem and Google’s Spanner</h1>
       <div class="article-header-meta">
-        <span>📁 Category: Distributed Systems</span>
+        <span>📁 Category: Distributed Systems &amp; Consensus</span>
       </div>
       <div class="article-header-actions">
         <a href="../index.html" class="btn-secondary">
@@ -88,193 +92,115 @@
         
 <div class="callout callout-note">
   <div class="callout-title">📌 Executive Summary</div>
-  <p>The CAP Theorem (Brewer's Theorem) dictates that a distributed data store can simultaneously provide at most two out of three guarantees: Consistency, Availability, and Partition Tolerance. Because physical networks will inevitably partition, architects must choose between CP (Consistency over Availability) and AP (Availability over Consistency). Google Spanner represents a breakthrough NewSQL database: technically a <strong>CP system</strong> that achieves an unprecedented <strong>99.999% availability ("five nines")</strong>, effectively making it feel like a CA system to application developers through hardware-assisted <strong>TrueTime API</strong> atomic clocks and Paxos consensus.</p>
+  <p>This report delves into the <strong>CAP theorem</strong>—often called Brewer's theorem—and explains its three guarantees (Consistency, Availability, Partition Tolerance), the unavoidable trade-off when a network partition occurs, and the special case when no partition exists. It then examines <strong>Google Spanner</strong>, a globally distributed SQL database that leverages Google's private network and the <strong>TrueTime API</strong> to deliver strong consistency and high availability by dramatically reducing the likelihood and impact of partitions. Finally, it contrasts <strong>ACID and BASE philosophies</strong> and reviews Brewer's 2012 clarification that the C/A trade-off is only relevant during partitions.</p>
 </div>
 
-<h2 id="intro">1. Introduction</h2>
-<p>Modern distributed systems face an unrelenting challenge: how to scale globally across geographically dispersed datacenters while preserving strict transactional consistency and high availability. Understanding this trade-off requires analyzing the theoretical underpinnings of the CAP Theorem alongside practical implementations such as Google Spanner.</p>
+<h2 id="introduction">1. Introduction</h2>
+<p>Distributed data stores underpin modern cloud applications, but network failures are inevitable at scale. The CAP theorem formalizes the limits on what a distributed system can guarantee when nodes lose communication, and understanding CAP is essential for system architects making consistency vs. availability decisions in the face of partitions.</p>
 
-<h2 id="cap">2. CAP Theorem</h2>
-<h3 id="origins">2.1 Definition and Origins</h3>
-<p>Conjectured by Eric Brewer in 2000 and mathematically proven by Seth Gilbert and Nancy Lynch in 2002, the CAP theorem establishes that in any asynchronous network subject to communication failures, a distributed system cannot simultaneously guarantee all three properties:</p>
+<h2 id="cap-theorem">2. CAP Theorem</h2>
+
+<h3 id="definition-origins">2.1 Definition and Origins</h3>
+<p>The CAP theorem, conjectured by Eric Brewer in 2000 and proven by Gilbert and Lynch in 2002, asserts that a distributed system can simultaneously provide at most two of three properties: <strong>Consistency</strong>, <strong>Availability</strong>, and <strong>Partition Tolerance</strong>. Brewer originally presented this as a "principle," later clarified to highlight that the C/A choice only emerges under actual network partition events.</p>
+
+<h3 id="components">2.2 Components</h3>
 <ul>
-  <li><strong>Consistency (Linearizability):</strong> Every read receives the most recent write or an error. All operations appear to execute atomically in a single global order.</li>
-  <li><strong>Availability:</strong> Every non-failing node must return a non-error response for every received request (though not guaranteed to be the most recent data).</li>
-  <li><strong>Partition Tolerance:</strong> The system continues to operate despite an arbitrary number of messages being dropped, delayed, or lost by the network between nodes.</li>
+  <li><strong>Consistency (C):</strong> Every read receives the most recent write or an error—distinct from ACID's notion of database state consistency.</li>
+  <li><strong>Availability (A):</strong> Every request processed by a non-failed node returns a non-error response, though it may not reflect the latest write.</li>
+  <li><strong>Partition Tolerance (P):</strong> The system continues to operate despite an arbitrary number of lost or delayed messages between nodes.</li>
 </ul>
 
-<h3 id="tradeoffs">2.2 Trade-offs under Network Partition: CP vs AP</h3>
-<p>Since network partitions ($P$) are physical realities that cannot be avoided in distributed systems, the choice reduces to:</p>
-<div class="callout callout-warning">
-  <div class="callout-title">⚖️ The Fundamental Partition Choice</div>
-  <ul>
-    <li><strong>CP (Consistency over Availability):</strong> When a network partition occurs, the system refuses to serve stale or unverified writes/reads in the disconnected minority partition to protect data integrity. Nodes in the minority partition block or return errors until network connectivity resumes. Examples: Google Spanner, Apache HBase, MongoDB (with majority concern).</li>
-    <li><strong>AP (Availability over Consistency):</strong> When a network partition occurs, both sides of the partition accept reads and writes immediately. The system sacrifices strict serializability, relying on eventual consistency and conflict resolution (e.g., Last-Write-Wins or Vector Clocks). Examples: Amazon DynamoDB, Apache Cassandra, CouchDB.</li>
-  </ul>
+<div class="diagram-wrapper">
+  <div class="mermaid">
+flowchart TD
+  subgraph CAP["The CAP Properties"]
+    C["Consistency (C)<br/>Latest write or error"]
+    A["Availability (A)<br/>Non-error response"]
+    P["Partition Tolerance (P)<br/>Operates under network drops"]
+  end
+
+  P -->|"Partition Occurs"| Choice{"Architectural Choice"}
+  Choice -->|"CP System"| CP["Consistency over Availability<br/>(Cancel/delay operations to preserve freshness)"]
+  Choice -->|"AP System"| AP["Availability over Consistency<br/>(Serve reads/writes immediately, accept stale data)"]
+  </div>
+  <div class="diagram-caption">Figure 1: Trade-offs under network partition: choosing between CP and AP.</div>
 </div>
 
-<h3 id="no-partition">2.3 Implications When No Partition Exists</h3>
-<p>When the network is functioning normally without partitions, a distributed system can provide both strong consistency and high availability. Brewer emphasized that designers should not think of CAP as an absolute binary choice during steady-state operations, but rather as an emergency policy governing behavior <em>during</em> partitions.</p>
+<h3 id="tradeoffs-under-partition">2.3 Trade-offs under Network Partition</h3>
+<p>In the event of a network partition—when subsets of nodes cannot communicate—designers must choose between:</p>
+<ol>
+  <li><strong>Consistency over availability (CP):</strong> Cancel or delay operations until the partition heals, ensuring reads reflect the latest writes but risking unavailability.</li>
+  <li><strong>Availability over consistency (AP):</strong> Serve reads and writes immediately from whichever partition, accepting possible stale data.</li>
+</ol>
 
-<h2 id="spanner">3. Google Spanner</h2>
-<h3 id="overview">3.1 System Overview</h3>
-<p>Google Spanner is a globally-distributed, horizontally scalable NewSQL database supporting multi-datacenter ACID transactions, SQL querying, and non-blocking consistent reads across continents. Spanner powers mission-critical Google services including Google Ads, Google Play, and Google Cloud Spanner.</p>
+<h3 id="no-partition-implications">2.4 Implications of No Partition</h3>
+<p>When no partition exists (e.g., within a tightly controlled LAN), both consistency and availability can be satisfied simultaneously (CA system). However, realistic WAN-scale deployments must tolerate partitions, making the CP vs. AP choice unavoidable under failure.</p>
 
-<div class="diagram-container">
-  <pre class="mermaid">
-sequenceDiagram
-  autonumber
-  actor Client as Client App
-  participant Leader as Paxos Leader (Zone A)
-  participant TrueTime as TrueTime API [earliest, latest]
-  participant Replica as Paxos Follower (Zone B)
+<h2 id="google-spanner">3. Google Spanner</h2>
 
-  Client->>Leader: Start Transaction (Write Data)
-  Leader->>Leader: Acquire Read/Write Locks (2PL)
-  Leader->>TrueTime: tt = TrueTime.now()
-  Note over Leader,TrueTime: Timestamp interval: [t_earliest, t_latest], width = 2ε
-  Leader->>Leader: Assign Commit Timestamp s = t_latest
-  Leader->>Replica: Paxos Log Replication
-  Replica-->>Leader: Paxos Acknowledgment
-  Leader->>TrueTime: Commit Wait: Wait until TrueTime.now().earliest > s
-  Note over Leader: Waiting out the clock uncertainty (2ε ~ 1-7ms)
-  Leader->>Client: Transaction Committed (Timestamp s)
-  Leader->>Leader: Release Locks & Serve Linearizable Reads
-  </pre>
-  <div class="diagram-caption">Figure 2: Google Spanner TrueTime Commit-Wait Protocol ensuring external consistency.</div>
-</div>
+<h3 id="spanner-overview">3.1 Overview</h3>
+<p>Google Spanner is a globally distributed, strongly consistent SQL database built to span data across multiple continents while maintaining transactional semantics comparable to a single-machine database.</p>
 
-<h3 id="truetime">3.2 TrueTime API and Global Timestamps</h3>
-<p>The core breakthrough of Google Spanner is the <strong>TrueTime API</strong>. In conventional distributed systems, physical clocks on different machines drift unpredictably via NTP (often by 100ms to several seconds), making timestamp ordering impossible without central sequencers.</p>
-<p>TrueTime exposes physical time not as a discrete number, but as an explicit bounded time range with guaranteed uncertainty $\epsilon$:</p>
+<h3 id="truetime">3.2 TrueTime and Global Timestamps</h3>
+<p>Spanner's key innovation is the <strong>TrueTime API</strong>, which provides tight bounds on clock uncertainty using GPS and atomic clocks. Every transaction is stamped with a globally consistent timestamp, enabling lock-free, externally consistent reads across any replica without blocking writes.</p>
 
-<div class="callout callout-tip">
-  <div class="callout-title">⏱️ TrueTime Bounded Interval</div>
-  $$\text{TrueTime.now()} = [t_{\text{earliest}}, t_{\text{latest}}]$$
-  <p>Where absolute real time $t_{\text{abs}}$ is mathematically guaranteed to fall within the interval:</p>
-  $$t_{\text{earliest}} \le t_{\text{abs}} \le t_{\text{latest}} \quad \text{and} \quad t_{\text{latest}} - t_{\text{earliest}} = 2\epsilon$$
-</div>
+<h3 id="infrastructure-partition-minimization">3.3 Infrastructure and Partition Minimization</h3>
+<p>Rather than "breaking" CAP, Spanner minimizes partition risk by running on Google's private fiber network with redundant paths, specialized hardware, and rigorous operational controls. This infrastructure investment makes partitions so rare that practitioners can operate under CA assumptions in practice.</p>
 
-<p>Google datacenters maintain TrueTime master servers equipped with two distinct time sources with failover protection:</p>
+<h3 id="operational-reliability">3.4 Operational Reliability</h3>
+<p>Years of SRE-driven optimizations have reduced network-related outages to under <strong>10%</strong> of Spanner's total downtime causes, shifting the availability focus away from partitions toward software and hardware reliability.</p>
+
+<h3 id="pragmatic-approach">3.5 Pragmatic Approach to CAP</h3>
+<p>While no system can guarantee 100% availability under partitions, Spanner's approach effectively raises the bar: by drastically lowering the probability of partitions, it allows applications to benefit from strong consistency and high availability in nearly all practical scenarios.</p>
+
+<h2 id="comparisons-philosophies">4. Comparisons and Philosophies</h2>
+
+<h3 id="acid-vs-base">4.1 ACID vs. BASE</h3>
 <ul>
-  <li><strong>GPS Receivers:</strong> High-precision satellite signals.</li>
-  <li><strong>Atomic Clocks (Rubidium Oscillators):</strong> Deployed in every datacenter rack to maintain nanosecond stability even if GPS antennas fail or experience spoofing/weather outages.</li>
-  <li>Under normal conditions, clock uncertainty $\epsilon$ is kept remarkably tight: between <strong>1 millisecond and 7 milliseconds</strong>.</li>
+  <li><strong>ACID systems:</strong> (e.g., traditional RDBMS) typically choose CP: they favor consistency and will sacrifice availability under partitions (e.g., transaction rollbacks).</li>
+  <li><strong>BASE systems:</strong> (common in NoSQL solutions) choose AP: they favor availability, allowing eventual consistency and conflict-resolution techniques like CRDTs to reconcile divergent replicas later.</li>
 </ul>
 
-<h3 id="commit-wait">3.3 The Commit-Wait Rule and External Consistency</h3>
-<p>Spanner guarantees <strong>External Consistency (Linearizability)</strong>: if a transaction $T_2$ begins after a transaction $T_1$ commits in real time, then $T_2$'s timestamp $s_2$ must be strictly greater than $T_1$'s timestamp $s_1$ ($s_2 > s_1$).</p>
+<h3 id="brewers-clarification">4.2 Brewer’s Clarification</h3>
+<p>In 2012, Brewer emphasized that the "two out of three" CAP summary is misleading because consistency and availability can both be met unless a partition occurs. Thus, the real trade-off point is only when messages are dropped or delayed between nodes.</p>
 
-<p>Spanner enforces this invariant through the elegant <strong>Commit-Wait Rule</strong>:</p>
-
-<div class="callout callout-important">
-  <div class="callout-title">🔒 The Commit-Wait Rule Algorithm</div>
-  <ol style="margin-bottom: 0; padding-left: 1.5rem;">
-    <li><strong>Acquire Timestamp:</strong> The Paxos leader picks a commit timestamp $s \ge t_{\text{latest}}$ from the current TrueTime bounded interval.</li>
-    <li><strong>Wait Out Clock Uncertainty:</strong> Before releasing locks and publishing the commit to clients, the leader deliberately blocks until:
-      $$\text{TrueTime.now()}.t_{\text{earliest}} > s$$
-    </li>
-    <li><strong>Guarantee of Linear Order:</strong> By waiting out the maximum clock uncertainty ($2\epsilon$, typically 1–7ms), the leader guarantees that absolute real time everywhere has passed timestamp $s$. Therefore, any future transaction initiated by any client anywhere in the world will receive a timestamp strictly greater than $s$!</li>
-  </ol>
-</div>
-
-<h3 id="concurrency">3.4 Concurrency Control & Replication</h3>
-<ul>
-  <li><strong>Read-Write Transactions:</strong> Use Two-Phase Locking (2PL) for serializability combined with Two-Phase Commit (2PC) coordinated across Paxos groups.</li>
-  <li><strong>Lock-Free Read-Only Transactions:</strong> Spanner executes read queries with zero locks by reading a snapshot of data at a past timestamp $t_{\text{read}}$. Multi-Version Concurrency Control (MVCC) ensures queries never block incoming writes.</li>
-  <li><strong>Paxos Groups:</strong> Every Spanner database is split into directory splits replicated across multiple datacenters via Paxos groups for automatic leader election and failover.</li>
-</ul>
-
-<h2 id="brewer-philosophy">4. Is Spanner CA or CP? (Eric Brewer's Analysis)</h2>
-<p>In his landmark paper <em>"Spanner: Becoming a CP Database That Feels Like CA"</em>, Eric Brewer clarified Spanner's classification:</p>
-<ul>
-  <li><strong>Formal Theory:</strong> Spanner is unequivocally a <strong>CP system</strong>. If network partitions prevent a Paxos group from achieving a majority quorum, write operations halt to preserve consistency.</li>
-  <li><strong>Operational Reality:</strong> Google invests heavily in private redundant global fiber routes with automated optical switching. As a result, catastrophic network partitions occur with such extreme rarity that Spanner delivers <strong>99.999% availability ("five nines")</strong> in practice.</li>
-  <li>For software engineers, Spanner provides the simplicity of a CA system (always available with instant consistency) while preserving the formal safety guarantees of a CP system during emergencies.</li>
-</ul>
-
-<h2 id="summary">5. Architectural Comparison</h2>
-<table>
-  <thead>
-    <tr>
-      <th>Dimension</th>
-      <th>Traditional RDBMS (MySQL)</th>
-      <th>NoSQL (Cassandra / DynamoDB)</th>
-      <th>Google Spanner</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td><strong>CAP Category</strong></td>
-      <td>CA (Single Node)</td>
-      <td>AP (Available / Partition-tolerant)</td>
-      <td>CP (with 99.999% Availability)</td>
-    </tr>
-    <tr>
-      <td><strong>Consistency</strong></td>
-      <td>Strict Serializability</td>
-      <td>Eventual Consistency</td>
-      <td>External Consistency (Linearizability)</td>
-    </tr>
-    <tr>
-      <td><strong>Transactions</strong></td>
-      <td>ACID (Local)</td>
-      <td>BASE (Row-level only)</td>
-      <td>Globally Distributed ACID</td>
-    </tr>
-    <tr>
-      <td><strong>Clock Model</strong></td>
-      <td>Local Clock / NTP</td>
-      <td>NTP (Wall clocks, Last-Write-Wins)</td>
-      <td>TrueTime (GPS + Atomic Clocks, bounded $\epsilon$)</td>
-    </tr>
-    <tr>
-      <td><strong>Consensus</strong></td>
-      <td>None (Master-Slave replication)</td>
-      <td>Gossip protocol / Dynamo quorum</td>
-      <td>Paxos Consensus Groups</td>
-    </tr>
-  </tbody>
-</table>
-
-<h2 id="conclusion">6. Conclusion</h2>
-<p>Google Spanner fundamentally shifted distributed system architecture by proving that strong external consistency and global horizontal scalability are not mutually exclusive. By bounding clock uncertainty using physical atomic oscillators and the TrueTime API, Spanner resolved distributed ordering without prohibitive coordination overhead, setting the standard for modern NewSQL distributed databases.</p>
+<h2 id="conclusion">5. Conclusion</h2>
+<p>Understanding the CAP theorem's constraints helps architects make informed design decisions for distributed systems. Google Spanner illustrates a pragmatic path: invest heavily in minimizing partitions (via private networks and clock synchronization) so that strong consistency and high availability can coexist in practice.</p>
 
       </article>
 
       <aside class="toc-sidebar">
         <div class="toc-title">Table of Contents</div>
         <ul class="toc-list">
-          
-<li><a href="#intro">1. Introduction</a></li>
-<li><a href="#cap">2. CAP Theorem</a></li>
-<li class="toc-sub"><a href="#origins">2.1 Definition & Origins</a></li>
-<li class="toc-sub"><a href="#tradeoffs">2.2 CP vs AP Trade-offs</a></li>
-<li class="toc-sub"><a href="#no-partition">2.3 Steady-State Without Partitions</a></li>
-<li><a href="#spanner">3. Google Spanner</a></li>
-<li class="toc-sub"><a href="#overview">3.1 System Overview</a></li>
-<li class="toc-sub"><a href="#truetime">3.2 TrueTime API & Atomic Clocks</a></li>
-<li class="toc-sub"><a href="#commit-wait">3.3 The Commit-Wait Rule</a></li>
-<li class="toc-sub"><a href="#concurrency">3.4 Concurrency & Paxos</a></li>
-<li><a href="#brewer-philosophy">4. Is Spanner CA or CP?</a></li>
-<li><a href="#summary">5. Architectural Comparison</a></li>
-<li><a href="#conclusion">6. Conclusion</a></li>
-
+          <li><a href="#introduction">1. Introduction</a></li>
+          <li><a href="#cap-theorem">2. CAP Theorem</a></li>
+          <li class="toc-sub"><a href="#definition-origins">2.1 Definition &amp; Origins</a></li>
+          <li class="toc-sub"><a href="#components">2.2 Components</a></li>
+          <li class="toc-sub"><a href="#tradeoffs-under-partition">2.3 Trade-offs Under Partition</a></li>
+          <li class="toc-sub"><a href="#no-partition-implications">2.4 Implications of No Partition</a></li>
+          <li><a href="#google-spanner">3. Google Spanner</a></li>
+          <li class="toc-sub"><a href="#spanner-overview">3.1 Overview</a></li>
+          <li class="toc-sub"><a href="#truetime">3.2 TrueTime &amp; Timestamps</a></li>
+          <li class="toc-sub"><a href="#infrastructure-partition-minimization">3.3 Infrastructure &amp; Partitions</a></li>
+          <li class="toc-sub"><a href="#operational-reliability">3.4 Operational Reliability</a></li>
+          <li class="toc-sub"><a href="#pragmatic-approach">3.5 Pragmatic Approach</a></li>
+          <li><a href="#comparisons-philosophies">4. Comparisons &amp; Philosophies</a></li>
+          <li class="toc-sub"><a href="#acid-vs-base">4.1 ACID vs. BASE</a></li>
+          <li class="toc-sub"><a href="#brewers-clarification">4.2 Brewer's Clarification</a></li>
+          <li><a href="#conclusion">5. Conclusion</a></li>
         </ul>
       </aside>
     </div>
 
     <div class="post-navigation">
-      
-        <a href="amazon-aurora-cloud-native-databases.html" class="nav-card">
-          <span class="nav-label">← Previous Note</span>
-          <span class="nav-card-title">Cloud-Native Databases and Amazon Aurora Architecture Technical Analysis</span>
-        </a>
-      
-        <a href="grab-data-layer-architecture.html" class="nav-card" style="text-align: right;">
-          <span class="nav-label">Next Note →</span>
-          <span class="nav-card-title">How Grab Configured Their Data Layer for Multi-Million Daily Transactions</span>
-        </a>
+      <a href="storage-compute-separation-aurora.html" class="nav-card">
+        <span class="nav-label">← Previous Note</span>
+        <span class="nav-card-title">Storage-Compute Separation &amp; Aurora</span>
+      </a>
+      <a href="consistent-hashing.html" class="nav-card" style="text-align: right;">
+        <span class="nav-label">Next Note →</span>
+        <span class="nav-card-title">Consistent Hashing Guide</span>
+      </a>
     </div>
   </main>
 
@@ -287,8 +213,8 @@ sequenceDiagram
       <div class="footer-col">
         <h5>Core Categories</h5>
         <ul>
-          <li><a href="amazon-aurora-cloud-native-databases.html">Amazon Aurora Architecture</a></li>
           <li><a href="cap-theorem-and-google-spanner.html">Google Spanner &amp; TrueTime</a></li>
+          <li><a href="storage-compute-separation-aurora.html">Aurora Storage-Compute Separation</a></li>
           <li><a href="consistent-hashing.html">Consistent Hashing Guide</a></li>
           <li><a href="kafka-architecture-part1.html">Apache Kafka Fundamentals</a></li>
           <li><a href="microservices-design-patterns.html">Microservices Patterns</a></li>

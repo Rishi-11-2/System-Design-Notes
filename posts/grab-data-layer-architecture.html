@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>How Grab Configured Their Data Layer for Multi-Million Daily Transactions — System Design Notes</title>
-  <meta name="description" content="How Grab handles spiky food delivery traffic and millions of transactions per day: Redis Cache-Aside, Read-Write Splitting, Geographic Sharding, DynamoDB Partial Indexing optimization, and Kafka pipelines.">
+  <meta name="description" content="Technical notes on how Grab configured their hybrid data layer (DynamoDB OLTP + MySQL OLAP) to handle multi-million daily food and mart orders with partial indexing and Kafka/SQS sync.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Lora:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet">
@@ -30,7 +30,7 @@
     }
     document.addEventListener('DOMContentLoaded', initKaTeX);
   </script>
-  <!-- Highlight.js for Monokai Code Highlighting -->
+  <!-- Highlight.js for Code Highlighting -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
   <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
   <!-- Mermaid for Architecture Diagrams -->
@@ -46,14 +46,18 @@
         <span>System Design Notes</span>
       </a>
       <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
         <ul class="nav-links">
           <li><a href="../index.html">← All Notes</a></li>
         </ul>
-        <button id="theme-toggle" class="btn-icon" aria-label="Toggle Theme">
+        <button id="theme-toggle" class="btn-icon" data-tooltip="Toggle light/dark theme" aria-label="Toggle Theme">
           <span class="theme-icon">☀️</span>
         </button>
-        <a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="btn-icon" aria-label="GitHub Repository">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+        <a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="btn-icon" data-tooltip="View GitHub Repository" aria-label="GitHub Repository">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
             <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
           </svg>
         </a>
@@ -67,14 +71,14 @@
       <span>/</span>
       <a href="../index.html#case-studies">Case Studies</a>
       <span>/</span>
-      <span>How Grab Configured Their Data Layer for Multi-Million Daily Transactions</span>
+      <span>Grab Data Layer Architecture</span>
     </div>
 
     <header class="article-header">
-      <span class="article-header-badge">Real-World Architecture</span>
-      <h1 class="article-header-title">How Grab Configured Their Data Layer for Multi-Million Daily Transactions</h1>
+      <span class="article-header-badge">Production Architecture Case Study</span>
+      <h1 class="article-header-title">How Grab Configured Their Data Layer to Handle Multi-Million Database Transactions a Day</h1>
       <div class="article-header-meta">
-        <span>📁 Category: Case Studies</span>
+        <span>📁 Category: High-Scale Systems &amp; Database Architecture</span>
       </div>
       <div class="article-header-actions">
         <a href="../index.html" class="btn-secondary">
@@ -87,134 +91,111 @@
       <article class="prose">
         
 <div class="callout callout-note">
-  <div class="callout-title">📌 Real-World Architecture Study</div>
-  <p>Grab processes tens of millions of food delivery, ride-hailing, and mart orders every day across Southeast Asia. Spiky lunch and dinner peak hours strain database tiers with extreme concurrency. This technical note breaks down Grab's multi-tiered data layer: splitting OLTP and OLAP workloads, caching with Redis, read-write database splitting, database sharding, and an ingenious <strong>DynamoDB Partial Indexing</strong> strategy that cuts index bloat by 90%+.</p>
+  <div class="callout-title">📌 Architecture Summary</div>
+  <p>Grab processes millions of food and mart orders every day. The most critical and brittle part of the infrastructure is the database. Given the spiky nature of traffic (e.g., massive surges during dinner times or special events), the database layer must guarantee high availability, low latency, and operational stability. Rather than forcing a single database to handle conflicting transactional and analytical workloads, Grab separated concerns between <strong>DynamoDB (OLTP)</strong> and <strong>MySQL (OLAP)</strong> via an asynchronous, resilient event-driven pipeline.</p>
 </div>
 
-<h2 id="intro">1. Introduction</h2>
-<p>Grab operates an everyday super-app handling millions of bookings and food delivery orders daily. The most critical and brittle component of any high-traffic transactional architecture is the persistence tier. Spikes during meal times and promotional campaigns can easily overwhelm databases unless traffic is carefully buffered and segmented.</p>
+<h2 id="introduction">1. Introduction</h2>
+<p>Grab processes millions of food and mart orders every day. The most critical and brittle part of the infrastructure is the database. Given the spiky nature of the traffic (e.g., massive surges during dinner times or special events), the database layer must ensure high availability and fast query times.</p>
 
-<h2 id="query-types">2. Query Types: OLTP vs OLAP</h2>
-<p>To design an optimal persistence architecture, Grab segregates workloads into two distinct categories:</p>
+<h2 id="query-types">2. Query Types</h2>
+<p>To design the database layer, two main types of queries need to be handled:</p>
 <ul>
-  <li><strong>Transactional Queries (OLTP):</strong> Real-time operations with low latency requirements (< 50ms). Examples: creating a new food order, driver location updates, order state transitions (Pending $\to$ Confirmed $\to$ Picked Up $\to$ Delivered).</li>
-  <li><strong>Analytical Queries (OLAP):</strong> Heavy aggregate read operations and reporting. Examples: merchant earnings calculations, fraud detection heuristics, supply-demand modeling, daily business metrics.</li>
+  <li><strong>Transactional Queries (OLTP):</strong> Real-time operations like getting, creating, updating, or deleting an order.</li>
+  <li><strong>Analytical Queries (OLAP):</strong> Queries that fetch historical orders of a user or generate statistics grouped by attributes.</li>
 </ul>
 
-<div class="callout callout-warning">
-  <div class="callout-title">⚠️ Golden Rule</div>
-  <p>Never run OLAP queries directly against the primary OLTP transactional database. A single unindexed aggregate query or large table scan can lock tables, consume buffer cache memory, and cause cascading timeouts for end-user order creation.</p>
-</div>
-
-<h2 id="goals">3. Core Design Goals</h2>
+<h2 id="design-goals">3. Design Goals</h2>
+<p>Grab’s design goals for their database layer were:</p>
 <ol>
-  <li><strong>High Availability:</strong> 99.99% uptime for core transactional flows.</li>
-  <li><strong>Sub-Second Latency:</strong> P99 order placement latency under 200ms.</li>
-  <li><strong>Horizontal Scalability:</strong> Ability to absorb 5x surges during monsoon rainstorms or festival holidays.</li>
-  <li><strong>Strict Isolation:</strong> Preventing analytical reporting from impacting checkout workflows.</li>
+  <li><strong>Stability:</strong> Must handle high queries per second (QPS) and be highly available. A partial failure should only degrade performance, not cause a complete outage.</li>
+  <li><strong>Cost-Effectiveness:</strong> Architecture should not inflate infrastructure costs unnecessarily for slow or simple queries.</li>
+  <li><strong>Consistency:</strong> Strong consistency is required for transactional queries (e.g., immediate updates). Eventual consistency is acceptable for analytical queries.</li>
 </ol>
 
-<div class="diagram-container">
-  <pre class="mermaid">
-flowchart TD
-  Client["Grab Mobile App / API Clients"] --> GW["API Gateway & Rate Limiter"]
-  GW --> Svc["Order & Checkout Microservices"]
+<h2 id="database-choices">4. Database Choices</h2>
+<p>Instead of a single database, Grab uses two specialized databases:</p>
 
-  subgraph CachingLayer["In-Memory Acceleration"]
-    Svc -->|"1. Cache-Aside Check"| Redis["Redis Cluster (Active Orders)"]
-  end
-
-  subgraph TransactionalTier["OLTP Core Tier"]
-    Svc -->|"2. Write Primary"| MasterDB["MySQL / Aurora Primary (Writes)"]
-    MasterDB -.->|"Replication"| ReadReplica["Read Replicas (Read Queries)"]
-  end
-
-  subgraph HistoryTier["High-Throughput Storage"]
-    Svc -->|"Completed Orders"| DynamoDB["AWS DynamoDB (Partitioned by User/City)"]
-    DynamoDB --- SparseIndex["Sparse Secondary Index (Ongoing Orders Only)"]
-  end
-
-  subgraph AsyncPipelines["Event Streaming & CDC"]
-    MasterDB -->|"Debezium CDC"| Kafka["Apache Kafka Cluster"]
-    Kafka -->|"Consumer Groups"| Lake["S3 Data Lake / Snowflake OLAP"]
-  end
-  </pre>
-  <div class="diagram-caption">Figure 3: Grab multi-tier data layer architecture with CDC and storage separation.</div>
-</div>
-
-<h2 id="choices">4. Database Choices & Tiering Strategies</h2>
-<h3 id="cache-aside">4.1 Redis Caching with Cache-Aside Pattern</h3>
-<p>Frequent read queries (e.g., driver coordinates, active restaurant menus, live order status) are intercepted by a Redis cluster using the <strong>Cache-Aside (Lazy Loading)</strong> pattern:</p>
-<ol>
-  <li>Application checks Redis cache for the active order key.</li>
-  <li>If cache hit: return data immediately with ~2ms latency.</li>
-  <li>If cache miss: read from read replica, populate Redis with TTL, and return.</li>
-</ol>
-
-<h3 id="read-write-split">4.2 Read-Write Splitting</h3>
-<p>Grab employs connection proxies (ProxySQL / AWS RDS Proxy) to automatically route writes (<code>INSERT</code>, <code>UPDATE</code>, <code>DELETE</code>) to the primary database while fanning out read queries (<code>SELECT</code>) across multiple read replicas.</p>
-
-<h3 id="partial-indexing">4.3 Key Optimization: Partial Indexing in DynamoDB</h3>
-<p>One of Grab's most significant optimizations involves managing order status histories in DynamoDB. A typical Grab user might have 1,000 completed orders over 3 years, but at any given minute, only <strong>1 or 2 ongoing active orders</strong>.</p>
-<p>Querying <em>"Show me active orders for user X"</em> against a massive order table requires either scanning all historical orders or maintaining a secondary index on all orders, leading to massive storage costs and slow indexing.</p>
+<h3 id="oltp-dynamodb">4.1 OLTP: DynamoDB</h3>
+<p>DynamoDB was chosen for the transactional database (single source of truth for ongoing orders) for the following reasons:</p>
+<ul>
+  <li><strong>Managed Service:</strong> Highly available and scalable out of the box.</li>
+  <li><strong>Strong Consistency:</strong> Provides consistent reads for primary keys.</li>
+  <li><strong>Hot Partition Handling:</strong> DynamoDB dynamically moves infrequently accessed data to a shared partition, dedicating full infrastructure capacity to "hot" partitions, seamlessly solving the hotkey problem.</li>
+</ul>
 
 <div class="callout callout-tip">
-  <div class="callout-title">💡 DynamoDB Sparse / Partial Indexing</div>
-  <p>In DynamoDB, Global Secondary Indexes (GSIs) only populate items that <strong>contain the index key attribute</strong>. Grab exploits this by:</p>
+  <div class="callout-title">Key Optimization: Partial Indexing in DynamoDB</div>
+  <p>To query a user's ongoing orders quickly without bloating the index:</p>
   <ul>
-    <li>Adding an attribute <code>is_ongoing = 1</code> <em>only</em> while the order is in progress.</li>
-    <li>When the order is delivered or cancelled, a Lambda / background worker <strong>removes the attribute</strong>.</li>
-    <li>Result: The secondary index contains only active orders (e.g. 10,000 active orders across the entire city instead of 500,000,000 historic orders)!</li>
-    <li>Read latency drops to single-digit milliseconds and GSI storage cost drops by over 95%.</li>
+    <li>Instead of indexing the <code>user_id</code> directly, Grab created a special attribute called <code>user_id_gsi</code> and created a Global Secondary Index (GSI) on it.</li>
+    <li>When an order is created (ongoing state), <code>user_id_gsi</code> is set to the <code>user_id</code>.</li>
+    <li>Once the order is completed, <code>user_id_gsi</code> is set to <code>null</code>.</li>
+    <li>Setting it to <code>null</code> removes the entry from the GSI. Thus, the index remains small (only containing ongoing orders) and lightning-fast to query.</li>
+    <li>A <strong>TTL</strong> is set on the DynamoDB rows to delete orders after 3 months, keeping the operational table lean while historical data is passed to the analytics database.</li>
   </ul>
 </div>
 
-<h2 id="pipeline">5. Data Synchronization & Architecture Pipeline</h2>
-<p>To keep analytical and downstream microservices synchronized with the primary OLTP store without performance degradation, Grab utilizes Change Data Capture (CDC):</p>
-<ol>
-  <li>Transactions write to the MySQL/Aurora primary database.</li>
-  <li>Debezium captures the database binary log (binlog) and streams change events into <strong>Apache Kafka</strong>.</li>
-  <li>Downstream streaming consumers ingest Kafka topics into an Amazon S3 data lake, ClickHouse, or Snowflake for analytical reporting, merchant payout processing, and real-time dashboard analytics.</li>
-</ol>
+<h3 id="olap-mysql">4.2 OLAP: MySQL</h3>
+<p>While typical analytical loads use massive data warehouses, Grab's analytical requirements for orders were not humongous enough to warrant an overkill data warehouse. They chose MySQL to serve near real-time analytical queries, structuring information to minimize cross-shard queries.</p>
 
-<h2 id="takeaways">6. Key Takeaways</h2>
+<h2 id="synchronization-pipeline">5. Data Synchronization &amp; Architecture Pipeline</h2>
+<p>To keep the OLTP (DynamoDB) and OLAP (MySQL) databases in sync, Grab uses an event-driven ingestion pipeline:</p>
+
+<div class="diagram-wrapper">
+  <div class="mermaid">
+flowchart LR
+  OrderService["Order Service"] -->|"Write"| DynamoDB["DynamoDB (OLTP)"]
+  OrderService -->|"Publish Events"| Kafka["Kafka (99.95% SLA)"]
+  Kafka -->|"Fallback if Down"| SQS["AWS SQS"]
+  SQS -->|"Fallback if Down"| DLQ["Dead Letter Queue (DLQ)"]
+
+  Kafka -->|"Poll"| Consumers["Event Consumers"]
+  SQS -->|"Poll"| Consumers
+  Consumers -->|"Upsert & Timestamp Check"| MySQL["MySQL (OLAP)"]
+  </div>
+  <div class="diagram-caption">Figure 1: Grab's event-driven data synchronization pipeline with multi-tiered fallback.</div>
+</div>
+
 <ul>
-  <li><strong>Segregate ruthlessly:</strong> Keep transactional paths lean and offload analytics to asynchronous streams.</li>
-  <li><strong>Optimize indexing:</strong> Use sparse indexing techniques to index only volatile, highly queried state.</li>
-  <li><strong>Rely on CDC:</strong> Stream database mutations asynchronously via Kafka to prevent cross-service database coupling.</li>
+  <li><strong>Happy Path:</strong> Order service updates DynamoDB &rarr; pushes events to Kafka &rarr; Consumers read from Kafka &rarr; updates MySQL.</li>
+  <li><strong>High Availability / Fallbacks:</strong> Kafka has an SLA of 99.95%. If Kafka is down, messages are pushed to SQS. If SQS is down, a Dead Letter Queue (DLQ) is configured.</li>
 </ul>
+
+<div class="callout callout-important">
+  <div class="callout-title">Handling Out-of-Order Messages</div>
+  <p>Because asynchronous messages can arrive out of order:</p>
+  <ul>
+    <li><strong>Upserts:</strong> Data is always inserted into MySQL using "upserts" to handle cases where an update event arrives before a create event.</li>
+    <li><strong>Timestamp Checks:</strong> To prevent a newer update from being overwritten by a delayed older update, consumers always verify the timestamp before applying an update.</li>
+  </ul>
+</div>
 
       </article>
 
       <aside class="toc-sidebar">
         <div class="toc-title">Table of Contents</div>
         <ul class="toc-list">
-          
-<li><a href="#intro">1. Introduction</a></li>
-<li><a href="#query-types">2. Query Types: OLTP vs OLAP</a></li>
-<li><a href="#goals">3. Core Design Goals</a></li>
-<li><a href="#choices">4. Database Tiering Strategies</a></li>
-<li class="toc-sub"><a href="#cache-aside">4.1 Redis Cache-Aside</a></li>
-<li class="toc-sub"><a href="#read-write-split">4.2 Read-Write Splitting</a></li>
-<li class="toc-sub"><a href="#partial-indexing">4.3 DynamoDB Sparse Indexing</a></li>
-<li><a href="#pipeline">5. Data Synchronization Pipeline</a></li>
-<li><a href="#takeaways">6. Key Takeaways</a></li>
-
+          <li><a href="#introduction">1. Introduction</a></li>
+          <li><a href="#query-types">2. Query Types</a></li>
+          <li><a href="#design-goals">3. Design Goals</a></li>
+          <li><a href="#database-choices">4. Database Choices</a></li>
+          <li class="toc-sub"><a href="#oltp-dynamodb">4.1 OLTP: DynamoDB</a></li>
+          <li class="toc-sub"><a href="#olap-mysql">4.2 OLAP: MySQL</a></li>
+          <li><a href="#synchronization-pipeline">5. Data Synchronization</a></li>
         </ul>
       </aside>
     </div>
 
     <div class="post-navigation">
-      
-        <a href="cap-theorem-and-google-spanner.html" class="nav-card">
-          <span class="nav-label">← Previous Note</span>
-          <span class="nav-card-title">CAP Theorem and Google Spanner — The Globally-Distributed Database</span>
-        </a>
-      
-        <a href="kafka-architecture-part1.html" class="nav-card" style="text-align: right;">
-          <span class="nav-label">Next Note →</span>
-          <span class="nav-card-title">Apache Kafka Architecture Part 1 — Event-Driven Architecture &amp; Storage Fundamentals</span>
-        </a>
+      <a href="consistent-hashing.html" class="nav-card">
+        <span class="nav-label">← Previous Note</span>
+        <span class="nav-card-title">Consistent Hashing Guide</span>
+      </a>
+      <a href="kafka-architecture-part1.html" class="nav-card" style="text-align: right;">
+        <span class="nav-label">Next Note →</span>
+        <span class="nav-card-title">Kafka Architecture Part 1</span>
+      </a>
     </div>
   </main>
 
@@ -227,12 +208,12 @@ flowchart TD
       <div class="footer-col">
         <h5>Core Categories</h5>
         <ul>
-          <li><a href="amazon-aurora-cloud-native-databases.html">Amazon Aurora Architecture</a></li>
-          <li><a href="cap-theorem-and-google-spanner.html">Google Spanner &amp; TrueTime</a></li>
+          <li><a href="grab-data-layer-architecture.html">Grab Data Layer Architecture</a></li>
           <li><a href="consistent-hashing.html">Consistent Hashing Guide</a></li>
+          <li><a href="cap-theorem-and-google-spanner.html">Google Spanner &amp; TrueTime</a></li>
+          <li><a href="storage-compute-separation-aurora.html">Aurora Storage-Compute Separation</a></li>
           <li><a href="kafka-architecture-part1.html">Apache Kafka Fundamentals</a></li>
           <li><a href="microservices-design-patterns.html">Microservices Patterns</a></li>
-          <li><a href="redis-internals-and-architecture.html">Redis Internal Mechanics</a></li>
         </ul>
       </div>
       <div class="footer-col">

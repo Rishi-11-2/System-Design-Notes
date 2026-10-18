@@ -271,139 +271,14 @@ flowchart TD
   <li>Total AWS messaging infrastructure cost dropped by <strong>over 90%</strong> immediately upon deployment.</li>
 </ul>
 
-<h2 id="implementation">6. Python Simulation: S3 Invalidation Pipeline</h2>
-<p>The following production simulation demonstrates the core architecture of the TCS Batch Aggregator and the Client Sidecar Poller:</p>
-
-<div class="code-wrapper">
-  <div class="code-header">
-    <span>atlassian_cache_invalidation.py</span>
-    <button class="btn-copy">Copy</button>
-  </div>
-  <pre><code class="language-python">import time
-import json
-import gzip
-from typing import Set, Dict, Any, List
-
-class S3MockStorage:
-    """Simulates Amazon S3 with epoch-versioned immutable changelog objects."""
-    def __init__(self):
-        self.objects: Dict[str, bytes] = {}
-        self.latest_epoch: int = 0
-
-    def put_changelog(self, epoch: int, keys: Set[str]) -> str:
-        payload = json.dumps({"epoch": epoch, "invalidated_keys": list(keys)}).encode("utf-8")
-        compressed = gzip.compress(payload)
-        key_path = f"tcs/changelogs/epoch_{epoch}.json.gz"
-        self.objects[key_path] = compressed
-        self.latest_epoch = epoch
-        return key_path
-
-    def get_latest_epoch(self) -> int:
-        return self.latest_epoch
-
-    def get_changelog(self, epoch: int) -> List[str]:
-        key_path = f"tcs/changelogs/epoch_{epoch}.json.gz"
-        if key_path not in self.objects:
-            return []
-        raw = gzip.decompress(self.objects[key_path])
-        data = json.loads(raw.decode("utf-8"))
-        return data.get("invalidated_keys", [])
-
-
-class TCSBatchAggregator:
-    """Gathers discrete mutations and flushes batched epoch manifests to S3."""
-    def __init__(self, s3: S3MockStorage, flush_interval_sec: float = 1.0):
-        self.s3 = s3
-        self.flush_interval = flush_interval_sec
-        self.pending_keys: Set[str] = set()
-        self.last_flush = time.time()
-        self.current_epoch = int(time.time())
-
-    def record_mutation(self, tenant_id: str):
-        """Called when a tenant configuration changes in Jira/Confluence."""
-        self.pending_keys.add(tenant_id)
-
-    def maybe_flush(self) -> bool:
-        now = time.time()
-        if now - self.last_flush >= self.flush_interval and self.pending_keys:
-            self.current_epoch += 1
-            flushed_count = len(self.pending_keys)
-            path = self.s3.put_changelog(self.current_epoch, self.pending_keys)
-            print(f"[TCS Aggregator] Epoch {self.current_epoch}: Flushed {flushed_count} invalidations -> {path}")
-            self.pending_keys.clear()
-            self.last_flush = now
-            return True
-        return False
-
-
-class NodeLocalCacheSidecar:
-    """Sidecar running alongside each compute instance managing L1 Caffeine cache."""
-    def __init__(self, node_id: str, s3: S3MockStorage):
-        self.node_id = node_id
-        self.s3 = s3
-        self.local_cache: Dict[str, str] = {}
-        self.last_applied_epoch: int = s3.get_latest_epoch()
-
-    def set_local(self, key: str, value: str):
-        self.local_cache[key] = value
-
-    def get_local(self, key: str) -> str:
-        return self.local_cache.get(key, None)
-
-    def poll_and_sync(self):
-        """Executed periodically (e.g., every 1s) by the background daemon."""
-        latest_available = self.s3.get_latest_epoch()
-        if latest_available <= self.last_applied_epoch:
-            return  # HTTP 304 Not Modified equivalent: Zero work
-
-        # Replay all missed epochs up to the latest
-        for epoch in range(self.last_applied_epoch + 1, latest_available + 1):
-            keys_to_evict = self.s3.get_changelog(epoch)
-            for k in keys_to_evict:
-                if k in self.local_cache:
-                    del self.local_cache[k]
-                    print(f"[{self.node_id}] EVICTED stale key '{k}' from L1 cache (Epoch {epoch})")
-
-        self.last_applied_epoch = latest_available
-
-
-# Demonstration
-if __name__ == "__main__":
-    s3 = S3MockStorage()
-    aggregator = TCSBatchAggregator(s3, flush_interval_sec=0.1)
-
-    # 2 Compute Node Sidecars
-    node_a = NodeLocalCacheSidecar("Node-Jira-1", s3)
-    node_b = NodeLocalCacheSidecar("Node-Confluence-2", s3)
-
-    # Seed L1 caches
-    node_a.set_local("tenant:alpha", "v1_permissions")
-    node_b.set_local("tenant:alpha", "v1_permissions")
-    node_b.set_local("tenant:beta", "v1_permissions")
-
-    # Invalidation events trigger in core TCS
-    aggregator.record_mutation("tenant:alpha")
-    aggregator.record_mutation("tenant:gamma")
-    time.sleep(0.15)
-    aggregator.maybe_flush()
-
-    # Sidecars poll on timer
-    node_a.poll_and_sync()
-    node_b.poll_and_sync()
-
-    print(f"Node A 'tenant:alpha' exists: {node_a.get_local('tenant:alpha') is not None}")
-    print(f"Node B 'tenant:beta' exists:  {node_b.get_local('tenant:beta') is not None}")
-</code></pre>
-</div>
-
-<h2 id="engineering-takeaways">7. Architectural Lessons &amp; Key Engineering Takeaways</h2>
+<h2 id="engineering-takeaways">6. Architectural Lessons &amp; Key Engineering Takeaways</h2>
 
 <div class="callout callout-tip">
-  <div class="callout-title">💡 Core Systems Engineering Maxims</div>
+  <div class="callout-title">The First-Principles Systems Takeaway</div>
   <ol>
-    <li><strong>The Push vs. Pull Trade-Off:</strong> Push messaging (SNS + SQS) achieves sub-100ms latency but scales at $O(N)$ with respect to consumers. When consumer fleets reach $10^4$ instances, push architectures collapse under API fees and queue sprawl. Pull/polling architectures bound scale cleanly.</li>
-    <li><strong>Challenge Latency Assumptions:</strong> Engineers often reflexively design for zero-latency cache consistency. In practice, tenant permissions and administrative setting changes easily tolerate a <strong>$1\text{ to }2\text{ second}$ propagation window</strong>. Trading sub-second invalidation for a $1\text{s}$ polling lag enabled a $90\%$ reduction in system complexity and cost.</li>
-    <li><strong>Stateless Resilience via Object Storage:</strong> S3 has no message queues to deadlock, no head-of-line blocking, and no consumer group rebalances. If a compute pod restarts after hours of downtime, it simply reads the latest monotonic epoch and synchronizes its state instantly.</li>
+    <li><strong>Push vs. Pull Trade-off:</strong> Push architectures (SNS+SQS) minimize propagation latency to milliseconds but suffer fatal $O(N)$ cost and queue management overhead at high consumer counts.</li>
+    <li><strong>Pragmatic Latency Budgets:</strong> Tenant metadata mutations tolerate a 1–2 second propagation lag. Accepting this tiny lag allowed Atlassian to swap complex push message queues for dead-simple, highly resilient object storage polling.</li>
+    <li><strong>Resilience Through Decoupling:</strong> Object storage has no queues to jam or drop messages during node crashes. If a sidecar restarts, it simply reads the latest S3 epoch and immediately synchronizes its cache state.</li>
   </ol>
 </div>
 
@@ -422,8 +297,7 @@ if __name__ == "__main__":
           <li><a href="#s3-pull-architecture">5. S3 Pull Migration</a></li>
           <li class="toc-sub"><a href="#batching-micro-changelogs">Batching Changelogs</a></li>
           <li class="toc-sub"><a href="#s3-caching-mechanics">S3 HTTP Caching</a></li>
-          <li><a href="#implementation">6. Python Simulation</a></li>
-          <li><a href="#engineering-takeaways">7. Key Engineering Takeaways</a></li>
+          <li><a href="#engineering-takeaways">6. Key Engineering Takeaways</a></li>
         </ul>
       </aside>
     </div>
