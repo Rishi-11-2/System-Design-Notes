@@ -109,7 +109,7 @@
   <li><strong>Understand the Scope & Requirements:</strong>
     <ul>
       <li><em>Functional Requirements:</em> What does the user actually do? (e.g. Post a tweet, search by hashtag, view timeline).</li>
-      <li><em>Non-Functional Requirements:</em> Scale (DAU/MAU), Latency SLA (P99 < 100ms), High Availability (99.99%), Consistency model (Strong vs Eventual).</li>
+      <li><em>Non-Functional Requirements:</em> Scale (DAU/MAU), Latency SLA (P99 &lt; 100ms), High Availability (99.99%), Consistency model (Strong vs Eventual).</li>
     </ul>
   </li>
   <li><strong>Back-of-the-Envelope Capacity Estimations:</strong> Calculate QPS (Queries per Second), Storage volume per year, Network Bandwidth, and RAM cache size (Pareto 80/20 rule).</li>
@@ -172,8 +172,8 @@
 <h3 id="sharding">4.3 Sharding / Horizontal Partitioning</h3>
 <p>When dataset size exceeds a single disk or write QPS overwhelms one node, data is divided across multiple independent database instances (shards):</p>
 
-<div class="diagram-container">
-  <pre class="mermaid">
+<div class="diagram-wrapper">
+  <div class="mermaid">
 flowchart TD
   Client["Application Query: User #7482"] --> Router["Sharding Router / Proxy"]
   
@@ -185,7 +185,7 @@ flowchart TD
   end
 
   Router -->|"Shard Key: User ID #7482 -> Shard 1"| Shard1
-  </pre>
+  </div>
   <div class="diagram-caption">Figure 10: Range / Hash-based database sharding architecture.</div>
 </div>
 
@@ -216,15 +216,15 @@ flowchart TD
 <p>In distributed microservices, if Service C slows down, Service B's worker threads block waiting for responses. Soon, Service B exhausts its thread pool and crashes, causing Service A to crash. This catastrophic domino effect is called a <strong>Cascading Failure</strong>.</p>
 <p>The <strong>Circuit Breaker Pattern</strong> monitors outbound calls:</p>
 
-<div class="diagram-container">
-  <pre class="mermaid">
+<div class="diagram-wrapper">
+  <div class="mermaid">
 stateDiagram-v2
   [*] --> Closed
-  Closed --> Open: Failure threshold exceeded (e.g. > 50% errors)
-  Open --> HalfOpen: Cooldown timeout expired (e.g. after 30s)
+  Closed --> Open: Failure threshold exceeded (over 50% errors)
+  Open --> HalfOpen: Cooldown timeout expired (after 30s)
   HalfOpen --> Closed: Trial requests succeed
   HalfOpen --> Open: Trial request fails
-  </pre>
+  </div>
   <div class="diagram-caption">Figure 11: Circuit Breaker state machine (Closed, Open, Half-Open).</div>
 </div>
 

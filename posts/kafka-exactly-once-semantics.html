@@ -203,7 +203,7 @@ sequenceDiagram
 <ol>
   <li><strong>Expected Batch ($s = \text{last\_seq} + 1$):</strong> The broker appends the batch to the commit log, advances the sequence pointer ($\text{last\_seq} = s$), and returns a success ACK.</li>
   <li><strong>Duplicate Batch ($s \le \text{last\_seq}$):</strong> The broker detects that this batch was already committed. It <em>discards the payload</em> without writing to disk and returns an immediate success ACK to unblock the producer.</li>
-  <li><strong>Out-of-Order Batch ($s &gt; \text{last\_seq} + 1$):</strong> A message was lost or skipped in flight. The broker rejects the batch with an <code>OutOfOrderSequenceException</code>, preventing out-of-order log corruption.</li>
+  <li><strong>Out-of-Order Batch ($s > \text{last\_seq} + 1$):</strong> A message was lost or skipped in flight. The broker rejects the batch with an <code>OutOfOrderSequenceException</code>, preventing out-of-order log corruption.</li>
 </ol>
 
 <h2 id="layer-2-zombie-fencing">4. Layer 2: Transactional IDs &amp; Zombie Fencing</h2>
@@ -223,7 +223,7 @@ sequenceDiagram
   <li>The <strong>Transaction Coordinator</strong> looks up the <code>transactional.id</code> in the internal <code>__transaction_state</code> topic.</li>
   <li>The coordinator increments the associated <strong>Producer Epoch</strong> (e.g., from Epoch 4 to Epoch 5).</li>
   <li>The coordinator returns the PID and the new Epoch to the newly initialized producer.</li>
-  <li><strong>Zombie Fencing:</strong> If the old Producer 1 wakes up and attempts to produce using Epoch 4, the broker intercepts the request, verifies that $4 &lt; 5$, and rejects the write with a fatal <code>ProducerFencedException</code>. The zombie process is immediately terminated.</li>
+  <li><strong>Zombie Fencing:</strong> If the old Producer 1 wakes up and attempts to produce using Epoch 4, the broker intercepts the request, verifies that $4 < 5$, and rejects the write with a fatal <code>ProducerFencedException</code>. The zombie process is immediately terminated.</li>
 </ol>
 
 <h2 id="layer-3-two-phase-commit">5. Layer 3: Atomic Multi-Partition Writes via 2-Phase Commit (2PC)</h2>
@@ -231,7 +231,7 @@ sequenceDiagram
 
 <p>Kafka provides atomic cross-partition consistency through a lightweight <strong>Two-Phase Commit protocol</strong> coordinated by the <strong>Transaction Coordinator</strong>:</p>
 
-<div class="diagram-container">
+<div class="diagram-wrapper">
   <div class="mermaid">
 flowchart TD
     subgraph Client ["Transactional Producer"]
@@ -249,17 +249,17 @@ flowchart TD
         OffsetP["__consumer_offsets-12"]
     end
 
-    P -->|1. AddPartitionsToTxn| TC
-    TC -->|Log Ongoing State| TS
-    P -->|2. Produce Messages| PartA
-    P -->|2. Produce Messages| PartB
-    P -->|3. SendOffsetsToTxn| TC
-    P -->|4. EndTxn(COMMIT)| TC
-    TC -->|5. Log PREPARE_COMMIT| TS
-    TC -->|6. Write COMMIT Marker| PartA
-    TC -->|6. Write COMMIT Marker| PartB
-    TC -->|6. Write COMMIT Marker| OffsetP
-    TC -->|7. Log COMMITTED State| TS
+    P -->|"1. AddPartitionsToTxn"| TC
+    TC -->|"Log Ongoing State"| TS
+    P -->|"2. Produce Messages"| PartA
+    P -->|"2. Produce Messages"| PartB
+    P -->|"3. SendOffsetsToTxn"| TC
+    P -->|"4. EndTxn(COMMIT)"| TC
+    TC -->|"5. Log PREPARE_COMMIT"| TS
+    TC -->|"6. Write COMMIT Marker"| PartA
+    TC -->|"6. Write COMMIT Marker"| PartB
+    TC -->|"6. Write COMMIT Marker"| OffsetP
+    TC -->|"7. Log COMMITTED State"| TS
 
     classDef cluster fill:#20211d,stroke:#3e3f35,stroke-width:1px,color:#F8F8F2;
     classDef node fill:#1e1f1c,stroke:#F92672,stroke-width:1px,color:#F8F8F2;

@@ -14,6 +14,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 window.addEventListener('load', () => {
+  initMermaid();
   initKaTeX();
   initCodeHighlight();
 });
@@ -263,10 +264,10 @@ function initBackToTop() {
 }
 
 // Initialize Mermaid.js with Subtle #272822 / #F8F8F2 / #F92672 Palette
-function initMermaid() {
+async function initMermaid() {
   if (typeof mermaid !== 'undefined') {
     mermaid.initialize({
-      startOnLoad: true,
+      startOnLoad: false,
       theme: 'dark',
       themeVariables: {
         darkMode: true,
@@ -294,8 +295,14 @@ function initMermaid() {
         fontFamily: "'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif"
       }
     });
+    try {
+      await mermaid.run();
+    } catch (err) {
+      console.warn('Mermaid rendering error:', err);
+    }
   }
 }
+window.initMermaid = initMermaid;
 
 // Helper: Escape HTML
 function escapeHtml(str) {

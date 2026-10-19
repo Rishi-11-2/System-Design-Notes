@@ -339,7 +339,7 @@ flowchart TD
   </tbody>
 </table>
 
-<p>Upon restart, the engine only reads the compact hint files. Because hint files contain no value blobs, they are tiny (typically $&lt;1\%$ of data file size) and are read sequentially at hardware memory bus speeds, reconstructing <code>KeyDir</code> in <strong>seconds</strong>.</p>
+<p>Upon restart, the engine only reads the compact hint files. Because hint files contain no value blobs, they are tiny (typically $< 1\%$ of data file size) and are read sequentially at hardware memory bus speeds, reconstructing <code>KeyDir</code> in <strong>seconds</strong>.</p>
 
 <h2 id="production-tradeoffs">6. Crash Guarantees &amp; Production Trade-Offs</h2>
 

@@ -103,8 +103,8 @@
   <li><strong>Event-Driven Asynchronous I/O:</strong> Leverages kernel event demultiplexing to service thousands of simultaneous client connections without thread-per-client overhead.</li>
 </ul>
 
-<div class="diagram-container">
-  <pre class="mermaid">
+<div class="diagram-wrapper">
+  <div class="mermaid">
 flowchart TD
   Client1["Client 1 (Socket FD 14)"] -->|"RESP Command"| Epoll["Kernel I/O Multiplexer (epoll / kqueue)"]
   Client2["Client 2 (Socket FD 18)"] -->|"RESP Command"| Epoll
@@ -123,7 +123,7 @@ flowchart TD
   end
 
   EventLoop -->|"RESP Response"| Client1
-  </pre>
+  </div>
   <div class="diagram-caption">Figure 9: Redis single-threaded event loop and non-blocking I/O multiplexer architecture.</div>
 </div>
 

@@ -1036,7 +1036,8 @@ pre code {
    Mermaid Diagrams & Canvases
    ========================================================================== */
 
-.diagram-container {
+.diagram-container,
+.diagram-wrapper {
   background: var(--bg-card);
   border: 1px solid var(--border-color);
   border-radius: var(--radius);
@@ -1044,6 +1045,18 @@ pre code {
   margin: 1.75rem 0;
   overflow-x: auto;
   text-align: center;
+}
+
+.mermaid {
+  display: flex;
+  justify-content: center;
+  margin: 0 auto;
+  min-height: 80px;
+}
+
+.mermaid svg {
+  max-width: 100%;
+  height: auto;
 }
 
 .diagram-caption {

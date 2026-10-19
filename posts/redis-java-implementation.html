@@ -228,18 +228,12 @@ private static Object[] parseArray(byte[] buffer) {
 
         if ("PING".equals(command)) {
             if (commandArgs.length == 1) {
-                // Default PING -> returns Simple String "+PONG
-"
-                client.write(ByteBuffer.wrap("+PONG
-".getBytes(StandardCharsets.UTF_8)));
+                // Default PING -> returns Simple String "+PONG\r\n"
+                client.write(ByteBuffer.wrap("+PONG\r\n".getBytes(StandardCharsets.UTF_8)));
             } else {
-                // PING with message -> returns Bulk String "$<len>
-<msg>
-"
+                // PING with message -> returns Bulk String "$&lt;len&gt;\r\n&lt;msg&gt;\r\n"
                 String msg = commandArgs[1].toString();
-                String response = "$" + msg.length() + "
-" + msg + "
-";
+                String response = "$" + msg.length() + "\r\n" + msg + "\r\n";
                 client.write(ByteBuffer.wrap(response.getBytes(StandardCharsets.UTF_8)));
             }
         }
@@ -248,7 +242,7 @@ private static Object[] parseArray(byte[] buffer) {
 </div>
 
 <h2 id="testing">5. Testing with redis-cli</h2>
-<p>You can compile and run Rishi's Java server directly and verify with the official Redis CLI tool:</p>
+<p>You can compile and run the Java server directly and verify with the official Redis CLI tool:</p>
 
 <div class="code-wrapper">
   <div class="code-header"><span>Terminal: Verification with redis-cli</span><button class="btn-copy">Copy</button></div>
