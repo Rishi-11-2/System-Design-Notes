@@ -184,7 +184,7 @@ name
 </table>
 
 <h2 id="io-multiplex">Module 03: Non-Blocking I/O & IO Multiplexing</h2>
-<p>Why does Redis stay single-threaded? CPUs are rarely the bottleneck in in-memory caches; network I/O and memory bandwidth are.</p>
+<p>Why does Redis stay single-threaded? CPUs are rarely the bottleneck for in-memory caches; network I/O and memory bandwidth are.</p>
 <p>Instead of spawning a blocking thread for each incoming socket connection (which consumes 1MB+ stack space per thread and triggers heavy OS context switches), Redis uses <strong>I/O Multiplexing</strong> (Linux <code>epoll</code>, macOS/BSD <code>kqueue</code>, Solaris <code>evport</code>):</p>
 <ol>
   <li>Sockets are marked non-blocking (<code>O_NONBLOCK</code>).</li>
