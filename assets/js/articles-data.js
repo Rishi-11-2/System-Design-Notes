@@ -225,6 +225,18 @@ const ARTICLES_DATA = [
     excerpt: "Architectural decomposition based on Arpit Bhayani's engineering dissection: overcoming naive Elasticsearch title-boosting failures, multi-entity decomposition (Dishes, Restaurants, Cuisines, Locations), Byte Pair Encoding (BPE), domain Word2Vec, BiLSTM with CRF sequence tagging, and the Intent Detour microservice architecture.",
     tags: ["Zomato", "Search Relevance", "NLP", "Elasticsearch", "Word2Vec", "BiLSTM", "Named Entity Recognition"],
     featured: true
+  },
+  {
+    id: "booking-user-review-system",
+    slug: "booking-user-review-system.html",
+    title: "How Booking.com Scaled Their Highly Available User Review System",
+    category: "Case Studies",
+    categorySlug: "case-studies",
+    badge: "Case Study",
+    pdfSource: "Docs/Booking_User_Review_System_Technical_Breakdown.pdf",
+    excerpt: "Architectural decomposition based on Arpit Bhayani's engineering dissection: handling 10,000+ peak QPS with sub-50ms P99 latency across 250M+ reviews, pre-materialized database views, centralized remote caching, multi-AZ database sharding, and consistent hashing with virtual nodes to survive peak holiday surges with zero downtime.",
+    tags: ["Booking.com", "Consistent Hashing", "Virtual Nodes", "Materialized Views", "High Availability", "Database Sharding", "Caching"],
+    featured: true
   }
 ];
 
