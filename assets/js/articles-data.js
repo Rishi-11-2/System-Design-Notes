@@ -125,6 +125,18 @@ const ARTICLES_DATA = [
     featured: true
   },
   {
+    id: "dragonflydb-bplus-tree-sorted-set",
+    slug: "dragonflydb-bplus-tree-sorted-set.html",
+    title: "Why DragonflyDB Uses B+ Trees Instead of SkipLists for Sorted Sets",
+    category: "In-Memory & Redis",
+    categorySlug: "in-memory-redis",
+    badge: "Storage Engine",
+    pdfSource: "Docs/DragonflyDB_BPlus_Tree_Sorted_Set_Technical_Breakdown.pdf",
+    excerpt: "Architectural decomposition based on Arpit Bhayani's engineering dissection: why DragonflyDB replaces Redis SkipLists with in-memory B+ Trees, 3.2-byte vs 37-byte pointer overhead, 256-byte cache-line aligned leaf nodes, 40% memory reduction, and 5x to 24x throughput scaling.",
+    tags: ["DragonflyDB", "Redis", "B+ Tree", "SkipList", "Sorted Set", "Cache Lines", "In-Memory DB"],
+    featured: true
+  },
+  {
     id: "redis-java-implementation",
     slug: "redis-java-implementation.html",
     title: "Implementing Redis from Scratch in Java — NIO Event Loop, RESP Parser & Ping Server",
