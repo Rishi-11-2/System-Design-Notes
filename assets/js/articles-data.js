@@ -237,6 +237,18 @@ const ARTICLES_DATA = [
     excerpt: "Architectural decomposition based on Arpit Bhayani's engineering dissection: handling 10,000+ peak QPS with sub-50ms P99 latency across 250M+ reviews, pre-materialized database views, centralized remote caching, multi-AZ database sharding, and consistent hashing with virtual nodes to survive peak holiday surges with zero downtime.",
     tags: ["Booking.com", "Consistent Hashing", "Virtual Nodes", "Materialized Views", "High Availability", "Database Sharding", "Caching"],
     featured: true
+  },
+  {
+    id: "uber-emergency-sos-service",
+    slug: "uber-emergency-sos-service.html",
+    title: "Designing Uber's Highly Available Emergency SOS Service",
+    category: "Case Studies",
+    categorySlug: "case-studies",
+    badge: "Case Study",
+    pdfSource: "Docs/Uber_Emergency_SOS_Architecture_Breakdown.pdf",
+    excerpt: "Architectural decomposition based on Arpit Bhayani's engineering dissection: achieving 99.999% availability and sub-second dispatch latency (< 1000ms), dual-channel mobile telemetry (IP + native voice dialer + encrypted SMS), spatial reverse geocoding, RapidSOS 911 integration, and hybrid synchronous/asynchronous Kafka pipelines.",
+    tags: ["Uber", "High Availability", "Emergency SOS", "RapidSOS", "Apache Kafka", "Geocoding", "Distributed Systems"],
+    featured: true
   }
 ];
 
