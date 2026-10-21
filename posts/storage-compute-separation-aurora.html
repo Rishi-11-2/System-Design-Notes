@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Storage-Compute Separation: The Amazon Aurora Paradigm — System Design Notes</title>
-  <meta name="description" content="Architectural decomposition of Amazon Aurora's storage-compute separation, log-structured storage engine, 4/6 quorum durability, and asynchronous page materialization based on Arpit Bhayani's engineering lecture and the landmark ACM SIGMOD paper.">
+  <meta name="description" content="Technical deep dive into Amazon Aurora's storage-compute separation: Monolithic RDBMS cloud bottlenecks, 'The Log is the Database' paradigm, asynchronous page materialization, 4/6 quorum across 3 AZs, and instant crash recovery.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Lora:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet">
@@ -71,11 +71,11 @@
       <span>/</span>
       <a href="../index.html#cloud-databases">Cloud Databases</a>
       <span>/</span>
-      <span>Storage-Compute Separation: The Amazon Aurora Paradigm</span>
+      <span>Storage-Compute Separation</span>
     </div>
 
     <header class="article-header">
-      <span class="article-header-badge">Paper Deep-Dive • Section 1</span>
+      <span class="article-header-badge">Paper Deep-Dive • Architecture Fundamentals</span>
       <h1 class="article-header-title">Storage-Compute Separation: The Amazon Aurora Paradigm</h1>
       <div class="article-header-meta">
         <span>📁 Category: Cloud Databases &amp; Storage Architecture</span>
@@ -92,182 +92,331 @@
         
 <div class="callout callout-note">
   <div class="callout-title">📌 Architectural Decomposition &amp; Foundational Axiom</div>
-  <p><strong>Source Foundation:</strong> Based on the engineering lecture by Arpit Bhayani (Asli Engineering, Video ID: <code>DA5W8tO_7Nw</code>) and the landmark ACM SIGMOD research paper (Verbitski et al., Amazon Web Services).</p>
   <p><strong>The Foundational Axiom: "The Log is the Database"</strong><br>
-  In traditional monolithic relational databases, the bottleneck in the cloud is neither CPU compute nor disk I/O operations per second (IOPS)—it is <strong>network I/O packet amplification</strong>. Amazon Aurora fundamentally reshaped cloud database design by decoupling compute instances from storage nodes and establishing a radical principle: <em>the database engine only writes redo log records over the network; the storage tier itself materializes database data pages asynchronously.</em></p>
+  In traditional monolithic relational databases deployed in cloud environments, the ultimate scalability bottleneck is neither CPU execution speed nor raw solid-state disk IOPS—it is <strong>network packet amplification</strong>. Amazon Aurora fundamentally transformed cloud database engineering by decoupling compute instances from the storage layer. By establishing the principle that <em>compute nodes only push redo log records over the network while the intelligent storage fleet materializes data pages asynchronously</em>, Aurora achieves up to a <strong>9x reduction in network I/O</strong>, instant crash recovery without log replaying, and cross-AZ quorum fault tolerance.</p>
 </div>
 
-<h2 id="monolithic-bottleneck">1. The Monolithic Bottleneck: Why Classical RDBMS Fails in the Cloud</h2>
-<p>In legacy architectures (e.g., standard MySQL running on AWS EC2 with mirrored EBS volumes across multiple Availability Zones), the database engine tightly couples SQL parsing, query optimization, buffer cache management, transaction isolation, and storage management into a single process.</p>
+<h2 id="monolithic-bottleneck">1. The Monolithic Bottleneck in Cloud RDBMS</h2>
+<p>In traditional relational database deployments (such as MySQL or PostgreSQL running on an AWS EC2 instance with mirrored Elastic Block Store [EBS] volumes), the entire database stack runs as a monolithic engine on a single compute node.</p>
 
-<div class="comparison-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin: 1.5rem 0;">
-  <div class="callout callout-important" style="margin: 0;">
-    <div class="callout-title">The Monolithic Cloud Failure Mode</div>
-    <p><strong>Network I/O Amplification:</strong></p>
-    <ul>
-      <li><strong>Heavy Page Writes:</strong> Flushes full 16 KB dirty pages to disk, even if only a 10-byte column changed.</li>
-      <li><strong>Doublewrite Buffer:</strong> Writes pages twice to avoid partial/torn page corruption during crashes.</li>
-      <li><strong>Synchronous Replication Multipliers:</strong> Redo log, binary log (binlog), and data pages are replicated across AZ network boundaries independently, saturating network queues.</li>
-    </ul>
-  </div>
-
-  <div class="callout callout-tip" style="margin: 0;">
-    <div class="callout-title">Storage-Compute Separation Strategy</div>
-    <p><strong>Smart Storage Offloading:</strong></p>
-    <ul>
-      <li><strong>Stateless Compute:</strong> SQL parsing, optimization, and buffer cache remain on compute instances.</li>
-      <li><strong>Log-Only Network Traffic:</strong> Compute sends small incremental redo log records; zero dirty page flushes.</li>
-      <li><strong>Database-Aware Storage Fleet:</strong> Multi-tenant storage nodes understand the redo log format and continuously apply changes to disk blocks independently.</li>
-    </ul>
-  </div>
-</div>
-
-<h2 id="architectural-comparison">2. Architectural Comparison: Monolithic RDBMS vs. Disaggregated Aurora</h2>
-<p>The following architectural comparison summarizes the critical technical dimensions separating traditional monolithic database engines from Aurora's decoupled engine:</p>
-
-<table>
-  <thead>
-    <tr>
-      <th>Dimension</th>
-      <th>Traditional Engine (MySQL + EBS Replica)</th>
-      <th>Decoupled Engine (Amazon Aurora)</th>
-      <th>Architectural Impact</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td><strong>Network Payload</strong></td>
-      <td>Redo log + binlog + doublewrite + dirty data pages (16 KB each).</td>
-      <td>Append-only redo log records (~100 to 200 bytes). Zero data pages.</td>
-      <td>Reduces network traffic by up to <strong>9x</strong>, removing network transit bottlenecks.</td>
-    </tr>
-    <tr>
-      <td><strong>Durability &amp; Quorum</strong></td>
-      <td>2 AZ synchronous/asynchronous mirror replication (EBS level).</td>
-      <td>6 storage replicas across 3 AZs with <strong>4/6 write quorum</strong> and <strong>3/6 read quorum</strong>.</td>
-      <td>Tolerates loss of an entire AZ plus an additional storage node without losing write availability.</td>
-    </tr>
-    <tr>
-      <td><strong>Crash Recovery</strong></td>
-      <td>Cold replay of WAL redo logs from the last checkpoint across all tables.</td>
-      <td>Instantaneous startup; redo replay is pushed down to background storage threads.</td>
-      <td>Near-zero crash recovery time; no waiting for checkpoint roll-forward.</td>
-    </tr>
-  </tbody>
-</table>
-
-<h2 id="offloading-shift">3. The Offloading Shift: Moving Redo Processing Down to Storage</h2>
-<p>The core conceptual breakthrough explained by Arpit Bhayani is shifting the line of abstraction. In traditional systems, storage is dumb block storage (EBS/SAN). In Aurora, storage is an intelligent, database-aware actor:</p>
+<p>This architecture was designed decades ago for on-premise servers with directly attached physical disks. When lifted and shifted into modern multi-tenant cloud environments, it encounters severe physical constraints:</p>
 
 <div class="diagram-wrapper">
   <div class="mermaid">
 flowchart TD
-  subgraph Traditional["Traditional Monolithic (EBS)"]
-    ComputeOld["Compute Instance (MySQL)"]
-    StorageOld["Dumb Block Storage (EBS)"]
-    ComputeOld -->|"Writes Redo + Binlog + Doublewrite + Dirty Pages (Heavy Network I/O Saturation)"| StorageOld
+  subgraph MonolithicEC2["Monolithic Compute Node (AWS EC2)"]
+    direction TB
+    SQL["SQL Engine & Query Parser"]
+    Buffer["In-Memory Buffer Pool (16 KB Pages)"]
+    Tx["Transaction & Lock Manager"]
+    Doublewrite["Doublewrite Buffer"]
+    RedoLog["Redo Log Buffer (WAL)"]
+    BinLog["Binary Log (Replication)"]
   end
 
-  subgraph Aurora["Aurora Disaggregated Architecture"]
-    ComputeNew["Aurora Compute Instance<br/>(Buffer Cache + SQL Engine)"]
-    StorageFleet["Intelligent Storage Tier<br/>(Multi-Tenant SSD Storage Nodes)"]
-    ComputeNew -->|"Sends REDO Log Records Only"| StorageFleet
-    StorageFleet -->|"1. Append log to in-mem queue<br/>2. Materialize pages asynchronously"| StorageFleet
+  subgraph NetworkPipe["Cloud Network Pipe (Saturation Bottleneck)"]
+    direction TB
+    P1["1. Full 16 KB Dirty Data Pages"]
+    P2["2. Doublewrite Pages (Duplicate 16 KB Writes)"]
+    P3["3. Redo Log Records (WAL)"]
+    P4["4. Binary Log Records (Binlog)"]
   end
+
+  subgraph DumbStorage["Dumb Block Storage Tier (Mirrored EBS Volumes)"]
+    EBS1["EBS Volume 1 (AZ A)"]
+    EBS2["EBS Volume 2 (AZ B - Mirrored)"]
+  end
+
+  MonolithicEC2 --> NetworkPipe
+  NetworkPipe --> EBS1
+  NetworkPipe --> EBS2
   </div>
-  <div class="diagram-caption">Figure 1: Architectural shift from noisy monolithic page flushing to compute log-pushing and intelligent storage materialization.</div>
+  <div class="diagram-caption">Figure 1: The monolithic write amplification storm: every database transaction produces multiple redundant disk and network writes across Availability Zones.</div>
 </div>
 
-<div class="comparison-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin: 1.5rem 0;">
-  <div>
-    <h4>The Compute Node Duties</h4>
-    <ul>
-      <li>Parses incoming SQL and runs query execution plans.</li>
-      <li>Retains the in-memory <strong>Buffer Cache</strong> for zero-IO reads.</li>
-      <li>Generates ordered <strong>Log Sequence Numbers (LSNs)</strong>.</li>
-      <li>Emits only redo log deltas to the storage fleet via concurrent UDP/TCP, avoiding expensive synchronous double-page writes.</li>
-    </ul>
-  </div>
+<h3 id="write-amplification-tax">The Four-Fold Write Amplification Tax</h3>
+<p>When an application updates a single 10-byte integer in a customer record, a traditional monolithic engine must write four distinct data structures across the network:</p>
+<ol>
+  <li><strong>Redo Log (Write-Ahead Log):</strong> Append-only delta records describing the physical mutation for crash recovery.</li>
+  <li><strong>Binary Log (Binlog):</strong> Statement- or row-based events used for read-replica synchronization and point-in-time recovery.</li>
+  <li><strong>Doublewrite Buffer Pages:</strong> Operating systems write in 4 KB sectors, whereas relational databases write in 16 KB pages. If a server crashes midway through writing a 16 KB page, a catastrophic <em>torn-page write</em> occurs. To prevent corruption, MySQL must write every page twice: first to a sequential doublewrite buffer, and then to the table file.</li>
+  <li><strong>Dirty Data Pages:</strong> The full 16 KB in-memory data page containing the 10-byte update must eventually be flushed across the hypervisor network to the block storage volume.</li>
+</ol>
 
-  <div>
-    <h4>The Storage Node Background Pipeline</h4>
-    <ul>
-      <li><strong>Step 1 (Fast Path):</strong> Append redo record to memory buffer + disk; send immediate ACK to compute.</li>
-      <li><strong>Step 2 (Async):</strong> Coalesce log records into on-disk pages.</li>
-      <li><strong>Step 3 (Async):</strong> Perform continuous peer-to-peer gossip repair.</li>
-      <li><strong>Step 4 (Async):</strong> Stream incremental backups directly to Amazon S3.</li>
-    </ul>
-  </div>
+<p>Writing multi-megabyte streams of full pages across network-attached block devices creates extreme network congestion, high latency variance ($p99$ spikes), and noisy neighbor interference in cloud virtual machines.</p>
+
+<h2 id="offloading-shift">2. The Paradigm Shift: "The Log is the Database"</h2>
+<p>Amazon Aurora solved the write amplification crisis by redefining the line of architectural abstraction between compute and storage.</p>
+
+<div class="callout callout-important">
+  <div class="callout-title">The Core Conceptual Breakthrough</div>
+  <p>In traditional databases, the <strong>data pages are the database</strong>, and the redo log is merely a temporary audit trail used to reconstruct pages after a crash.</p>
+  <p>In Amazon Aurora, <strong>The Log IS the Database</strong>. The data pages are simply an ephemeral, cached materialization of the underlying log stream. Compute nodes <strong>never write data pages across the network</strong>; they emit only lightweight, append-only redo log records (~100 to 200 bytes). The storage layer itself is promoted from dumb block storage into an intelligent, database-aware actor that continuously materializes pages on disk.</p>
 </div>
 
-<h2 id="read-path-mechanics">4. Asynchronous Page Materialization &amp; Read Path Mechanics</h2>
-<p>How does read processing work if data pages are not explicitly flushed by compute?</p>
+<div class="table-wrapper">
+  <table>
+    <thead>
+      <tr>
+        <th>Architectural Vector</th>
+        <th>Traditional Monolithic Engine (MySQL + Mirrored EBS)</th>
+        <th>Decoupled Cloud-Native Engine (Amazon Aurora)</th>
+        <th>Engineering Impact</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Network Write Payload</strong></td>
+        <td>Redo log + binlog + doublewrite + full 16 KB dirty pages.</td>
+        <td><strong>Redo log records only (~100–200 bytes).</strong> Zero dirty data pages written over the network.</td>
+        <td>Reduces network packets by up to <strong>9x</strong>, eliminating I/O transit bottlenecks.</td>
+      </tr>
+      <tr>
+        <td><strong>Storage Layer Role</strong></td>
+        <td>Passive, dumb block storage (EBS / SAN). Only reads and writes raw 4 KB / 16 KB blocks.</td>
+        <td><strong>Active, database-aware distributed fleet.</strong> Understands redo logs, coalesces pages, and executes peer-to-peer gossip repair.</td>
+        <td>Moves heavy background I/O down to multi-tenant storage hardware.</td>
+      </tr>
+      <tr>
+        <td><strong>Durability &amp; Replication</strong></td>
+        <td>Synchronous 2-AZ mirror replication at the EBS storage level.</td>
+        <td><strong>6 storage replicas across 3 AZs</strong> (2 copies per AZ) with a $4/6$ write quorum.</td>
+        <td>Tolerates the complete loss of an entire AZ plus an additional storage node without losing write availability.</td>
+      </tr>
+      <tr>
+        <td><strong>Crash Recovery</strong></td>
+        <td>Cold replay of WAL redo logs from the last checkpoint across all database tables (minutes to hours).</td>
+        <td><strong>Near-instantaneous startup.</strong> Redo processing happens continuously in storage background threads. Zero checkpoint roll-forward required.</td>
+        <td>Mean Time to Recovery (MTTR) drops from hours to seconds.</td>
+      </tr>
+      <tr>
+        <td><strong>Read Replica Scaling</strong></td>
+        <td>Each read replica maintains its own independent storage disk and independently executes all write SQL queries.</td>
+        <td><strong>Up to 15 read replicas</strong> mount the identical shared storage tier with sub-10ms replica lag and zero storage duplication.</td>
+        <td>Massive read scalability with negligible incremental storage cost.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
 
-<h3>Buffer Cache Hits vs. Storage Page Reconstruction</h3>
-<ul>
-  <li><strong>Cache Hit (In-Memory):</strong> If the requested page resides in the compute node's local buffer cache, it is served immediately in RAM with zero storage interaction.</li>
-  <li><strong>Cache Miss (Storage Fetch):</strong> If the page is evicted, compute requests the page from storage at a specific LSN. The storage node takes its latest base snapshot page on SSD, replays any newer redo log records up to that requested LSN, and returns the fully reconstituted 16 KB data page.</li>
-</ul>
-
-<h2 id="durability-and-quorum">5. Quorum Durability and Crash Recovery Without Log Replay</h2>
-<p>Separating compute and storage allows durability to be solved at the storage layer via quorum consensus. Aurora partitions the database volume into <strong>10 GB Protection Groups (PGs)</strong>, each replicated 6 times across 3 distinct Availability Zones (2 copies per AZ).</p>
+<h2 id="aurora-anatomy">3. Disaggregated Engine: Compute vs Storage Pipelines</h2>
+<p>Decoupling compute from storage bifurcates the database engine into two specialized, independently scalable fleets.</p>
 
 <div class="diagram-wrapper">
   <div class="mermaid">
 flowchart LR
-  subgraph AZ_A["Availability Zone A"]
-    SegA1["Segment A1"]
-    SegA2["Segment A2"]
-  end
-  subgraph AZ_B["Availability Zone B"]
-    SegB1["Segment B1"]
-    SegB2["Segment B2"]
-  end
-  subgraph AZ_C["Availability Zone C"]
-    SegC1["Segment C1"]
-    SegC2["Segment C2"]
+  subgraph ComputeLayer["Stateless Compute Instance (AWS EC2)"]
+    direction TB
+    SQLParser["SQL Parser & Optimizer"]
+    BufferCache["In-Memory Buffer Cache (Zero-IO Reads)"]
+    LSNGen["Monotonic LSN Generator"]
+    LogPusher["Redo Log Pusher (Async UDP/TCP)"]
   end
 
-  Compute["Aurora Compute Node"] -->|"Write Quorum: 4/6 ACKs"| SegA1
-  Compute --> SegA2
-  Compute --> SegB1
-  Compute --> SegB2
-  Compute --> SegC1
-  Compute --> SegC2
+  subgraph StorageTier["Intelligent Storage Fleet (Multi-Tenant SSD Nodes)"]
+    direction TB
+    subgraph StorageNode["Storage Node Internal Pipeline"]
+      Step1["Step 1 (Fast Path): Append Redo Record to RAM & Disk -> ACK"]
+      Step2["Step 2 (Async): Coalesce Redo Records into 16 KB Pages"]
+      Step3["Step 3 (Async): Gossip Protocol Peer Repair"]
+      Step4["Step 4 (Async): Continuous Backup to Amazon S3"]
+    end
+  end
+
+  ComputeLayer -->|"Sends Redo Log Records Only"| StorageNode
+  StorageNode -.->|"Immediate Quorum ACK (Fast Path)"| ComputeLayer
   </div>
-  <div class="diagram-caption">Figure 2: Aurora's 6-way storage allocation: write quorum $V_w = 4/6$, read quorum $V_r = 3/6$ across three distinct AZs.</div>
+  <div class="diagram-caption">Figure 2: Architectural pipeline: Compute pushes only redo log records; storage handles asynchronous page coalescing and peer repair.</div>
 </div>
 
+<h3 id="compute-responsibilities">1. The Compute Node Pipeline</h3>
+<p>The compute instance is largely stateless regarding persistent disk storage:</p>
+<ul>
+  <li><strong>Query Execution &amp; Transactions:</strong> Parses SQL, manages transaction isolation levels, acquires row locks, and coordinates execution plans.</li>
+  <li><strong>In-Memory Buffer Cache:</strong> Retains 16 KB data pages in RAM. When a query requests a page residing in the local buffer cache, it is served at hardware RAM speeds ($< 1\mu\text{s}$) with <strong>zero storage network calls</strong>.</li>
+  <li><strong>LSN Generation:</strong> Assigns monotonically increasing <strong>Log Sequence Numbers (LSNs)</strong> to every transactional mutation.</li>
+  <li><strong>Parallel Redo Pushing:</strong> Streams compact redo log records asynchronously to the storage fleet over a high-throughput network mesh, avoiding synchronous doublewrite buffer writes entirely.</li>
+</ul>
+
+<h3 id="storage-responsibilities">2. The Four-Stage Storage Node Pipeline</h3>
+<p>Each storage node runs an intelligent background processing engine designed to minimize foreground write latency:</p>
+<ol>
+  <li><strong>Step 1 — Fast Path Ingestion (Synchronous foreground):</strong> When a redo log record arrives, the storage node appends it to an in-memory queue, persists it to an append-only SSD log buffer, and <strong>immediately sends an ACK back to the compute node</strong>. This foreground path involves zero random disk seeks.</li>
+  <li><strong>Step 2 — Asynchronous Page Coalescing (Background):</strong> In the background, storage worker threads take batches of accumulated redo log records and coalesce them into updated 16 KB data pages on SSD.</li>
+  <li><strong>Step 3 — Peer-to-Peer Gossip Repair (Background):</strong> Storage nodes continuously gossip with peers across Availability Zones to detect missing log records and fill transient network holes automatically.</li>
+  <li><strong>Step 4 — Continuous Backup to Amazon S3 (Background):</strong> Storage nodes continuously stream finalized redo log records and periodic base snapshots directly to Amazon S3, eliminating the need for expensive daily snapshot locking jobs.</li>
+</ol>
+
+<h2 id="read-path-mechanics">4. Page Materialization &amp; Read Path Mechanics</h2>
+<p>If compute nodes never flush data pages to disk, how does the system serve reads?</p>
+
+<div class="diagram-wrapper">
+  <div class="mermaid">
+flowchart TD
+  Query["Incoming SELECT Query"] --> CacheCheck{"Is Page in<br/>Compute Buffer Cache?"}
+  CacheCheck -- "Cache Hit (95%+)" --> RAM["Serve immediately from local RAM<br/>(Zero Network I/O, Sub-microsecond)"]
+  CacheCheck -- "Cache Miss" --> FetchReq["Compute emits Page Fetch Request<br/>(Specifying Page ID + Target LSN)"]
+  
+  FetchReq --> StorageNode["Target Storage Node"]
+  StorageNode --> BasePage["1. Read latest base snapshot page from SSD"]
+  BasePage --> Replay["2. Replay all newer Redo Log deltas<br/>up to requested Target LSN"]
+  Replay --> ReturnPage["3. Return fully materialized 16 KB page to Compute"]
+  ReturnPage --> LoadRAM["Load into Compute Buffer Cache"]
+  LoadRAM --> RAM
+  </div>
+  <div class="diagram-caption">Figure 3: Read path execution: local RAM buffer hit vs. storage-side on-demand page reconstruction.</div>
+</div>
+
+<h3 id="storage-page-reconstruction">Storage Page Reconstruction on Cache Miss</h3>
+<p>When a compute node encounters a buffer cache miss:</p>
+<ol>
+  <li>Compute sends an RPC to the storage node requesting Page $P$ at a specific Log Sequence Number (e.g., $\text{Target LSN} = 10450$).</li>
+  <li>The storage node loads its latest on-disk base snapshot of Page $P$ (which might be at $\text{LSN} = 10400$).</li>
+  <li>The storage node checks its local log buffer, identifies the 50 redo log deltas between LSN 10400 and 10450, and <strong>replays those deltas in storage memory</strong> to synthesize the 16 KB data page at exactly LSN 10450.</li>
+  <li>The fully reconstituted page is returned to the compute node and cached in RAM.</li>
+</ol>
+
+<p>Because page reconstruction occurs on the storage node using local SSD reads and in-memory replay, the compute node experiences low read latency without ever managing disk fragmentation.</p>
+
+<h2 id="durability-and-quorum">5. Quorum Durability, 10 GB Protection Groups &amp; Instant Recovery</h2>
+<p>Decoupling storage allows Amazon Aurora to solve data durability using <strong>distributed quorum consensus</strong> across physical Availability Zones.</p>
+
+<h3 id="protection-groups">10 GB Protection Groups &amp; 6-Way Replication</h3>
+<p>Aurora partitions the entire database storage volume into fixed <strong>10 GB segments</strong>. A set of six 10 GB segments replicated across three Availability Zones (2 copies per AZ) forms a <strong>Protection Group (PG)</strong>:</p>
+
+<div class="diagram-wrapper">
+  <div class="mermaid">
+flowchart LR
+  subgraph AZ1["Availability Zone A"]
+    Seg1["Segment A1 (10 GB)"]
+    Seg2["Segment A2 (10 GB)"]
+  end
+  subgraph AZ2["Availability Zone B"]
+    Seg3["Segment B1 (10 GB)"]
+    Seg4["Segment B2 (10 GB)"]
+  end
+  subgraph AZ3["Availability Zone C"]
+    Seg5["Segment C1 (10 GB)"]
+    Seg6["Segment C2 (10 GB)"]
+  end
+
+  Compute["Aurora Compute Node"] -->|"Write Quorum: Vw = 4/6 ACKs"| Seg1
+  Compute --> Seg2
+  Compute --> Seg3
+  Compute --> Seg4
+  Compute --> Seg5
+  Compute --> Seg6
+  </div>
+  <div class="diagram-caption">Figure 4: Aurora's 6-way storage distribution across three Availability Zones enforcing 4/6 write quorum.</div>
+</div>
+
+<h3 id="quorum-formulation">The 4/6 Write Quorum &amp; 3/6 Read Quorum Rules</h3>
+<p>In standard quorum consensus with $V$ total copies, the write quorum $V_w$ and read quorum $V_r$ must satisfy two fundamental constraints:</p>
+
+$$V_w + V_r > V \quad \text{and} \quad V_w > \frac{V}{2}$$
+
+<p>Aurora configures $V = 6$, $V_w = 4$, and $V_r = 3$:</p>
+<ul>
+  <li><strong>Write Quorum ($V_w = 4/6$):</strong> A write is considered committed as soon as <strong>4 out of 6 storage nodes acknowledge receipt of the redo record</strong>. The compute node does not wait for the remaining 2 slower or stalled nodes.</li>
+  <li><strong>Read Quorum ($V_r = 3/6$):</strong> Reconstructing a page requires reading from 3 out of 6 storage copies. Because $4 + 3 = 7 > 6$, the read quorum is mathematically guaranteed to overlap with at least one node containing the latest committed write.</li>
+</ul>
+
 <div class="callout callout-important">
-  <div class="callout-title">The 4/6 Write Quorum Guarantee</div>
-  <p>Writing requires acknowledgments from <strong>4 out of 6 storage copies</strong> ($V_w = 4/6$). This ensures the system can withstand the <strong>complete catastrophic loss of an entire AZ (2 copies) PLUS one additional node failure elsewhere (1 copy)</strong> without dropping committed writes.</p>
+  <div class="callout-title">The "AZ+1" Catastrophic Failure Tolerance</div>
+  <p>Why 6 copies across 3 AZs instead of the classical 3 copies? Aurora's $4/6$ write quorum provides an unprecedented durability guarantee: <strong>it tolerates the complete catastrophic destruction of an entire Availability Zone (2 copies) PLUS one additional concurrent storage node failure elsewhere (1 copy) without losing committed writes</strong> ($6 - 3 = 3$ surviving copies, which still satisfies $V_r = 3$). Furthermore, the system can lose an entire AZ (2 copies) and continue accepting new transactional writes uninterrupted ($6 - 2 = 4$ nodes, satisfying $V_w = 4$).</p>
+</div>
+
+<h3 id="instantaneous-crash-recovery">Instantaneous Crash Recovery Without Log Replay</h3>
+<p>In traditional monolithic relational databases, recovering from an unexpected crash is a painful, time-consuming operation:</p>
+<ol>
+  <li>The database boots up, discovers a dirty shutdown, and identifies the last checkpoint.</li>
+  <li>It must perform a cold scan of gigabytes of Write-Ahead Log (WAL) files.</li>
+  <li>It sequentially replays every redo log record across every table to roll forward committed transactions, and executes undo logs to roll back uncommitted transactions.</li>
+  <li>For a heavily loaded database, <strong>recovery can take 30 minutes to multiple hours</strong>, during which the system is completely offline.</li>
+</ol>
+
+<p>In Amazon Aurora, crash recovery is <strong>instantaneous (near-zero seconds)</strong>:</p>
+<ul>
+  <li>Because redo processing is continuously executed in the background by the storage tier, storage data pages are already perpetually up to date.</li>
+  <li>When a compute node crashes, a replacement compute instance boots up immediately, queries the storage fleet to establish the highest committed LSN, and <strong>begins serving read/write queries instantly</strong> without replaying any log files from disk.</li>
+</ul>
+
+<h2 id="industry-impact">6. Architectural Industry Impact &amp; Disaggregated Warehouses</h2>
+<p>The storage-compute separation pioneered by Amazon Aurora sparked a foundational architectural revolution that has reshaped modern cloud infrastructure:</p>
+
+<ol>
+  <li><strong>Independent Elastic Scaling:</strong> Because compute instances hold zero persistent state on local disks, they can scale up (from 2 vCPUs to 64 vCPUs) or scale down in seconds without copying terabytes of underlying data. In serverless configurations (e.g., Aurora Serverless v2), compute automatically scales dynamically with traffic demand.</li>
+  <li><strong>Zero-Lag Shared Read Replicas:</strong> Up to <strong>15 read replicas</strong> can be provisioned in minutes by simply mounting the existing shared storage volume. Replicas do not replicate data blocks or execute write queries; they receive lightweight LSN metadata from the primary writer, achieving replica latency of <strong>$< 10\text{ ms}$</strong>.</li>
+  <li><strong>Standardization Across Modern Data Platforms:</strong> The disaggregated log architecture is now the universal standard for modern cloud data platforms:
+    <ul>
+      <li><strong>Cloud Data Warehouses:</strong> Snowflake, Google BigQuery, and Databricks operate on separated compute clusters querying object storage (Amazon S3 / Google Cloud Storage).</li>
+      <li><strong>Next-Gen OLTP Engines:</strong> Google AlloyDB, Neon Serverless Postgres, and Microsoft Azure Hyperscale adopt Aurora's disaggregated redo log architecture to deliver serverless relational databases.</li>
+    </ul>
+  </li>
+</ol>
+
+<h2 id="summary-and-takeaways">7. Architectural Summary &amp; Systems Synthesis</h2>
+
+<div class="table-wrapper">
+  <table>
+    <thead>
+      <tr>
+        <th>Architectural Vector</th>
+        <th>System Invariant</th>
+        <th>Engineering Advantage</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Write Path Optimization</strong></td>
+        <td>Compute writes only append-only redo log records. Zero data page flushes over network.</td>
+        <td>Eliminates doublewrite buffer; slashes network traffic by up to $9\times$.</td>
+      </tr>
+      <tr>
+        <td><strong>Intelligent Storage Tier</strong></td>
+        <td>Storage nodes materialize 16 KB pages asynchronously in the background.</td>
+        <td>Offloads CPU and disk fragmentation from compute to multi-tenant storage fleet.</td>
+      </tr>
+      <tr>
+        <td><strong>Quorum Durability</strong></td>
+        <td>$V_w = 4/6$ write quorum across 3 Availability Zones (2 copies per AZ).</td>
+        <td>Withstands loss of an entire AZ plus an additional storage host with zero data loss.</td>
+      </tr>
+      <tr>
+        <td><strong>Fault Recovery</strong></td>
+        <td>Continuous background redo coalescing on SSD.</td>
+        <td>Eliminates checkpoint roll-forward, reducing crash recovery time from hours to seconds.</td>
+      </tr>
+      <tr>
+        <td><strong>Replica Scaling</strong></td>
+        <td>All compute instances mount a unified shared storage tier.</td>
+        <td>Enables up to 15 read replicas with sub-10ms replica lag and zero physical data replication.</td>
+      </tr>
+    </tbody>
+  </table>
 </div>
 
 <div class="callout callout-tip">
-  <div class="callout-title">Instantaneous Crash Recovery</div>
-  <p>Traditional engines freeze during recovery while replaying hours of WAL logs from the last checkpoint. In Aurora, redo processing happens continuously in the storage nodes. When compute crashes, a new instance boots up and is ready immediately.</p>
+  <div class="callout-title">Key Architectural Lessons for Systems Designers</div>
+  <ul>
+    <li><strong>Identify the True Cloud Bottleneck:</strong> In distributed cloud environments, network packets are orders of magnitude more expensive than local CPU cycles. Minimize network chatter above all else.</li>
+    <li><strong>Rethink Abstraction Boundaries:</strong> Do not treat cloud storage as a passive dumb disk. Pushing domain logic (such as log coalescing) into the storage tier unlocks radical scalability gains.</li>
+    <li><strong>Solve Durability via Quorum:</strong> Replace fragile two-node primary/replica mirroring with multi-AZ quorum consensus to survive availability zone catastrophic events without downtime.</li>
+  </ul>
 </div>
-
-<h2 id="industry-impact">6. Architectural Industry Impact &amp; Engineering Synthesis</h2>
-<h3>The Broader Cloud Revolution: Snowflake, AlloyDB, and Modern Warehouses</h3>
-<p>The storage-compute separation pioneered by AWS Aurora sparked an industry-wide paradigm shift:</p>
-<ol>
-  <li><strong>Independent Elastic Scaling:</strong> Compute instances can scale up or down (or pause entirely to zero) in seconds without migrating terabytes of underlying data disks.</li>
-  <li><strong>Zero-Lag Read Replicas:</strong> Up to 15 read replicas can mount the identical shared storage tier with minimal replica lag (typically sub-10ms), eliminating physical data replication.</li>
-  <li><strong>Industry Standardization:</strong> Cloud data warehouses (Snowflake, BigQuery) and modern OLTP databases (Google AlloyDB, Neon Serverless Postgres) all adopt variants of this disaggregated log architecture.</li>
-</ol>
 
       </article>
 
       <aside class="toc-sidebar">
         <div class="toc-title">Table of Contents</div>
         <ul class="toc-list">
-          <li><a href="#monolithic-bottleneck">1. Monolithic Bottleneck</a></li>
-          <li><a href="#architectural-comparison">2. Architectural Comparison</a></li>
-          <li><a href="#offloading-shift">3. Moving Redo to Storage</a></li>
-          <li><a href="#read-path-mechanics">4. Read Path Mechanics</a></li>
-          <li><a href="#durability-and-quorum">5. Quorum Durability</a></li>
-          <li><a href="#industry-impact">6. Industry Impact &amp; Synthesis</a></li>
+          <li><a href="#monolithic-bottleneck">1. Monolithic Bottleneck in Cloud</a></li>
+          <li><a href="#offloading-shift">2. "The Log is the Database"</a></li>
+          <li><a href="#aurora-anatomy">3. Compute vs Storage Pipelines</a></li>
+          <li><a href="#read-path-mechanics">4. Page Materialization &amp; Read Path</a></li>
+          <li><a href="#durability-and-quorum">5. Quorum Durability &amp; Instant Recovery</a></li>
+          <li><a href="#industry-impact">6. Industry Impact &amp; Warehouses</a></li>
+          <li><a href="#summary-and-takeaways">7. Architectural Summary</a></li>
         </ul>
       </aside>
     </div>

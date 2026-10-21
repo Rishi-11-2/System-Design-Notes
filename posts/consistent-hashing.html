@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Consistent Hashing — Implementation from First Principles — System Design Notes</title>
-  <meta name="description" content="Technical guide to Consistent Hashing: why modulo hashing fails under scaling, the hash ring concept, virtual nodes (VNodes), bounded K/N data migration, and binary search implementation.">
+  <title>Consistent Hashing: Implementation from First Principles — System Design Notes</title>
+  <meta name="description" content="Technical guide to Consistent Hashing: The modulo rehashing catastrophe, circular hash ring mechanics, virtual nodes (VNodes), binary search lookups, and production implementations in Cassandra and DynamoDB.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Lora:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet">
@@ -76,7 +76,7 @@
 
     <header class="article-header">
       <span class="article-header-badge">System Design Fundamentals</span>
-      <h1 class="article-header-title">Consistent Hashing</h1>
+      <h1 class="article-header-title">Consistent Hashing: First Principles Implementation &amp; Mathematical Mechanics</h1>
       <div class="article-header-meta">
         <span>📁 Category: Distributed Algorithms &amp; Sharding</span>
       </div>
@@ -91,151 +91,412 @@
       <article class="prose">
         
 <div class="callout callout-note">
-  <div class="callout-title">📌 Implementation from First Principles</div>
-  <p>Consistent Hashing provides a routing strategy that minimizes data movement when cluster size changes. By mapping servers and keys to a shared circular identifier space (the Hash Ring), it replaces modulo repartitioning with bounded $K/N$ data migration and eliminates catastrophic cache invalidation storms.</p>
+  <div class="callout-title">📌 Foundational Overview</div>
+  <p>Consistent Hashing is one of the most critical algorithmic building blocks of modern distributed computing. Originally introduced by Karger et al. at MIT in 1997, it provides a deterministic routing mechanism that limits data remapping to strictly $K/N$ keys when cluster topology changes. By mapping servers and keys onto a circular hash ring with virtual nodes (VNodes), it eliminates the catastrophic cache invalidation storms of modulo sharding and forms the operational backbone of Apache Cassandra, Amazon DynamoDB, Akamai, and modern cloud load balancers.</p>
 </div>
 
-<h2 id="modulo-hashing-problem">1. The Problem with Modulo Hashing</h2>
-<p>In distributed systems, data needs to be partitioned across multiple servers to handle load and storage effectively. A common and simple approach to determine which server should hold a specific piece of data (or key) is <strong>Modulo Hashing</strong>. Given a set of $N$ servers, a hash function calculates a numeric value for a key, and we use the modulo operator to map it to a specific server index:</p>
+<h2 id="modulo-hashing-problem">1. The Modulo Hashing Catastrophe &amp; Mathematical Proof</h2>
+<p>In distributed storage and caching tiers (e.g., Memcached or Redis clusters), data records must be partitioned across $N$ physical machines. The most intuitive routing approach is <strong>Modulo Hashing</strong>: hash the key and take the remainder modulo the server count:</p>
 
 $$\text{server\_index} = \text{hash}(\text{key}) \pmod{N}$$
 
-<p>While this approach evenly distributes keys initially, it suffers from a critical flaw in dynamic environments where servers can scale up or down. If a server is added or removed, $N$ changes. When $N$ changes, the result of $\text{hash}(\text{key}) \pmod{N}$ changes for almost every single key in the system.</p>
+<p>While modulo hashing distributes keys uniformly under static conditions, it suffers from total structural collapse the moment cluster topology changes.</p>
 
-<div class="callout callout-important">
-  <div class="callout-title">THE REHASHING CATASTROPHE</div>
-  <p>If you have 4 cache servers and one goes down (reducing $N$ to 3), approximately <strong>75%</strong> of your cached keys will suddenly map to a different server. This causes a massive wave of cache misses, overloading your backend database and potentially bringing down the entire system.</p>
+<h3 id="the-rehashing-proof">Mathematical Proof: The Rehashing Storm</h3>
+<p>Suppose a cluster has $N$ servers. When traffic increases, an operator adds 1 server, bringing the cluster size to $N+1$. For any arbitrary key, its original server index was $\text{hash}(k) \pmod N$, and its new index is $\text{hash}(k) \pmod{N+1}$.</p>
+<p>Because $N$ and $N+1$ are coprime (aside from $N=1$), the Chinese Remainder Theorem guarantees that the remainders align for only a tiny fraction of inputs:</p>
+
+$$\mathbb{P}(\text{hash}(k) \pmod N = \text{hash}(k) \pmod{N+1}) = \frac{1}{N+1}$$
+
+<p>Consequently, the fraction of keys that must be re-mapped to a different server is:</p>
+
+$$\text{Fraction of Remapped Keys} = 1 - \frac{1}{N+1} = \frac{N}{N+1}$$
+
+<div class="table-wrapper">
+  <table>
+    <thead>
+      <tr>
+        <th>Initial Servers ($N$)</th>
+        <th>New Servers ($N'$)</th>
+        <th>Event Type</th>
+        <th>Theoretical Fraction of Re-Mapped Keys</th>
+        <th>Real-World System Impact</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>$N = 4$</td>
+        <td>$N' = 3$</td>
+        <td>Single Server Crash</td>
+        <td>$\frac{4 - 1}{4} = \mathbf{75.0\%}$</td>
+        <td>75% of cache keys invalidated instantly; backend DB overwhelmed.</td>
+      </tr>
+      <tr>
+        <td>$N = 9$</td>
+        <td>$N' = 10$</td>
+        <td>Scale Up (+1 Node)</td>
+        <td>$\frac{9}{10} = \mathbf{90.0\%}$</td>
+        <td>90% of cached keys point to wrong servers; massive cache stampede.</td>
+      </tr>
+      <tr>
+        <td>$N = 99$</td>
+        <td>$N' = 100$</td>
+        <td>Enterprise Scale Up</td>
+        <td>$\frac{99}{100} = \mathbf{99.0\%}$</td>
+        <td><strong>99% of total cluster state invalidated</strong> by adding a single host!</td>
+      </tr>
+    </tbody>
+  </table>
 </div>
 
-<h3>Impact of Topology Changes</h3>
-<table>
-  <thead>
-    <tr>
-      <th>Scenario</th>
-      <th>Servers ($N$)</th>
-      <th>Key 'User123' (Hash: 81)</th>
-      <th>Result</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td><strong>Initial State</strong></td>
-      <td>4</td>
-      <td>$81 \pmod{4} = 1$</td>
-      <td>Mapped to Server 1</td>
-    </tr>
-    <tr>
-      <td><strong>Scale Up</strong></td>
-      <td>5</td>
-      <td>$81 \pmod{5} = 1$</td>
-      <td>Mapped to Server 1 (Lucky!)</td>
-    </tr>
-    <tr>
-      <td><strong>Server Failure</strong></td>
-      <td>3</td>
-      <td>$81 \pmod{3} = 0$</td>
-      <td>Mapped to Server 0 (Cache Miss)</td>
-    </tr>
-  </tbody>
-</table>
+<div class="callout callout-important">
+  <div class="callout-title">The Thundering Herd &amp; Cascading Collapse</div>
+  <p>In a large-scale caching tier, losing 75% to 99% of cache keys simultaneously triggers a <strong>Cache Stampede</strong> (Thundering Herd). Millions of client requests instantly bypass the cache and hammer the underlying relational database or primary storage tier with un-cached queries. The primary database hits connection pool exhaustion, CPU reaches 100%, and the entire application platform collapses.</p>
+</div>
 
-<p>We need a routing strategy that minimizes data movement when the cluster size changes. This is where <strong>Consistent Hashing</strong> comes in.</p>
+<h2 id="hash-ring">2. The Hash Ring &amp; Clockwise Traversal Mechanics</h2>
+<p>Consistent Hashing eliminates this catastrophe by mapping both <strong>servers</strong> and <strong>keys</strong> into the exact same circular coordinate space: the <strong>Hash Ring</strong>.</p>
 
-<h2 id="consistent-hashing-explained">2. Consistent Hashing Explained</h2>
-<p>Consistent Hashing solves the rehashing problem by independently mapping both the servers and the keys onto a conceptual circle, known as the <strong>Hash Ring</strong>.</p>
-
-<h3 id="hash-ring-concept">The Hash Ring Concept</h3>
-<p>Imagine a hash function (like SHA-1 or MD5) that outputs a massive range of integers, for instance, from $0$ to $2^{32} - 1$. Instead of imagining these numbers on a straight line, we wrap the line around so the largest value connects back to zero, forming a ring.</p>
-
-<ol>
-  <li><strong>Placing Servers:</strong> We hash the identifier of each server (e.g., its IP address or a unique name). The resulting hash value dictates the server's position on the ring.</li>
-  <li><strong>Placing Keys:</strong> When a request comes in for a specific key, we hash that key using the exact same hash function, which places it somewhere on the ring.</li>
-  <li><strong>Routing:</strong> To find which server holds a key, we traverse the ring clockwise from the key's position until we encounter the first server. That server is responsible for the key.</li>
-</ol>
+<h3 id="ring-topology">The Circular Identifier Space</h3>
+<p>Consider a standard 32-bit hash function (e.g., MurmurHash3, MD5, or SHA-1 truncated to 32 bits). The function produces output values in the range $[0, 2^{32} - 1]$. Instead of visualizing this range as a linear array, we wrap the line into a circle where the maximum value $2^{32} - 1$ connects back to $0$.</p>
 
 <div class="diagram-wrapper">
   <div class="mermaid">
 flowchart TD
-  subgraph Ring["The Conceptual Hash Ring [0 to 2^32 - 1]"]
-    NodeA["Node A"]
-    Key1["Key 1"]
-    NodeB["Node B"]
-    Key2["Key 2"]
-    NodeC["Node C"]
-
-    Key1 -->|"Walk Clockwise"| NodeB
-    Key2 -->|"Walk Clockwise"| NodeC
+  subgraph Ring["Consistent Hash Ring [0 to 2^32 - 1]"]
+    direction TB
+    NodeA["Node A (Token: 0x20000000)"]
+    NodeB["Node B (Token: 0x70000000)"]
+    NodeC["Node C (Token: 0xC0000000)"]
+    
+    K1["Key 'user_101'<br/>Hash: 0x15000000"]
+    K2["Key 'order_554'<br/>Hash: 0x50000000"]
+    K3["Key 'session_99'<br/>Hash: 0xA0000000"]
+    K4["Key 'cart_882'<br/>Hash: 0xE0000000"]
   end
+
+  K1 -->|"Walk Clockwise"| NodeA
+  K2 -->|"Walk Clockwise"| NodeB
+  K3 -->|"Walk Clockwise"| NodeC
+  K4 -->|"Walk Clockwise (Wrap around)"| NodeA
   </div>
-  <div class="diagram-caption">Figure 1: Keys are assigned to the next clockwise Node on the Hash Ring.</div>
+  <div class="diagram-caption">Figure 1: Keys routed to the next clockwise server token on the circular hash space.</div>
+</div>
+
+<h3 id="routing-algorithm">The Three-Step Consistent Hashing Algorithm</h3>
+<ol>
+  <li><strong>Map Physical Servers to the Ring:</strong> Compute the hash of each server's unique identifier (e.g., its IP address or hostname: $\text{hash}(\text{"10.0.1.4:8080"})$). This assigns each server a numeric token position on the ring.</li>
+  <li><strong>Map Incoming Keys to the Ring:</strong> When a request arrives with a key $k$, compute $\text{hash}(k)$ using the exact same hash function. This places the key at a specific point on the ring perimeter.</li>
+  <li><strong>Clockwise Traversal (Successor Lookup):</strong> To find which server is responsible for key $k$, start at $\text{hash}(k)$ and walk clockwise along the perimeter of the ring until you encounter the first server token. That server is the key's designated owner:
+  $$\text{Owner}(k) = \min \{ s \in \text{Servers} \mid s \ge \text{hash}(k) \}$$
+  If $\text{hash}(k)$ is greater than all server tokens on the ring, wrap around to the beginning and assign the key to the server with the smallest token on the ring:
+  $$\text{Owner}(k) = \min_{s \in \text{Servers}}(s)$$
+  </li>
+</ol>
+
+<h3 id="bounded-data-migration">The Bounded Migration Guarantee</h3>
+<p>What happens when a server crashes or a new server is provisioned?</p>
+<ul>
+  <li><strong>Node Crash (Scale Down):</strong> If Node B crashes, only the keys that were previously assigned to Node B (the arc between Node A and Node B) are impacted. Walking clockwise, those keys naturally fall into Node C. Keys belonging to Node A and Node C are completely unaffected!</li>
+  <li><strong>Node Provisioning (Scale Up):</strong> If a new Node D is inserted between Node A and Node B, it only intercepts a fraction of keys that previously mapped to Node B. Nodes A and C experience zero key movement.</li>
+</ul>
+
+<div class="callout callout-tip">
+  <div class="callout-title">The Bounded Migration Theorem</div>
+  <p>In a cluster with $K$ total keys and $N$ servers, adding or removing a single node results in only:</p>
+  $$\text{Migrated Keys} \approx \frac{K}{N}$$
+  <p>Contrast this with Modulo Hashing, which forces $K \cdot \frac{N}{N+1} \approx K$ migrations ($90\% - 99\%$). Consistent Hashing strictly confines data movement to the minimum mathematically possible amount!</p>
+</div>
+
+<h2 id="virtual-nodes">3. Handling Data Skew: Virtual Nodes (VNodes) &amp; Weighting</h2>
+<p>While the basic hash ring model is theoretically elegant, a naive implementation exhibits a severe physical flaw in production: <strong>Non-Uniform Token Distribution</strong>.</p>
+
+<h3 id="the-skew-problem">The Skew &amp; Hotspot Dilemma</h3>
+<p>Uniform random hash functions (like MD5 or Murmur3) distribute outputs across the $[0, 2^{32}-1]$ space independently. However, by the Birthday Paradox and Poisson point process statistics, placing a small number of physical nodes (e.g., $N = 4$ or $N = 10$) on a circle results in highly irregular arc lengths:</p>
+<ul>
+  <li>Two servers may hash to coordinates that are adjacent, separated by only a $5^\circ$ arc.</li>
+  <li>Another server may have no predecessor for a massive $180^\circ$ arc.</li>
+  <li>The server following the $180^\circ$ arc owns <strong>50% of the entire cluster's data and traffic</strong>! It burns out under memory pressure and CPU saturation, while the adjacent nodes sit completely idle.</li>
+</ul>
+
+<div class="diagram-wrapper">
+  <div class="mermaid">
+flowchart TD
+  subgraph PhysicalTokens["Physical Servers Clustered (Severe Imbalance)"]
+    P_A["Node A (Arc: 15%)"]
+    P_B["Node B (Arc: 10%)"]
+    P_C["Node C (Arc: 75% - HOTSPOT CRASH!)"]
+  end
+
+  subgraph VNodeSolution["Virtual Nodes Solution (150+ Tokens per Server)"]
+    V1["Node A#1"] --- V2["Node C#1"] --- V3["Node B#1"] --- V4["Node A#2"] --- V5["Node C#2"] --- V6["Node B#2"]
+  end
+
+  PhysicalTokens -.->|"Introduce VNodes"| VNodeSolution
+  </div>
+  <div class="diagram-caption">Figure 2: Moving from clumped physical nodes to interleaved virtual nodes for statistically uniform load distribution.</div>
+</div>
+
+<h3 id="virtual-nodes-mechanics">The Virtual Nodes (VNodes) Solution</h3>
+<p>To eliminate hotspots, systems introduce <strong>Virtual Nodes (VNodes)</strong>. Instead of placing each physical machine onto the ring once, each physical machine is assigned $V$ distinct virtual tokens scattered around the circle:</p>
+<ul>
+  <li>For physical server <code>NodeA</code>, we generate $V$ unique identifiers: <code>"NodeA#1"</code>, <code>"NodeA#2"</code>, $\dots$, <code>"NodeA#V"</code>.</li>
+  <li>We hash each virtual identifier independently: <code>hash("NodeA#1")</code>, <code>hash("NodeA#2")</code>, etc.</li>
+  <li>Each physical machine now owns dozens or hundreds of small, non-contiguous arcs interleaved across the ring.</li>
+</ul>
+
+<h3 id="standard-deviation-drop">Mathematical Variance Reduction</h3>
+<p>Statistical analysis shows that the standard deviation of data allocated to each physical node decreases inversely with the square root of the number of virtual nodes $V$:</p>
+
+$$\sigma \propto \frac{1}{\sqrt{V}}$$
+
+<p>In production systems (e.g., Apache Cassandra), setting $V = 128 \text{ to } 256$ virtual nodes per physical host guarantees that the load variance across servers remains strictly within <strong>$\pm 3\%$ to $5\%$ of the mean</strong>, completely eliminating hotspots.</p>
+
+<h3 id="heterogeneous-hardware-weighting">Heterogeneous Server Weighting</h3>
+<p>Virtual nodes also solve the challenge of heterogeneous hardware fleets:</p>
+<ul>
+  <li>Suppose the cluster contains high-spec servers (64 cores, 512 GB RAM) and legacy servers (16 cores, 128 GB RAM).</li>
+  <li>A naive system would assign equal load to both, causing the legacy machine to crash.</li>
+  <li>With VNodes, we simply allocate tokens proportionally to hardware capacity: assign <strong>$V = 400$ tokens</strong> to the high-spec machine and <strong>$V = 100$ tokens</strong> to the legacy machine. The high-spec host naturally receives $4\times$ the traffic without custom routing logic.</li>
+</ul>
+
+<h2 id="implementation-data-structures">4. Data Structures &amp; Algorithmic Implementation</h2>
+<p>How do we efficiently execute the "walk clockwise" operation in code? A linear search across all ring tokens takes $O(VN)$ time, which is unacceptably slow for high-throughput routing.</p>
+
+<h3 id="approach-comparison">Data Structure Trade-Off Matrix</h3>
+
+<div class="table-wrapper">
+  <table>
+    <thead>
+      <tr>
+        <th>Data Structure</th>
+        <th>Lookup Time</th>
+        <th>Node Add / Remove</th>
+        <th>Memory Locality &amp; CPU Cache Efficiency</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Linear Array (Unsorted)</strong></td>
+        <td>$O(VN)$</td>
+        <td>$O(1)$</td>
+        <td>Poor: Requires full linear scan of every token on every request.</td>
+      </tr>
+      <tr>
+        <td><strong>Balanced BST (Red-Black Tree)</strong></td>
+        <td>$O(\log(VN))$</td>
+        <td>$O(\log(VN))$</td>
+        <td>Moderate: Node pointers cause pointer chasing and CPU L1 cache misses. Standard in Java (<code>TreeMap</code>).</td>
+      </tr>
+      <tr>
+        <td><strong>Sorted Array + Binary Search</strong></td>
+        <td>$O(\log(VN))$</td>
+        <td>$O(VN)$</td>
+        <td><strong>Optimal for Read-Heavy Routing:</strong> Contiguous memory layout maximizes CPU hardware prefetching and cache hits.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="production-code-implementation">Production Python Implementation: Sorted Array + Binary Search</h3>
+<pre><code class="language-python">import bisect
+import hashlib
+from typing import Dict, List, Optional
+
+class ConsistentHashRing:
+    def __init__(self, replicas: int = 150):
+        """
+        replicas: Number of virtual nodes per physical host (VNodes).
+        """
+        self.replicas = replicas
+        self.ring: List[int] = []                      # Sorted array of token integers
+        self.vnode_to_node: Dict[int, str] = {}        # Token -> Physical Node Hostname
+
+    def _hash(self, key: str) -&gt; int:
+        """MD5 truncated to 32-bit unsigned integer."""
+        digest = hashlib.md5(key.encode('utf-8')).hexdigest()
+        return int(digest[:8], 16)
+
+    def add_node(self, node: str) -&gt; None:
+        """Add a physical server and allocate its virtual tokens."""
+        for i in range(self.replicas):
+            vnode_key = f"{node}#vnode_{i}"
+            token = self._hash(vnode_key)
+            # Insert into sorted ring maintaining sort order
+            idx = bisect.bisect_left(self.ring, token)
+            self.ring.insert(idx, token)
+            self.vnode_to_node[token] = node
+
+    def remove_node(self, node: str) -&gt; None:
+        """Remove a physical server and purge all its virtual tokens."""
+        for i in range(self.replicas):
+            vnode_key = f"{node}#vnode_{i}"
+            token = self._hash(vnode_key)
+            idx = bisect.bisect_left(self.ring, token)
+            if idx &lt; len(self.ring) and self.ring[idx] == token:
+                del self.ring[idx]
+                del self.vnode_to_node[token]
+
+    def get_node(self, key: str) -&gt; Optional[str]:
+        """Lookup the responsible physical server for a given key via binary search."""
+        if not self.ring:
+            return None
+
+        key_hash = self._hash(key)
+        
+        # Binary search for the first token &gt;= key_hash
+        idx = bisect.bisect_left(self.ring, key_hash)
+        
+        # Wrap around to the start of the ring if key_hash exceeds all tokens
+        if idx == len(self.ring):
+            idx = 0
+            
+        return self.vnode_to_node[self.ring[idx]]</code></pre>
+
+<h2 id="replication-and-fault-tolerance">5. Replication, Quorum &amp; Fault Tolerance on the Ring</h2>
+<p>In mission-critical databases, storing a key on only a single server creates a single point of failure (SPOF). Consistent hashing naturally extends to support <strong>$N$-way Replication</strong>:</p>
+
+<div class="diagram-wrapper">
+  <div class="mermaid">
+flowchart TD
+  subgraph RingReplication["3-Way Ring Replication (R = 3)"]
+    direction TB
+    K["Key 'order_1001' (Hash Position)"]
+    S1["Server 1 (Primary Coordinator / Replica 1)"]
+    S2["Server 2 (Replica 2)"]
+    S3["Server 3 (Replica 3)"]
+  end
+
+  K -->|"Walk Clockwise to 1st Node"| S1
+  S1 -->|"Walk Clockwise to 2nd Distinct Physical Node"| S2
+  S2 -->|"Walk Clockwise to 3rd Distinct Physical Node"| S3
+  </div>
+  <div class="diagram-caption">Figure 3: Multi-replica allocation: Walking clockwise to select $R$ distinct physical machines.</div>
+</div>
+
+<h3 id="distinct-physical-replica-rule">The Distinct Physical Node Invariant</h3>
+<p>When replicating data with replication factor $R$ (e.g., $R = 3$):</p>
+<ol>
+  <li>The coordinator finds the first server token clockwise from the key hash: this server is the <strong>Primary Replica</strong>.</li>
+  <li>To find the remaining $R-1$ backup replicas, the coordinator continues walking clockwise along the ring.</li>
+  <li><strong>Critical Invariant:</strong> The coordinator skips any virtual tokens that belong to physical machines that have already been selected for this key. Replicas must reside on <strong>distinct physical machines</strong> (and ideally distinct availability zones or racks) to prevent correlated hardware failures.</li>
+</ol>
+
+<h2 id="real-world-systems">6. Production Implementations: Cassandra, DynamoDB &amp; CDNs</h2>
+
+<div class="table-wrapper">
+  <table>
+    <thead>
+      <tr>
+        <th>System</th>
+        <th>Hash Function</th>
+        <th>Token Architecture</th>
+        <th>Production Engineering Nuance</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Apache Cassandra</strong></td>
+        <td><code>Murmur3Partitioner</code> (Range: $-2^{63} \text{ to } 2^{63}-1$)</td>
+        <td>Configurable VNodes (default 128 per node via <code>num_tokens</code>).</td>
+        <td>Row partitions are defined by the partition key hash. Range scans across nodes are non-trivial because rows are randomized across the ring.</td>
+      </tr>
+      <tr>
+        <td><strong>Amazon DynamoDB</strong></td>
+        <td>Proprietary Cryptographic Hash</td>
+        <td>Internal storage partition tokens.</td>
+        <td>DynamoDB uses consistent hashing to assign partition keys to storage partitions, paired with dynamic partition splitting when a partition exceeds 10 GB or 1,000 WCU / 3,000 RCU.</td>
+      </tr>
+      <tr>
+        <td><strong>Akamai / Cloudflare CDNs</strong></td>
+        <td>Fast non-cryptographic hashes (xxHash / CityHash)</td>
+        <td>Consistent edge cache routing.</td>
+        <td>Routes URL requests to specific edge cache servers. When an edge node restarts, only $1/N$ of cached media files miss, preserving cache hit ratios above 99%.</td>
+      </tr>
+      <tr>
+        <td><strong>Envoy Proxy / HAProxy</strong></td>
+        <td>Maglev / Ketama consistent hashing</td>
+        <td>Upstream host socket affinity.</td>
+        <td>Ensures WebSocket connections and user sessions stay pinned to the same backend server pod across zero-downtime rolling deploys.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="summary-and-takeaways">7. Architectural Summary &amp; Engineering Matrix</h2>
+
+<div class="table-wrapper">
+  <table>
+    <thead>
+      <tr>
+        <th>Dimension</th>
+        <th>Modulo Hashing</th>
+        <th>Pure Consistent Hashing</th>
+        <th>Consistent Hashing with VNodes</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Data Migration on Scale</strong></td>
+        <td>$\frac{N}{N+1} \approx 90\% - 99\%$ (Catastrophic)</td>
+        <td>$\frac{1}{N}$ (Strictly bounded)</td>
+        <td>$\frac{1}{N}$ (Uniformly distributed across all peers)</td>
+      </tr>
+      <tr>
+        <td><strong>Key Distribution Balance</strong></td>
+        <td>Mathematically uniform (in static state)</td>
+        <td>Highly skewed (Poisson clumping; hotspots)</td>
+        <td><strong>Statistically uniform ($\pm 3\%$)</strong></td>
+      </tr>
+      <tr>
+        <td><strong>Heterogeneous Hardware</strong></td>
+        <td>Unsupported (all nodes receive identical load)</td>
+        <td>Unsupported</td>
+        <td>Supported (proportional token weighting)</td>
+      </tr>
+      <tr>
+        <td><strong>Lookup Complexity</strong></td>
+        <td>$O(1)$</td>
+        <td>$O(\log N)$</td>
+        <td>$O(\log(VN))$</td>
+      </tr>
+    </tbody>
+  </table>
 </div>
 
 <div class="callout callout-tip">
-  <div class="callout-title">Graceful Scaling &amp; Bounded Migration</div>
-  <p>If Node B goes down, only the keys that were assigned to Node B are remapped. Because we just walk clockwise, those keys naturally fall to the next server on the ring (Node C). The keys originally assigned to Node A and Node C stay exactly where they are. Data movement is strictly limited to <strong>$K/N$</strong> (total keys / total nodes).</p>
+  <div class="callout-title">Core Design Principles</div>
+  <ul>
+    <li><strong>Never Use Modulo Hashing for Distributed Caches:</strong> Always use consistent hashing when the node count is subject to autoscaling, hardware crashes, or rolling deployments.</li>
+    <li><strong>Always Configure Virtual Nodes:</strong> A pure consistent hash ring without virtual nodes guarantees production hotspots. Provision at least 128 to 256 virtual nodes per host.</li>
+    <li><strong>Exploit Binary Search over Contiguous Arrays:</strong> Because server topology mutations happen orders of magnitude less frequently than read/write traffic, prioritize cache-friendly sorted flat arrays over pointer-heavy binary trees.</li>
+  </ul>
 </div>
-
-<h2 id="virtual-nodes">3. Handling Imbalance: Virtual Nodes</h2>
-<p>A pure implementation of a hash ring often leads to a skewed distribution of keys. Hash functions generate pseudo-random outputs, meaning servers placed on the ring might clump together, leaving huge gaps. A server with a massive gap preceding it will end up owning a disproportionate amount of the keys, leading to hotspots.</p>
-
-<p>To fix this, we introduce <strong>Virtual Nodes (VNodes)</strong>. Instead of placing each physical server onto the ring exactly once, we place it multiple times using slightly modified identifiers.</p>
-
-<div class="callout callout-note">
-  <div class="callout-title">IMPLEMENTING VNODES</div>
-  <p>If we have Server A, we create replicas: $A\#1, A\#2, A\#3, \dots, A\#k$. We hash all $k$ identifiers and place them on the ring. Now, Server A controls $k$ smaller segments scattered evenly around the circle, statistically guaranteeing a uniform load distribution.</p>
-</div>
-
-<h2 id="implementation-data-structures">4. Implementation Data Structures</h2>
-<p>How do we efficiently "walk clockwise" in code? A naïve approach would require scanning every server, which is slow. We need a data structure that can quickly find the smallest value greater than or equal to the key's hash.</p>
-
-<h3>Approach 1: Binary Search Tree (BST)</h3>
-<p>We can store the server hashes in a balanced BST (like a Red-Black Tree). To find a server, we search the tree for the key's hash. If we find an exact match, great. Otherwise, we find the "ceiling" (the smallest element strictly greater than the key). Time complexity: <strong>$O(\log N)$</strong>.</p>
-
-<h3>Approach 2: Sorted Array + Binary Search (Most Common)</h3>
-<p>Since server topology rarely changes compared to the volume of incoming requests, we can prioritize read speed. We store all server hashes in a flat array and sort it. When a request arrives, we use a standard Binary Search (like <code>std::upper_bound</code> in C++ or <code>bisect</code> in Python) to find the server.</p>
-
-<div class="code-wrapper">
-  <div class="code-header">
-    <span>consistent_hashing.py (Lookup Core)</span>
-    <button class="btn-copy">Copy</button>
-  </div>
-  <pre><code class="language-python">def get_server(key, sorted_ring_array, ring_map, hash_function):
-    if not sorted_ring_array:
-        return None
-    key_hash = hash_function(key)
-    # Binary search for the first server hash >= key_hash
-    index = bisect.bisect_left(sorted_ring_array, key_hash)
-    # Wrap around if the key hash is greater than all server hashes
-    if index == len(sorted_ring_array):
-        index = 0
-    return ring_map[sorted_ring_array[index]]
-</code></pre>
-</div>
-
-<p>Consistent hashing is a fundamental primitive used heavily in production systems like <strong>Apache Cassandra</strong>, <strong>Amazon DynamoDB</strong>, and modern <strong>CDNs</strong> to ensure stable, predictable scaling.</p>
 
       </article>
 
       <aside class="toc-sidebar">
         <div class="toc-title">Table of Contents</div>
         <ul class="toc-list">
-          <li><a href="#modulo-hashing-problem">1. Modulo Hashing Problem</a></li>
-          <li><a href="#consistent-hashing-explained">2. Consistent Hashing Explained</a></li>
-          <li class="toc-sub"><a href="#hash-ring-concept">The Hash Ring Concept</a></li>
-          <li><a href="#virtual-nodes">3. Virtual Nodes (VNodes)</a></li>
-          <li><a href="#implementation-data-structures">4. Data Structures &amp; Routing</a></li>
+          <li><a href="#modulo-hashing-problem">1. Modulo Hashing Catastrophe</a></li>
+          <li><a href="#hash-ring">2. The Hash Ring &amp; Routing</a></li>
+          <li><a href="#virtual-nodes">3. Handling Skew: Virtual Nodes</a></li>
+          <li><a href="#implementation-data-structures">4. Data Structures &amp; Code</a></li>
+          <li><a href="#replication-and-fault-tolerance">5. Replication &amp; Quorum</a></li>
+          <li><a href="#real-world-systems">6. Production Implementations</a></li>
+          <li><a href="#summary-and-takeaways">7. Architectural Summary</a></li>
         </ul>
       </aside>
     </div>
 
     <div class="post-navigation">
-      <a href="cap-theorem-and-google-spanner.html" class="nav-card">
+      <a href="bitcask-storage-engine.html" class="nav-card">
         <span class="nav-label">← Previous Note</span>
-        <span class="nav-card-title">CAP Theorem &amp; Google Spanner</span>
+        <span class="nav-card-title">Bitcask Storage Engine</span>
       </a>
-      <a href="grab-data-layer-architecture.html" class="nav-card" style="text-align: right;">
+      <a href="cap-theorem-and-google-spanner.html" class="nav-card" style="text-align: right;">
         <span class="nav-label">Next Note →</span>
-        <span class="nav-card-title">Grab Data Layer Architecture</span>
+        <span class="nav-card-title">CAP Theorem &amp; Google Spanner</span>
       </a>
     </div>
   </main>
@@ -249,32 +510,36 @@ flowchart TD
       <div class="footer-col">
         <h5>Core Categories</h5>
         <ul>
-          <li><a href="consistent-hashing.html">Consistent Hashing Guide</a></li>
-          <li><a href="cap-theorem-and-google-spanner.html">Google Spanner &amp; TrueTime</a></li>
-          <li><a href="storage-compute-separation-aurora.html">Aurora Storage-Compute Separation</a></li>
           <li><a href="kafka-architecture-part1.html">Apache Kafka Fundamentals</a></li>
-          <li><a href="microservices-design-patterns.html">Microservices Patterns</a></li>
-          <li><a href="redis-internals-and-architecture.html">Redis Internal Mechanics</a></li>
+          <li><a href="kafka-architecture-part2.html">Kafka Consumers &amp; HA</a></li>
+          <li><a href="kafka-exactly-once-semantics.html">Kafka Exactly-Once Semantics</a></li>
+          <li><a href="grab-data-layer-architecture.html">Grab Data Layer Architecture</a></li>
         </ul>
       </div>
       <div class="footer-col">
-        <h5>Quick Links</h5>
+        <h5>Architectural Deep Dives</h5>
         <ul>
-          <li><a href="../index.html">All Notes &amp; Deep Dives</a></li>
-          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank">GitHub Repository</a></li>
-          <li><a href="../index.html#pdf-library">Reference Documents</a></li>
+          <li><a href="bitcask-storage-engine.html">Bitcask Storage Engine</a></li>
+          <li><a href="consistent-hashing.html">Consistent Hashing</a></li>
+          <li><a href="cap-theorem-and-google-spanner.html">CAP Theorem &amp; Spanner</a></li>
+          <li><a href="storage-compute-separation-aurora.html">Storage-Compute Separation</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Production Case Studies</h5>
+        <ul>
+          <li><a href="uber-emergency-sos-service.html">Uber Emergency SOS Architecture</a></li>
+          <li><a href="booking-user-review-system.html">Booking.com Review System</a></li>
+          <li><a href="zomato-search-intent-nlp.html">Zomato Search Intent &amp; NLP</a></li>
+          <li><a href="dragonflydb-bplus-tree-sorted-set.html">DragonflyDB B+ Tree Sorted Set</a></li>
         </ul>
       </div>
     </div>
     <div class="footer-bottom">
-      <div>System Design Notes · Open source under MIT License.</div>
-      <div>Hosted on GitHub Pages</div>
+      <p>&copy; 2026 System Design Notes. Built for systems engineers and software architects.</p>
     </div>
   </footer>
 
-  <button id="back-to-top" class="back-to-top" aria-label="Back to top">↑</button>
-
-  <script src="../assets/js/articles-data.js"></script>
   <script src="../assets/js/main.js"></script>
 </body>
 </html>

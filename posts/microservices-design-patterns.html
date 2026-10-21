@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Microservices Design Patterns — Detailed Notes — System Design Notes</title>
-  <meta name="description" content="Technical notes on Microservices Design Patterns: Strangler Fig migration, Shared DB vs Database per Service, SAGA distributed transaction pattern (Choreography vs Orchestration), and CQRS read/write separation.">
+  <title>Microservices Design Patterns: Strangler Fig, Database-per-Service, SAGA &amp; CQRS — System Design Notes</title>
+  <meta name="description" content="Comprehensive technical breakdown of core microservices design patterns: The Strangler Fig migration pattern, Database-per-Service vs Shared DB, distributed transaction management via SAGA (Choreography vs Orchestration), and CQRS read/write segregation.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Lora:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet">
@@ -76,9 +76,9 @@
 
     <header class="article-header">
       <span class="article-header-badge">Distributed Architecture Patterns</span>
-      <h1 class="article-header-title">Microservices Design Patterns — Detailed Notes</h1>
+      <h1 class="article-header-title">Microservices Design Patterns: Strangler Fig, Data Topology, SAGA &amp; CQRS</h1>
       <div class="article-header-meta">
-        <span>📁 Category: Software Architecture &amp; Microservices</span>
+        <span>📁 Category: Software Architecture &amp; Distributed Systems</span>
       </div>
       <div class="article-header-actions">
         <a href="../index.html" class="btn-secondary">
@@ -91,153 +91,457 @@
       <article class="prose">
         
 <div class="callout callout-note">
-  <div class="callout-title">📌 Overview</div>
-  <p>These notes cover migration strategies, data management, and handling complex distributed transactions in microservices architectures: the <strong>Strangler Pattern</strong> for safe legacy migration, <strong>Database-per-Service</strong> topology, the <strong>SAGA Pattern</strong> for distributed transactions, and <strong>CQRS</strong> for cross-service queries.</p>
+  <div class="callout-title">📌 Architectural Blueprint</div>
+  <p>Decomposing monolithic architectures into microservices replaces a single codebase and unified database with distributed independent network services. This architectural shift introduces critical challenges around zero-downtime migration, data ownership, distributed transactions, and cross-boundary querying. This technical deep dive analyzes the four foundational architectural patterns that resolve these challenges: the <strong>Strangler Fig Pattern</strong> for risk-free evolutionary migration, <strong>Database-per-Service</strong> vs the Shared DB anti-pattern, the <strong>SAGA Pattern</strong> for distributed eventual consistency without 2PC deadlocks, and <strong>CQRS</strong> for high-performance read projections.</p>
 </div>
 
-<h2 id="strangler-pattern">1. The Strangler Pattern</h2>
+<h2 id="strangler-pattern">1. The Strangler Fig Pattern &amp; Legacy Migration</h2>
+<p>When an enterprise decides to migrate a massive monolithic legacy codebase to microservices, software leaders face a fundamental choice between two strategies:</p>
 
-<h3>Context</h3>
-<p>Used when migrating a legacy monolithic application to microservices.</p>
+<div class="table-wrapper">
+  <table>
+    <thead>
+      <tr>
+        <th>Strategy</th>
+        <th>Execution Model</th>
+        <th>Risk Profile &amp; Failure Modes</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>"Big Bang" Rewrite</strong></td>
+        <td>A separate team spends 18–36 months rebuilding the entire system from scratch in parallel, followed by a cutover weekend.</td>
+        <td><strong>Catastrophic Failure Rate:</strong> Requirements drift continuously, legacy business logic is lost, cutover creates unprecedented failure blast radius, and rollbacks are nearly impossible.</td>
+      </tr>
+      <tr>
+        <td><strong>Strangler Fig Pattern</strong></td>
+        <td>Gradual, incremental migration: new microservices are built at the edges of the legacy monolith, intercepting slices of traffic until the monolith is retired.</td>
+        <td><strong>Low Risk:</strong> Small, independently deployable iterations, instant canary traffic shifting, guaranteed zero-downtime rollbacks, and immediate business value delivery.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
 
-<h3>The Core Concept</h3>
-<p>Refactoring a massive monolithic application all at once (a "big bang" rewrite) is risky. The Strangler Pattern proposes a gradual migration: build new microservices at the edges of the legacy system, route a fraction of traffic to them, and grow the new services until the monolith can be removed.</p>
+<p>The pattern takes its name from the tropical strangler fig tree, which seeds in the upper branches of a host tree, sends roots down to the soil, gradually envelops the host, and eventually stands independently after the host tree rots away.</p>
 
-<h3>How It Works</h3>
+<div class="diagram-wrapper">
+  <div class="mermaid">
+flowchart TD
+  subgraph ClientTier["External Clients"]
+    Client["Web / Mobile Traffic"]
+  end
+
+  subgraph FacadeTier["Edge Routing Layer"]
+    Facade["API Gateway / Envoy Reverse Proxy<br/>(Dynamic Traffic Shifting Controller)"]
+  end
+
+  subgraph Legacy["Legacy Monolith"]
+    Monolith["Monolithic Application<br/>(Order, Billing, Catalog, Search)"]
+  end
+
+  subgraph ModernServices["Decomposed Microservices"]
+    SearchSvc["New Search Service<br/>(10% Canary -> 100%)"]
+    CatalogSvc["New Catalog Service<br/>(100% Migrated)"]
+  end
+
+  Client --> Facade
+  Facade -->|"90% Legacy Traffic"| Monolith
+  Facade -->|"10% Canary Experiment"| SearchSvc
+  Facade -->|"100% Routed"| CatalogSvc
+  </div>
+  <div class="diagram-caption">Figure 1: The Strangler Fig pattern utilizing an edge API Gateway facade to incrementally strangle monolithic capabilities.</div>
+</div>
+
+<h3 id="strangler-lifecycle">The Five-Phase Strangler Fig Lifecycle</h3>
 <ol>
-  <li><strong>The Facade (Controller):</strong> Place an API Gateway or controller in front of the legacy application to intercept incoming traffic.</li>
-  <li><strong>Incremental Migration:</strong> Identify a specific module (e.g., "Search") and rebuild it as an independent microservice.</li>
-  <li><strong>Traffic Shifting:</strong> Configure the controller to route traffic based on rules. For example:
+  <li><strong>Deploy the Edge Facade (Interception Controller):</strong> Place an API Gateway (e.g., Envoy, Kong, AWS API Gateway) or reverse proxy in front of the monolithic application. All client traffic hits the facade first, which transparently proxies 100% of requests to the monolith.</li>
+  <li><strong>Identify &amp; Carve Out an Edge Bounded Context:</strong> Identify a high-value, loosely coupled domain module (e.g., the "Product Search" or "Notification" domain). Implement this capability as a standalone, production-ready microservice with its own private data store.</li>
+  <li><strong>Canary Traffic Shifting:</strong> Reconfigure the facade routing table:
     <ul>
-      <li>Initially, 90% of traffic goes to the monolith.</li>
-      <li>10% of traffic is routed to the new microservice to test stability.</li>
+      <li>Initially route <strong>90%</strong> of search requests to the monolith and <strong>10%</strong> to the new microservice.</li>
+      <li>Compare latency, error rates, and CPU utilization across both endpoints.</li>
     </ul>
   </li>
-  <li><strong>Rollback Capability:</strong> If the new microservice fails, the controller can switch traffic back to the monolith (0% to the microservice), ensuring no user downtime.</li>
-  <li><strong>Strangulation:</strong> Gradually increase traffic to the new service ($50\% \to 100\%$). Once stable, delete the corresponding code from the monolith and repeat for other modules.</li>
+  <li><strong>Zero-Downtime Rollback Protection:</strong> If the new microservice encounters unexpected concurrency bottlenecks or database deadlocks, the facade instantly re-routes 100% of traffic back to the legacy monolith with zero client disruption.</li>
+  <li><strong>Total Strangulation &amp; Code Elimination:</strong> Gradually ramp traffic ($10\% \to 50\% \to 100\%$). Once the new service is validated in production, the obsolete search code and database tables inside the monolith are permanently deleted. The team then repeats the cycle for the next domain module.</li>
 </ol>
+
+<h2 id="data-management">2. Data Topology: Shared DB vs Database-per-Service</h2>
+<p>Before implementing distributed transactions, an engineering team must define its data persistence boundaries.</p>
+
+<h3 id="shared-database-antipattern">A. Shared Database (The Microservices Anti-Pattern)</h3>
+<p>In a shared database architecture, multiple distinct microservice processes connect directly to a single shared relational database cluster.</p>
+
+<div class="callout callout-warning">
+  <div class="callout-title">⚠️ Why Shared Database Inevitably Fails at Scale</div>
+  <ul>
+    <li><strong>Runtime Coupling &amp; Lock Contention:</strong> A slow analytical query or table lock initiated by the Reporting Service blocks row writes from the mission-critical Order Service, triggering cascading thread exhaustion.</li>
+    <li><strong>Schema Fragility:</strong> Because multiple services read from the same tables, altering a single column or adding a constraint requires cross-team synchronization and coordinated deployments, destroying deployment independence.</li>
+    <li><strong>Technology Lock-In:</strong> Every microservice is forced to use the same underlying storage engine, preventing teams from selecting specialized storage solutions (e.g., NoSQL for session caching, Neo4j for social graphs, or Elasticsearch for search).</li>
+  </ul>
+</div>
+
+<h3 id="database-per-service">B. Database-per-Service (The Recommended Architectural Standard)</h3>
+<p>In the Database-per-Service pattern, each microservice owns, controls, and encapsulates its own private data store.</p>
 
 <div class="diagram-wrapper">
   <div class="mermaid">
 flowchart LR
-  Clients["Client Requests"] --> Facade["API Gateway / Facade"]
-  Facade -->|"90% Initial Traffic"| Monolith["Legacy Monolith"]
-  Facade -->|"10% Canary Shift"| Microservice["New Microservice (e.g. Search)"]
+  subgraph OrderDomain["Order Service Boundary"]
+    OrderSvc["Order Service (Golang)"]
+    OrderDB[("Order DB<br/>(PostgreSQL)")]
+    OrderSvc --- OrderDB
+  end
+
+  subgraph CustomerDomain["Customer Service Boundary"]
+    CustSvc["Customer Service (Java)"]
+    CustDB[("Customer DB<br/>(DynamoDB)")]
+    CustSvc --- CustDB
+  end
+
+  subgraph InventoryDomain["Inventory Service Boundary"]
+    InvSvc["Inventory Service (Node.js)"]
+    InvDB[("Inventory DB<br/>(MySQL)")]
+    InvSvc --- InvDB
+  end
+
+  OrderSvc -->|"gRPC / REST API"| CustSvc
+  OrderSvc -->|"gRPC / REST API"| InvSvc
+
+  linkStyle 3,4 stroke:#10b981,stroke-width:2px;
   </div>
-  <div class="diagram-caption">Figure 1: Strangler Pattern with edge API facade and fractional traffic routing.</div>
+  <div class="diagram-caption">Figure 2: Database-per-Service encapsulation: services interact exclusively via APIs; direct cross-database access is strictly prohibited.</div>
 </div>
 
-<h2 id="data-management">2. Data Management: Shared DB vs. Database Per Service</h2>
-<p>Before implementing distributed transaction patterns (e.g., SAGA), decide data topology.</p>
+<div class="table-wrapper">
+  <table>
+    <thead>
+      <tr>
+        <th>Architectural Invariant</th>
+        <th>Technical Implication</th>
+        <th>Business Benefit</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Zero Direct Cross-DB Access</strong></td>
+        <td>No service may ever connect to or read another service's database directly. Communication occurs strictly over documented APIs (REST/gRPC) or asynchronous events.</td>
+        <td>Guarantees complete internal schema autonomy and encapsulation.</td>
+      </tr>
+      <tr>
+        <td><strong>Polyglot Persistence</strong></td>
+        <td>Each service chooses the optimal database technology for its domain model (e.g., relational for ledger transactions, document store for product catalogs).</td>
+        <td>Maximizes hardware efficiency and developer velocity.</td>
+      </tr>
+      <tr>
+        <td><strong>Independent Scaling</strong></td>
+        <td>The Order DB can scale up CPU and read replicas independently without inflating the cost of the Customer DB.</td>
+        <td>Linear, predictable cloud infrastructure costs.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
 
-<h3>2.1 A. Shared Database (The Anti-Pattern)</h3>
-<p>Multiple microservices connect to a single monolithic database.</p>
-<p><strong>Why it fails:</strong></p>
-<ul>
-  <li><strong>Scaling issues:</strong> High traffic for one service requires scaling the entire database, wasting resources.</li>
-  <li><strong>Coupling:</strong> Schema changes by one service can break others.</li>
-  <li><strong>Technology lock-in:</strong> All services must use the same DB technology even when different stores would be better suited.</li>
-</ul>
-
-<h3>2.2 B. Database Per Service (Recommended)</h3>
-<p>Each microservice owns a private database.</p>
-<p><strong>Rules:</strong></p>
-<ul>
-  <li>No service may access another service's database directly; communication must use APIs.</li>
-</ul>
-<p><strong>Benefits:</strong></p>
-<ul>
-  <li><strong>Loose coupling:</strong> Schema changes are local to a service.</li>
-  <li><strong>Polyglot persistence:</strong> Choose the best database per service (e.g., RDBMS for finance, NoSQL for product catalog).</li>
-  <li><strong>Independent scaling:</strong> Scale each service DB independently.</li>
-</ul>
-<p><strong>Challenges:</strong></p>
+<h3 id="the-two-grand-challenges">The Two Grand Challenges of Database-per-Service</h3>
+<p>Decoupling databases solves modularity but immediately creates two profound distributed systems dilemmas:</p>
 <ol>
-  <li>How to maintain transactions across multiple databases? (Solved by <strong>SAGA</strong>.)</li>
-  <li>How to perform joins across multiple databases? (Solved by <strong>CQRS</strong>.)</li>
+  <li><strong>The Distributed Transaction Challenge:</strong> How do you maintain data consistency across multiple databases without 2-Phase Commit (2PC) bottlenecks? $\implies$ <em>Solved by the SAGA Pattern.</em></li>
+  <li><strong>The Distributed Join Challenge:</strong> How do you execute complex queries that join data living in three distinct databases without creating $O(N)$ HTTP network waterfalls? $\implies$ <em>Solved by CQRS.</em></li>
 </ol>
 
-<h2 id="saga-pattern">3. The SAGA Pattern</h2>
+<h2 id="saga-pattern">3. The SAGA Pattern &amp; Distributed Transactions</h2>
+<p>In a monolithic architecture, executing a multi-step business process (e.g., Order Checkout $\to$ Deduct Inventory $\to$ Process Payment) relies on classical relational database <strong>ACID transactions</strong> (Atomicity, Consistency, Isolation, Durability) wrapped in a single <code>BEGIN TRANSACTION ... COMMIT</code> block.</p>
 
-<h3>Goal</h3>
-<p>Manage distributed transactions and ensure data consistency across multiple services.</p>
-
-<h3>Problem: ACID in Distributed Systems</h3>
-<p>In a monolith, a single DB transaction is ACID. In microservices, a business process often spans multiple services (e.g., Order &rarr; Inventory &rarr; Payment). If a later service fails after earlier services have committed, you cannot roll back those commits from another database.</p>
-
-<h3>Solution: Sequence of Local Transactions</h3>
-<p>SAGA decomposes a global transaction into a sequence of local transactions:</p>
+<p>In a microservices architecture, this single business action spans three autonomous services with three distinct databases. Classical distributed transaction protocols like <strong>Two-Phase Commit (2PC)</strong> are completely unsuitable for cloud-scale architectures:</p>
 <ul>
-  <li><strong>Success path:</strong> Service A updates its DB &rarr; emits event &rarr; Service B listens and updates &rarr; emits event &rarr; Service C listens and updates.</li>
-  <li><strong>Failure path (compensating transactions):</strong> If Service C fails, a compensating transaction (an "undo" action) runs in reverse. Example: if a $10 payment fails, the compensating transaction might refund $10 or release reserved inventory — not a DB rollback but a new corrective transaction.</li>
+  <li><strong>2PC Blocking Invariant:</strong> 2PC holds global row locks across all participating databases across the network throughout both prepare and commit phases. If a single network packet drops or one node stalls, all locks remain held, causing cluster-wide connection pool exhaustion.</li>
+  <li><strong>CAP Theorem Trade-Off:</strong> Under network partitions, 2PC sacrifices availability completely to maintain strict consistency.</li>
 </ul>
 
-<h3>Implementation Approaches</h3>
+<h3 id="saga-concept">The SAGA Solution: Sequences of Local Transactions</h3>
+<p>A SAGA decomposes a global transaction into a <strong>sequence of local transactions</strong>. Each local transaction updates its private database, commits immediately, and emits a domain event or message to trigger the next local transaction in the chain.</p>
+
+<div class="callout callout-important">
+  <div class="callout-title">The Compensating Transaction (Semantic Undo)</div>
+  <p>Because each local transaction commits immediately, a subsequent failure cannot be "rolled back" at the database level. Instead, the SAGA relies on <strong>Compensating Transactions</strong>: forward-correcting semantic undos executed in reverse order.</p>
+  <p>For example, if the Payment Service fails after the Inventory Service has committed a stock reservation, the SAGA does not execute a rollback. Instead, it invokes a compensating transaction on the Inventory Service that adds the reserved items back into the stock pool, returning the system to a clean, consistent state.</p>
+</div>
+
+<h2 id="saga-choreography">3.1 Choreography-Based SAGA (Decentralized)</h2>
+<p>In a Choreographed SAGA, there is no centralized coordinator. Participating microservices subscribe to domain events published to a message broker (such as Apache Kafka or RabbitMQ) and independently trigger local transactions based on incoming events.</p>
+
+<div class="diagram-wrapper">
+  <div class="mermaid">
+sequenceDiagram
+  autonumber
+  participant O as Order Service
+  participant I as Inventory Service
+  participant P as Payment Service
+  participant Broker as Event Bus (Kafka)
+
+  Note over O: 1. Create Order (PENDING)
+  O->>Broker: Publish: OrderCreated
+  Broker->>I: Consume: OrderCreated
+  Note over I: 2. Reserve Stock
+  I->>Broker: Publish: InventoryReserved
+  Broker->>P: Consume: InventoryReserved
+  Note over P: 3. Attempt Payment (FAILS: Insufficient Funds)
+  P->>Broker: Publish: PaymentFailed
+  
+  Note over Broker,I: Compensating Flow Begins
+  Broker->>I: Consume: PaymentFailed
+  Note over I: 4. Compensating Tx: Release Reserved Stock
+  I->>Broker: Publish: InventoryReleased
+  
+  Broker->>O: Consume: InventoryReleased
+  Note over O: 5. Compensating Tx: Mark Order CANCELLED
+  </div>
+  <div class="diagram-caption">Figure 3: Choreography failure flow: Payment failure triggers chained compensating events to release inventory and cancel the order.</div>
+</div>
+
+<h3 id="choreography-tradeoffs">Choreography Trade-Off Analysis</h3>
+<ul>
+  <li><strong>Advantages:</strong>
+    <ul>
+      <li><strong>Simplicity for Small Workflows:</strong> Easy to implement for workflows spanning 2 to 3 services.</li>
+      <li><strong>Loose Coupling:</strong> Services only depend on shared event contracts; there is no centralized orchestrator bottleneck.</li>
+    </ul>
+  </li>
+  <li><strong>Disadvantages:</strong>
+    <ul>
+      <li><strong>Cyclic Dependencies:</strong> As workflows grow to 6+ services, tracking event flow becomes cognitive overhead. Services risk entering circular event loops.</li>
+      <li><strong>Invisible State Machine:</strong> Understanding the current end-to-end status of an order requires stitching together logs across multiple distributed systems.</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="saga-orchestration">3.2 Orchestration-Based SAGA (Centralized)</h2>
+<p>In an Orchestrated SAGA, a dedicated <strong>Saga Orchestrator</strong> (implemented using tools like Temporal, AWS Step Functions, or custom state machines) manages the entire lifecycle. The orchestrator explicitly commands participating services to execute local transactions and listens for their command acknowledgments.</p>
+
+<div class="diagram-wrapper">
+  <div class="mermaid">
+flowchart TD
+  subgraph Orchestrator["Saga Orchestrator (State Machine)"]
+    SM["Checkout Saga Coordinator<br/>• Persists State Transitions<br/>• Executes Failure Strategies<br/>• Manages Retries & Timeouts"]
+  end
+
+  subgraph Services["Participating Microservices"]
+    OS["Order Service"]
+    IS["Inventory Service"]
+    PS["Payment Service"]
+  end
+
+  SM -->|"1. Command: CreatePendingOrder"| OS
+  OS -->|"Ack: OrderCreated"| SM
+  SM -->|"2. Command: ReserveInventory"| IS
+  IS -->|"Ack: InventoryReserved"| SM
+  SM -->|"3. Command: ProcessPayment"| PS
+  PS -->|"Nack: PaymentRejected"| SM
+
+  SM -.->|"4. Compensate: ReleaseStock"| IS
+  SM -.->|"5. Compensate: CancelOrder"| OS
+  </div>
+  <div class="diagram-caption">Figure 4: Orchestrated SAGA: Centralized state machine coordinates sequential forward commands and compensating rollback calls.</div>
+</div>
+
+<h3 id="orchestration-tradeoffs">Orchestration Trade-Off Analysis</h3>
+<ul>
+  <li><strong>Advantages:</strong>
+    <ul>
+      <li><strong>Centralized State Visibility:</strong> The orchestrator's state table provides a single source of truth for the real-time execution status of any distributed transaction.</li>
+      <li><strong>Deterministic Error Handling:</strong> Timeouts, exponential backoff retries, and compensation cascades are configured centrally in a state diagram rather than scattered across dozens of event listeners.</li>
+      <li><strong>Elimination of Cyclic Event Webs:</strong> Participating services remain simple command processors without requiring knowledge of upstream or downstream business flows.</li>
+    </ul>
+  </li>
+  <li><strong>Disadvantages:</strong>
+    <ul>
+      <li><strong>Central Coordinator Risk:</strong> The orchestrator service must be architected for high availability; if the coordinator fails, ongoing transactions pause.</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="cqrs-pattern">4. CQRS: Command Query Responsibility Segregation</h2>
+<p>In standard application design, the same data model is used to handle both writes (insert, update, delete) and reads (fetch, search). In microservices with Database-per-Service, this approach breaks down when handling complex cross-service queries.</p>
+
+<div class="callout callout-warning">
+  <div class="callout-title">The "Join Problem" in Microservices</div>
+  <p>Consider an e-commerce dashboard query: <em>"Display the latest 50 orders for Customer X, including shipping status, ordered product thumbnails, payment method, and warehouse dispatch ETA."</em></p>
+  <p>Because data is sharded across Customer DB, Order DB, Inventory DB, and Shipping DB, an application cannot execute a SQL <code>JOIN</code>. The naive alternative—querying the Order Service, then issuing 50 concurrent HTTP requests to the Product Service, and 50 requests to the Shipping Service—results in catastrophic <strong>$N+1$ network request storms</strong>, extreme latency, and cascading service outages.</p>
+</div>
+
+<h3 id="cqrs-architecture">The CQRS Architecture: Decoupling Command &amp; Query Models</h3>
+<p>CQRS resolves this by splitting the application into two completely independent architectural models:</p>
+
+<div class="diagram-wrapper">
+  <div class="mermaid">
+flowchart LR
+  subgraph ClientTraffic["Client Applications"]
+    Writer["Write Clients<br/>(Place Order / Cancel)"]
+    Reader["Read Clients<br/>(Dashboard / Search)"]
+  end
+
+  subgraph WriteTier["Command Model (Write-Optimized)"]
+    CmdHandler["Command Handler<br/>(Validation & Business Rules)"]
+    WriteDB[("Write Database<br/>(Normalized PostgreSQL)<br/>Strong Consistency")]
+  end
+
+  subgraph SyncTier["Asynchronous Projection Stream"]
+    KafkaBus["Kafka / Event Store / CDC"]
+    Projector["Projection Worker Engine"]
+  end
+
+  subgraph ReadTier["Query Model (Read-Optimized)"]
+    ReadDB[("Read Database<br/>(Elasticsearch / Denormalized Views)<br/>Eventual Consistency")]
+    QueryHandler["Query Handler<br/>(High-Speed Single Lookups)"]
+  end
+
+  Writer -->|"Execute Commands"| CmdHandler
+  CmdHandler --> WriteDB
+  WriteDB -->|"Commit Log / CDC"| KafkaBus
+  KafkaBus --> Projector
+  Projector -->|"Denormalized Upserts"| ReadDB
+
+  Reader -->|"Execute Queries"| QueryHandler
+  QueryHandler --> ReadDB
+  </div>
+  <div class="diagram-caption">Figure 5: CQRS architecture: Commands mutate a normalized write DB, which streams events to project denormalized read views.</div>
+</div>
+
+<h3 id="command-vs-query">Command Model vs Query Model</h3>
+
+<div class="table-wrapper">
+  <table>
+    <thead>
+      <tr>
+        <th>Architectural Vector</th>
+        <th>Command Model (Write Tier)</th>
+        <th>Query Model (Read Tier)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Primary Responsibility</strong></td>
+        <td>Validates incoming business commands, enforces business domain invariants, mutates state, and guarantees atomic commits.</td>
+        <td>Returns pre-aggregated, read-optimized data payloads directly to client interfaces with zero real-time joins.</td>
+      </tr>
+      <tr>
+        <td><strong>Data Structure</strong></td>
+        <td>Strictly normalized (3NF) relational tables or append-only event logs to prevent write anomalies.</td>
+        <td>Heavily denormalized flat documents or JSON views designed specifically for single-query retrieval.</td>
+      </tr>
+      <tr>
+        <td><strong>Storage Engine</strong></td>
+        <td>ACID-compliant relational store (PostgreSQL, MySQL) or distributed key-value store.</td>
+        <td>Search engines (Elasticsearch), in-memory caches (Redis), or document stores (MongoDB).</td>
+      </tr>
+      <tr>
+        <td><strong>Consistency Model</strong></td>
+        <td><strong>Strong Consistency</strong> on local entity boundaries.</td>
+        <td><strong>Eventual Consistency:</strong> Asynchronously catches up with the write model within milliseconds.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="cqrs-synchronization">4.1 Asynchronous Projections &amp; Eventual Consistency</h2>
+<p>How does the Query Model stay synchronized with the Command Model?</p>
 <ol>
-  <li><strong>Choreography (Decentralized):</strong>
-    <ul>
-      <li>Services communicate via events without a central coordinator.</li>
-      <li>Flow: Service A emits "OrderCreated." Service B reserves inventory and emits "InventoryReserved." Service C attempts payment on that event.</li>
-      <li><strong>Pros:</strong> Simple to start; no single coordinator bottleneck.</li>
-      <li><strong>Cons:</strong> Hard to track the overall transaction status; risk of cyclic dependencies and complex event chains.</li>
-    </ul>
+  <li><strong>Change Data Capture (CDC):</strong> A tool like Debezium tails the transaction write-ahead log (WAL) of the Write Database and streams insert/update records into an Apache Kafka topic.</li>
+  <li><strong>Projection Workers:</strong> Background projection services consume the Kafka stream. When an <code>OrderCreated</code> or <code>PaymentReceived</code> event arrives, the worker fetches related customer and product details, constructs a denormalized JSON document:
+  <pre><code class="language-json">{
+  "order_id": "ord_9941",
+  "customer_name": "Alice Smith",
+  "customer_email": "alice@example.com",
+  "items": [
+    {"name": "Mechanical Keyboard", "price": 120.00, "thumbnail": "https://img/kb.png"}
+  ],
+  "shipping_status": "DISPATCHED",
+  "payment_status": "PAID"
+}</code></pre>
   </li>
-  <li><strong>Orchestration (Centralized):</strong>
-    <ul>
-      <li>A central orchestrator manages the workflow.</li>
-      <li>Flow: Orchestrator commands Service A to create order; upon success, instructs Service B to reserve inventory; on failure, commands compensating actions (e.g., undo Order).</li>
-      <li><strong>Pros:</strong> Clear control flow and easier handling of complex workflows.</li>
-      <li><strong>Cons:</strong> Introduces centralized logic that must be maintained and scaled.</li>
-    </ul>
-  </li>
+  <li><strong>Zero-Join Querying:</strong> When the web dashboard queries the order, the Query Handler performs a single $O(1)$ point lookup against the Read Database. No cross-service network calls or database joins are required.</li>
 </ol>
 
-<h2 id="cqrs">4. CQRS (Command Query Responsibility Segregation)</h2>
+<div class="callout callout-tip">
+  <div class="callout-title">Handling Read-Your-Own-Writes Lag</div>
+  <p>Because the projection pipeline is asynchronous, a user who immediately refreshes the page after placing an order might read stale data from the Query Model. Production systems mitigate this by:</p>
+  <ul>
+    <li><strong>Optimistic Client Updates:</strong> The client UI immediately inserts the newly created order into local client state without waiting for the read model projection.</li>
+    <li><strong>Version / ETag Routing:</strong> The client passes the mutation timestamp or version number. If the read model's projected version is behind, the query handler routes the read directly to the primary write model for that single request.</li>
+  </ul>
+</div>
 
-<h3>Goal</h3>
-<p>Solve the "join problem" caused by database-per-service by separating write and read concerns.</p>
+<h2 id="summary-and-takeaways">5. Architectural Summary &amp; Decision Matrix</h2>
 
-<h3>Problem</h3>
-<p>With separate service databases, you cannot perform a single SQL JOIN across services (e.g., Orders in one DB and Customers in another). Performing multiple API calls and joining results in application code is slow and inefficient.</p>
+<div class="table-wrapper">
+  <table>
+    <thead>
+      <tr>
+        <th>Design Pattern</th>
+        <th>Core Problem Solved</th>
+        <th>When to Apply</th>
+        <th>Key Trade-Off / Risk</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Strangler Fig</strong></td>
+        <td>High failure rate of "Big Bang" legacy monolithic rewrites.</td>
+        <td>Migrating existing production monoliths without downtime.</td>
+        <td>Requires maintaining routing facades and data synchronization during transition.</td>
+      </tr>
+      <tr>
+        <td><strong>Database-per-Service</strong></td>
+        <td>Shared DB runtime lock contention, schema coupling, and blast radius.</td>
+        <td>All greenfield microservice architectures.</td>
+        <td>Breaks cross-service ACID transactions and cross-database SQL joins.</td>
+      </tr>
+      <tr>
+        <td><strong>SAGA Pattern</strong></td>
+        <td>Executing distributed business transactions across multiple databases.</td>
+        <td>Workflows spanning multiple bounded contexts (e.g., Checkout, Fulfillment).</td>
+        <td>Requires writing complex compensating transactions; isolation anomalies (dirty reads).</td>
+      </tr>
+      <tr>
+        <td><strong>CQRS</strong></td>
+        <td>High query latency and $N+1$ network calls when querying across services.</td>
+        <td>High-read platforms, complex dashboard views, rich full-text search requirements.</td>
+        <td>Increased infrastructure complexity and inherent eventual consistency lag.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
 
-<h3>Solution</h3>
-<p>Split the system into two parts:</p>
-<ul>
-  <li><strong>Command Side (Write Model):</strong> Handles CREATE, UPDATE, DELETE. Uses each service's authoritative database and is optimized for integrity and business logic.</li>
-  <li><strong>Query Side (Read Model):</strong> Handles SELECT. Uses a separate read database or materialized view containing denormalized, pre-joined data optimized for fast queries (e.g., a table with Order ID, Product Name, Customer Name).</li>
-</ul>
-
-<h3>Synchronization</h3>
-<ul>
-  <li>When a write occurs, the command side publishes an event (e.g., <code>UserUpdated</code>).</li>
-  <li>The query side listens to events and updates the read database/materialized view.</li>
-  <li>This pattern relies on <strong>eventual consistency</strong>: there may be a small delay (milliseconds to seconds) between a write and the read view update.</li>
-</ul>
+<div class="callout callout-note">
+  <div class="callout-title">Final Synthesis</div>
+  <p>Microservices architecture is not merely about splitting code into smaller repositories—it is fundamentally a <strong>reorganization of state boundaries</strong>. By combining the Strangler Fig for evolutionary migration, Database-per-Service for state encapsulation, SAGA for eventual transaction consistency, and CQRS for optimized query projection, software architects build distributed systems that scale linearly across both organizational headcount and compute infrastructure.</p>
+</div>
 
       </article>
 
       <aside class="toc-sidebar">
         <div class="toc-title">Table of Contents</div>
         <ul class="toc-list">
-          <li><a href="#strangler-pattern">1. Strangler Pattern</a></li>
-          <li><a href="#data-management">2. Data Management</a></li>
-          <li class="toc-sub"><a href="#data-management">Shared DB vs Per Service</a></li>
-          <li><a href="#saga-pattern">3. SAGA Pattern</a></li>
-          <li class="toc-sub"><a href="#saga-pattern">Choreography vs Orchestration</a></li>
-          <li><a href="#cqrs">4. CQRS Pattern</a></li>
-          <li class="toc-sub"><a href="#cqrs">Command &amp; Query Separation</a></li>
+          <li><a href="#strangler-pattern">1. The Strangler Fig Pattern</a></li>
+          <li><a href="#data-management">2. Shared DB vs Database-per-Service</a></li>
+          <li><a href="#saga-pattern">3. The SAGA Pattern</a></li>
+          <li><a href="#saga-choreography">3.1 Choreography SAGA</a></li>
+          <li><a href="#saga-orchestration">3.2 Orchestration SAGA</a></li>
+          <li><a href="#cqrs-pattern">4. CQRS Architecture</a></li>
+          <li><a href="#cqrs-synchronization">4.1 Projections &amp; Eventual Consistency</a></li>
+          <li><a href="#summary-and-takeaways">5. Architectural Summary &amp; Matrix</a></li>
         </ul>
       </aside>
     </div>
 
     <div class="post-navigation">
-      <a href="kafka-architecture-part2.html" class="nav-card">
+      <a href="kafka-exactly-once-semantics.html" class="nav-card">
         <span class="nav-label">← Previous Note</span>
-        <span class="nav-card-title">Kafka Architecture Part 2</span>
+        <span class="nav-card-title">Kafka Exactly-Once Semantics</span>
       </a>
       <a href="redis-internals-and-architecture.html" class="nav-card" style="text-align: right;">
         <span class="nav-label">Next Note →</span>
-        <span class="nav-card-title">Redis Internal Mechanics</span>
+        <span class="nav-card-title">Redis Internals &amp; Architecture</span>
       </a>
     </div>
   </main>
@@ -251,32 +555,36 @@ flowchart LR
       <div class="footer-col">
         <h5>Core Categories</h5>
         <ul>
-          <li><a href="microservices-design-patterns.html">Microservices Patterns</a></li>
-          <li><a href="grab-data-layer-architecture.html">Grab Data Layer Architecture</a></li>
           <li><a href="kafka-architecture-part1.html">Apache Kafka Fundamentals</a></li>
-          <li><a href="consistent-hashing.html">Consistent Hashing Guide</a></li>
-          <li><a href="storage-compute-separation-aurora.html">Aurora Storage-Compute Separation</a></li>
-          <li><a href="cap-theorem-and-google-spanner.html">Google Spanner &amp; TrueTime</a></li>
+          <li><a href="kafka-architecture-part2.html">Kafka Consumers &amp; HA</a></li>
+          <li><a href="kafka-exactly-once-semantics.html">Kafka Exactly-Once Semantics</a></li>
+          <li><a href="grab-data-layer-architecture.html">Grab Data Layer Architecture</a></li>
         </ul>
       </div>
       <div class="footer-col">
-        <h5>Quick Links</h5>
+        <h5>Architectural Deep Dives</h5>
         <ul>
-          <li><a href="../index.html">All Notes &amp; Deep Dives</a></li>
-          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank">GitHub Repository</a></li>
-          <li><a href="../index.html#pdf-library">Reference Documents</a></li>
+          <li><a href="bitcask-storage-engine.html">Bitcask Storage Engine</a></li>
+          <li><a href="consistent-hashing.html">Consistent Hashing</a></li>
+          <li><a href="cap-theorem-and-google-spanner.html">CAP Theorem &amp; Spanner</a></li>
+          <li><a href="storage-compute-separation-aurora.html">Storage-Compute Separation</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Production Case Studies</h5>
+        <ul>
+          <li><a href="uber-emergency-sos-service.html">Uber Emergency SOS Architecture</a></li>
+          <li><a href="booking-user-review-system.html">Booking.com Review System</a></li>
+          <li><a href="zomato-search-intent-nlp.html">Zomato Search Intent &amp; NLP</a></li>
+          <li><a href="dragonflydb-bplus-tree-sorted-set.html">DragonflyDB B+ Tree Sorted Set</a></li>
         </ul>
       </div>
     </div>
     <div class="footer-bottom">
-      <div>System Design Notes · Open source under MIT License.</div>
-      <div>Hosted on GitHub Pages</div>
+      <p>&copy; 2026 System Design Notes. Built for systems engineers and software architects.</p>
     </div>
   </footer>
 
-  <button id="back-to-top" class="back-to-top" aria-label="Back to top">↑</button>
-
-  <script src="../assets/js/articles-data.js"></script>
   <script src="../assets/js/main.js"></script>
 </body>
 </html>

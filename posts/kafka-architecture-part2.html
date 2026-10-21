@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Apache Kafka Architecture Part 2 — Consumer Groups &amp; High Availability — System Design Notes</title>
-  <meta name="description" content="Technical notes on Apache Kafka Architecture Part 2: Consumer groups, partition assignment rules, __consumer_offsets internal management, commit strategies, clusters, and Leader-Follower replication.">
+  <title>Apache Kafka Architecture Part 2 — Consumer Groups, Offsets &amp; HA Replication — System Design Notes</title>
+  <meta name="description" content="Deep-dive technical breakdown of Apache Kafka Architecture Part 2: Consumer group scaling invariants, offset tracking in __consumer_offsets, auto vs manual commit failure modes, cluster HA, and Leader-Follower ISR replication.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Lora:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet">
@@ -76,7 +76,7 @@
 
     <header class="article-header">
       <span class="article-header-badge">Event Driven Architecture</span>
-      <h1 class="article-header-title">Kafka Architecture - Part 2</h1>
+      <h1 class="article-header-title">Kafka Architecture — Part 2: Consumer Groups, Offsets &amp; HA Replication</h1>
       <div class="article-header-meta">
         <span>📁 Category: Event Streaming &amp; Message Brokers</span>
       </div>
@@ -91,86 +91,515 @@
       <article class="prose">
         
 <div class="callout callout-note">
-  <div class="callout-title">📌 Architectural Overview</div>
-  <p>Part 2 examines the consumption and fault-tolerance mechanics of Apache Kafka: how consumers organize into groups to scale reads, how partition offsets are tracked in internal topics, commit trade-offs, and cluster high availability via Leader-Follower replication.</p>
+  <div class="callout-title">📌 Architectural Blueprint</div>
+  <p>While Part 1 established the storage and ingestion foundations of Apache Kafka, Part 2 explores the consumption and high-availability mechanics: how consumers coordinate into logical groups to achieve linear read scalability, how Kafka tracks processing state via the internal <code>__consumer_offsets</code> topic, the exact failure modes of auto vs manual commit strategies, and how cluster-wide Leader-Follower replication provides zero-data-loss durability.</p>
 </div>
 
-<h2 id="consumers-groups">1. Consumers and Consumer Groups</h2>
-<ul>
-  <li><strong>Consumer Groups:</strong> Consumers are logically grouped together. A consumer can join any group (e.g., a "Notification" group or an "Analytics" group).</li>
-  <li><strong>Rule 1 (Within a Group):</strong> Different consumers in the same group can only read from different partitions. Multiple consumers in the same group cannot read the same partition simultaneously.</li>
-  <li><strong>Rule 2 (Across Groups):</strong> Consumers in different groups can read from the same partition independently.</li>
-</ul>
+<h2 id="consumer-groups">1. Consumers &amp; Consumer Group Scaling Invariants</h2>
+<p>In distributed message processing, a system must satisfy two seemingly contradictory requirements:</p>
+<ol>
+  <li><strong>Horizontal Read Scalability:</strong> Multiple instances of a worker service must pool their compute power to process a high-velocity stream in parallel.</li>
+  <li><strong>Strict Entity Ordering:</strong> Concurrent processing must never cause race conditions or out-of-order execution for records belonging to the same entity.</li>
+</ol>
+
+<p>Apache Kafka solves this dual requirement through the <strong>Consumer Group</strong> abstraction.</p>
+
+<h3 id="consumer-group-definition">The Consumer Group Concept</h3>
+<p>A Consumer Group is an elastic, logical collection of one or more consumer application instances that collaborate to consume events from a set of subscribed topics. Each group identifies itself using a unique string, the <code>group.id</code> (e.g., <code>"notification-workers"</code>, <code>"fraud-detection-engine"</code>, <code>"data-warehouse-syncer"</code>).</p>
 
 <div class="diagram-wrapper">
   <div class="mermaid">
 flowchart TD
-  subgraph Partitions["Topic Partitions"]
+  subgraph Topic["Topic: Orders (4 Partitions)"]
     P0["Partition 0"]
     P1["Partition 1"]
+    P2["Partition 2"]
+    P3["Partition 3"]
   end
 
-  subgraph GroupA["Consumer Group A (Notification)"]
-    C1["Consumer A1"]
-    C2["Consumer A2"]
+  subgraph GroupA["Consumer Group A: 'Notification-Service' (2 Instances)"]
+    C_A1["Consumer Instance A1<br/>(Assigned P0 + P1)"]
+    C_A2["Consumer Instance A2<br/>(Assigned P2 + P3)"]
   end
 
-  subgraph GroupB["Consumer Group B (Analytics)"]
-    CB1["Consumer B1 (Reads P0 + P1)"]
+  subgraph GroupB["Consumer Group B: 'Analytics-Engine' (4 Instances)"]
+    C_B1["Consumer B1 (P0)"]
+    C_B2["Consumer B2 (P1)"]
+    C_B3["Consumer B3 (P2)"]
+    C_B4["Consumer B4 (P3)"]
   end
 
-  P0 --> C1
-  P1 --> C2
-  P0 --> CB1
-  P1 --> CB1
+  P0 --> C_A1
+  P1 --> C_A1
+  P2 --> C_A2
+  P3 --> C_A2
+
+  P0 --> C_B1
+  P1 --> C_B2
+  P2 --> C_B3
+  P3 --> C_B4
   </div>
-  <div class="diagram-caption">Figure 1: Consumer group partition assignment: exclusive within group, independent across groups.</div>
+  <div class="diagram-caption">Figure 1: Dual consumption topology: independent broadcast across distinct groups, exclusive load-balanced partitioning within each group.</div>
 </div>
 
-<h2 id="offset-management">2. Offset Management (__consumer_offsets)</h2>
+<h3 id="two-cardinal-rules">The Two Cardinal Rules of Kafka Consumer Groups</h3>
+<p>Every Kafka consumer group operates under two non-negotiable architectural invariants:</p>
+
+<div class="callout callout-important">
+  <div class="callout-title">Invariant 1: Exclusivity Within a Group (Load-Balancing Rule)</div>
+  <p><strong>Different consumers in the same consumer group can only read from different partitions. Multiple consumers in the exact same group can NEVER read from the same partition simultaneously.</strong></p>
+</div>
+
+<p>Why is this invariant mandatory? If two consumer threads in the same group read concurrently from Partition 0, they would receive interleaved messages. If Consumer 1 processes Offset 10 while Consumer 2 processes Offset 11, Consumer 2 could complete and commit before Consumer 1, completely breaking the partition's strict sequential order guarantee. By enforcing that <strong>exactly one consumer instance within a group is assigned to any given partition</strong>, Kafka guarantees race-free sequential processing within that partition.</p>
+
+<div class="callout callout-tip">
+  <div class="callout-title">Invariant 2: Independence Across Groups (Pub/Sub Broadcast Rule)</div>
+  <p><strong>Consumers in different consumer groups read from the same partition completely independently.</strong></p>
+</div>
+
+<p>Each consumer group maintains its own independent reading cursor. A record published to Partition 0 is delivered to Consumer A1 (in Group A) and also delivered to Consumer B1 (in Group B). Neither group impacts the consumption rate, latency, or committed offset of the other. Kafka seamlessly provides point-to-point queuing behavior within a group and publish-subscribe broadcasting across groups.</p>
+
+<h3 id="concurrency-ceiling">The Concurrency Ceiling Theorem</h3>
+<p>Because no two consumers in the same group can read from the same partition, the maximum degree of read parallelism for any consumer group is strictly bounded by the number of partitions in the topic:</p>
+
+$$\text{Max Active Consumers per Group} = \text{Total Partitions in Subscribed Topic}$$
+
+<div class="table-wrapper">
+  <table>
+    <thead>
+      <tr>
+        <th>Topic Partitions ($N$)</th>
+        <th>Consumer Group Size ($C$)</th>
+        <th>Allocation Topology</th>
+        <th>Operational State</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>$N = 4$</td>
+        <td>$C = 2$</td>
+        <td>Each consumer instance is assigned 2 partitions ($4 / 2 = 2$).</td>
+        <td>Balanced utilization; high worker throughput.</td>
+      </tr>
+      <tr>
+        <td>$N = 4$</td>
+        <td>$C = 4$</td>
+        <td>Each consumer instance is assigned exactly 1 partition.</td>
+        <td><strong>Maximum concurrency</strong> and optimal parallelism.</td>
+      </tr>
+      <tr>
+        <td>$N = 4$</td>
+        <td>$C = 6$</td>
+        <td>4 consumers each read 1 partition; <strong>2 consumers remain idle</strong>.</td>
+        <td>Idle instances act as hot standbys; they consume zero events until a rebalance occurs.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<p>If your consumer service is falling behind and you scale its Kubernetes deployment from 4 pods to 12 pods, but your topic only has 4 partitions, the 8 new pods will sit completely idle. To increase consumption concurrency, you must provision more topic partitions.</p>
+
+<h2 id="offset-management">2. Offset Tracking &amp; The <code>__consumer_offsets</code> Internal Topic</h2>
+<p>How does a consumer group know where to resume reading when an instance crashes, restarts, or deploys new code? It tracks its progress via committed offsets.</p>
+
+<h3 id="group-wise-offset-storage">Group-Wise Offset Tracking</h3>
+<p>Crucially, offsets are stored <strong>per consumer group, per partition</strong>, rather than per individual worker process. If Worker Pod 3 crashes while reading Partition 2, Kubernetes restarts the pod or Kafka rebalances Partition 2 to Worker Pod 1. The newly assigned worker queries the cluster: <em>"What is the latest committed offset for Group A on Partition 2?"</em> and immediately resumes processing from that exact position.</p>
+
+<h3 id="internal-offsets-topic">The <code>__consumer_offsets</code> Internal Topic</h3>
+<p>In early versions of Kafka (pre-0.9), consumer offsets were stored in Apache ZooKeeper. However, writing high-frequency offset updates from thousands of consumers to ZooKeeper's consensus tree overwhelmed ZooKeeper's write pipeline, creating a severe cluster-wide scalability bottleneck.</p>
+
+<p>Modern Kafka stores all consumer offset commits directly inside a specialized internal Kafka topic named <code>__consumer_offsets</code>:</p>
 <ul>
-  <li>Each consumer group maintains its partition-wise offsets independently. It tracks till which offset events have been successfully processed.</li>
-  <li><strong>Group-Wise Storage:</strong> Offsets are stored per consumer group, not per individual consumer. This ensures that if a consumer crashes, a new one can take over and know exactly where to resume from by checking the group's committed offset.</li>
-  <li><strong>Where are offsets stored?</strong> Kafka internally creates a special topic called <code>__consumer_offsets</code> (by default, it has 50 partitions). All offset data is stored here just like regular topic messages.</li>
-  <li><strong>Partition Assignment for Offsets:</strong> To determine which partition of the <code>__consumer_offsets</code> topic holds a specific group's offset, Kafka hashes the Group ID and performs a modulo operation against the number of partitions:
-  $$\text{Offset Partition} = \text{Hash}(\text{GroupID}) \pmod{50}$$
-  </li>
+  <li>By default, <code>__consumer_offsets</code> has <strong>50 partitions</strong> (configured via <code>offsets.topic.num.partitions = 50</code>).</li>
+  <li>It is configured with a replication factor of 3 (<code>offsets.topic.replication.factor = 3</code>) to guarantee high durability.</li>
+  <li>It uses <strong>Log Compaction</strong> (<code>cleanup.policy=compact</code>). Because an application only cares about the latest committed offset for a partition, Kafka's background cleaner thread periodically purges older offset records with duplicate keys, retaining only the most recent offset value.</li>
 </ul>
 
-<h2 id="commit-strategies">3. Offset Commit Strategies</h2>
+<div class="table-wrapper">
+  <table>
+    <thead>
+      <tr>
+        <th>Record Component</th>
+        <th>Field Name</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Message Key</strong></td>
+        <td><code>[Group ID, Topic Name, Partition ID]</code></td>
+        <td>Composite key identifying the exact stream coordinate. Example: <code>["order-processor", "orders", 2]</code>.</td>
+      </tr>
+      <tr>
+        <td><strong>Message Value</strong></td>
+        <td><code>[Committed Offset, Metadata, Timestamp]</code></td>
+        <td>The 64-bit committed offset integer (e.g., <code>104859</code>), custom client metadata string, and epoch commit timestamp.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="offset-partition-routing">Offset Partition Routing &amp; The Group Coordinator</h3>
+<p>With 50 partitions in <code>__consumer_offsets</code>, how does a consumer know which partition stores its offset, and which broker manages its group?</p>
+
+<p>Kafka hashes the string <code>group.id</code> and computes the modulo over 50:</p>
+
+$$\text{Offsets Partition ID} = \lvert\text{hashCode}(\text{group.id})\rvert \pmod{50}$$
+
+<div class="diagram-wrapper">
+  <div class="mermaid">
+flowchart LR
+  subgraph Client["Consumer Client"]
+    GID["Group ID: 'order-processor'<br/>hash('order-processor') = 8934522"]
+  end
+
+  subgraph Formula["Modulo Computation"]
+    Calc["8934522 % 50 = Partition 22"]
+  end
+
+  subgraph TopicOffsets["Topic: __consumer_offsets"]
+    P21["Partition 21"]
+    P22["Partition 22 (Leader: Broker 103)"]
+    P23["Partition 23"]
+  end
+
+  subgraph Coordinator["Group Coordinator Broker"]
+    B103["Broker 103<br/>Assigned Group Coordinator<br/>• Manages heartbeats<br/>• Coordinates rebalances<br/>• Receives OffsetCommits"]
+  end
+
+  GID --> Calc
+  Calc --> P22
+  P22 --> B103
+  Client -.->|"Heartbeats & OffsetCommits"| B103
+  </div>
+  <div class="diagram-caption">Figure 2: Deterministic mapping from Group ID to internal offset partition and designation of the Group Coordinator broker.</div>
+</div>
+
+<p>The broker that hosts the <strong>Leader of that specific partition</strong> in <code>__consumer_offsets</code> is automatically designated as the <strong>Group Coordinator</strong> for that consumer group. When consumer instances boot up, they send a <code>FindCoordinatorRequest</code> to any broker, receive Broker 103's socket address, and register directly with Broker 103.</p>
+
+<h2 id="commit-strategies">3. Offset Commit Strategies: Auto vs Manual Commit &amp; Failure Modes</h2>
+<p>When a consumer client fetches a batch of records from a broker via <code>poll()</code>, when and how should it inform Kafka that the records have been processed? This decision dictates the system's fault-tolerance semantics.</p>
+
+<h3 id="auto-commit">1. Auto-Commit Strategy (<code>enable.auto.commit = true</code>)</h3>
+<p>By default, Kafka consumer clients enable auto-commit. At every periodic interval defined by <code>auto.commit.interval.ms</code> (default: 5,000 ms / 5 seconds), the consumer's background thread automatically commits the highest offset returned by the previous <code>poll()</code> call.</p>
+
+<p>While convenient and zero-code, auto-commit introduces two severe operational failure modes under failure:</p>
+
+<div class="callout callout-warning">
+  <div class="callout-title">⚠️ Failure Mode 1: Data Loss (At-Most-Once Delivery)</div>
+  <p>Suppose the consumer polls 500 records (offsets 1,000 to 1,499). While the worker thread is slowly executing record 1,050, the 5-second auto-commit timer fires in the background. The consumer library automatically commits offset 1,500 to <code>__consumer_offsets</code>. Immediately thereafter, the JVM crashes or encounters an unhandled <code>OutOfMemoryError</code>.</p>
+  <p>When a replacement consumer restarts and queries the Group Coordinator, Kafka reports the committed offset as 1,500. Records 1,051 through 1,499 were <strong>never processed</strong> by any business logic, yet they are permanently skipped. <strong>Data is silently lost.</strong></p>
+</div>
+
+<div class="callout callout-warning">
+  <div class="callout-title">⚠️ Failure Mode 2: Massive Duplicate Processing (At-Least-Once Delivery)</div>
+  <p>Suppose the consumer polls 500 records (offsets 1,000 to 1,499). The worker thread successfully processes all 500 records and writes side-effects to an external database. However, before the 5-second timer fires, the consumer pod suffers a network partition or hardware failure.</p>
+  <p>Because the offset was never committed, the replacement consumer boots up, reads the stale committed offset (1,000), and re-executes all 500 records from scratch. If downstream operations (e.g., charging credit cards, sending SMS alerts) are not strictly idempotent, duplicate real-world actions occur.</p>
+</div>
+
+<h3 id="manual-commit">2. Manual Commit Strategy (Recommended for Production)</h3>
+<p>To eliminate silent data loss, enterprise production systems disable auto-commit (<code>enable.auto.commit = false</code>) and trigger manual commits only after the application has fully verified and persisted record side-effects.</p>
+
+<div class="table-wrapper">
+  <table>
+    <thead>
+      <tr>
+        <th>Manual Commit Method</th>
+        <th>Execution Behavior</th>
+        <th>Throughput vs Safety Trade-Off</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>commitSync()</code></td>
+        <td>Blocks the consumer thread synchronously until the broker returns an ACK or retries fail.</td>
+        <td>Highest safety; guarantees no subsequent records are processed until the current batch is acknowledged. Slower throughput due to blocking network round-trip.</td>
+      </tr>
+      <tr>
+        <td><code>commitAsync()</code></td>
+        <td>Non-blocking; fires an offset commit request over TCP with an optional callback and immediately proceeds to poll next batch.</td>
+        <td>High throughput; avoids blocking the event loop. Does not retry on failure to prevent stale commit overwrites.</td>
+      </tr>
+      <tr>
+        <td><strong>Hybrid Batch Commit Pattern</strong></td>
+        <td>Use <code>commitAsync()</code> inside the high-throughput processing loop, wrapped in a <code>finally</code> block that executes <code>commitSync()</code> on shutdown.</td>
+        <td><strong>Industry Best Practice:</strong> Combines wire-speed asynchronous execution with deterministic synchronous guarantees on consumer teardown or rebalance.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="manual-commit-code">Production Manual Commit Implementation</h3>
+<pre><code class="language-java">Properties props = new Properties();
+props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, "broker1:9092,broker2:9092");
+props.put(ConsumerConfig.GROUP_ID_CONFIG, "payment-audit-service");
+// 1. Disable auto-commit to prevent premature offset progression
+props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
+props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+
+KafkaConsumer&lt;String, String&gt; consumer = new KafkaConsumer&lt;&gt;(props);
+consumer.subscribe(Collections.singletonList("customer.payments"));
+
+try {
+    while (running) {
+        ConsumerRecords&lt;String, String&gt; records = consumer.poll(Duration.ofMillis(500));
+        
+        for (ConsumerRecord&lt;String, String&gt; record : records) {
+            // Process record business logic (e.g. database insertion)
+            processPaymentRecord(record);
+        }
+        
+        // 2. Commit synchronously only AFTER all records in batch are persisted
+        consumer.commitSync();
+    }
+} catch (CommitFailedException e) {
+    logger.error("Offset commit rejected due to consumer rebalance", e);
+} finally {
+    try {
+        consumer.commitSync(); // Final clean commit
+    } finally {
+        consumer.close();
+    }
+}</code></pre>
+
+<h2 id="cluster-ha">4. Cluster Architecture &amp; High Availability Invariants</h2>
+<p>A Kafka cluster is a decentralized collection of brokers operating cooperatively. The cluster guarantees that the failure of any individual broker, rack, or availability zone will not cause data loss or cluster downtime.</p>
+
+<h3 id="replication-factor">The Replication Factor Invariant</h3>
+<p>High availability is governed by the <strong>Replication Factor ($R$)</strong> configured per topic:</p>
 <ul>
-  <li><strong>Auto-Commit:</strong> Kafka automatically commits the current offset at regular time intervals (e.g., every 5 seconds).
-    <ul>
-      <li><strong>Risk:</strong> If a consumer processes events but crashes before the auto-commit interval, or if auto-commit happens before full processing finishes, data loss or duplicate processing can occur.</li>
-    </ul>
-  </li>
-  <li><strong>Manual Commit (Recommended):</strong> The application explicitly tells Kafka when to commit. Typically done after fully processing a batch of polled events.</li>
+  <li>A replication factor of $R = 1$ means exactly one copy of each partition exists. If the hosting broker crashes, that partition becomes immediately unavailable.</li>
+  <li>A replication factor of $R = 2$ means 1 Leader and 1 Follower replica.</li>
+  <li>A replication factor of $R = 3$ (the standard enterprise baseline) means 1 Leader and 2 Follower replicas distributed across three distinct physical brokers.</li>
 </ul>
 
-<h2 id="cluster-ha">4. Kafka Cluster &amp; High Availability</h2>
+<div class="callout callout-important">
+  <div class="callout-title">The Physical Broker Constraint</div>
+  <p>A topic's replication factor can NEVER exceed the total number of active brokers in the cluster ($R \le B$). Kafka will refuse to place two replicas of the same partition on the same physical broker node, as that would eliminate fault isolation.</p>
+</div>
+
+<h2 id="leader-follower">5. Leader-Follower Replication &amp; In-Sync Replicas (ISR)</h2>
+<p>For every partition in the cluster, one broker is elected as the <strong>Leader</strong>, while the remaining replica brokers act as <strong>Followers</strong>.</p>
+
+<div class="diagram-wrapper">
+  <div class="mermaid">
+flowchart TD
+  subgraph ProducerTier["Producers"]
+    Prod["Kafka Producer (acks = all)"]
+  end
+
+  subgraph Broker1["Broker 101 (Partition 0 Leader)"]
+    L0["Partition 0 (LEADER)<br/>• Serves all Client Writes<br/>• Serves all Client Reads<br/>• Tracks High Watermark (HW)"]
+  end
+
+  subgraph Broker2["Broker 102 (Follower)"]
+    F1["Partition 0 (FOLLOWER)<br/>• Emits FetchRequests to Leader<br/>• Appends bytes to local log<br/>• In-Sync Replica (ISR)"]
+  end
+
+  subgraph Broker3["Broker 103 (Follower)"]
+    F2["Partition 0 (FOLLOWER)<br/>• Emits FetchRequests to Leader<br/>• Appends bytes to local log<br/>• In-Sync Replica (ISR)"]
+  end
+
+  Prod -->|"1. ProduceBatch"| L0
+  F1 -->|"2. FetchRequest (Replication)"| L0
+  F2 -->|"2. FetchRequest (Replication)"| L0
+  L0 -.->|"3. Replicated to all ISRs"| Prod
+  </div>
+  <div class="diagram-caption">Figure 3: Leader-Follower replication loop: clients interact exclusively with the Leader while Followers fetch in the background.</div>
+</div>
+
+<h3 id="leader-follower-roles">Leader vs Follower Responsibilities</h3>
+
+<div class="table-wrapper">
+  <table>
+    <thead>
+      <tr>
+        <th>Role</th>
+        <th>Client Traffic Responsibilities</th>
+        <th>Internal Operational Duties</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Leader</strong></td>
+        <td>Handles <strong>100% of read and write requests</strong> from producers and consumers for that partition.</td>
+        <td>Maintains the active log segments, assigns monotonically increasing offsets, monitors follower fetch lag, and manages the High Watermark.</td>
+      </tr>
+      <tr>
+        <td><strong>Follower</strong></td>
+        <td><strong>Never serves external clients</strong> (acts purely as a passive backup replica in standard Kafka architectures).</td>
+        <td>Continuously sends internal <code>FetchRequest</code> RPCs to the Leader (acting identical to a consumer), appends received record bytes to its local disk log, and reports its latest offset to the Leader.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 id="symmetric-broker-distribution">Symmetric Multi-Role Broker Distribution</h3>
+<p>Crucially, Kafka does not designate dedicated "leader servers" and "slave servers." Instead, leadership is distributed evenly at the <strong>partition level</strong> across all cluster brokers.</p>
+
+<div class="table-wrapper">
+  <table>
+    <thead>
+      <tr>
+        <th>Physical Broker</th>
+        <th>Topic "Orders" Role</th>
+        <th>Topic "Payments" Role</th>
+        <th>Topic "Inventory" Role</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Broker 101</strong></td>
+        <td><strong>Leader:</strong> Partition 0</td>
+        <td><em>Follower:</em> Partition 1</td>
+        <td><em>Follower:</em> Partition 0</td>
+      </tr>
+      <tr>
+        <td><strong>Broker 102</strong></td>
+        <td><em>Follower:</em> Partition 0</td>
+        <td><strong>Leader:</strong> Partition 0</td>
+        <td><em>Follower:</em> Partition 1</td>
+      </tr>
+      <tr>
+        <td><strong>Broker 103</strong></td>
+        <td><em>Follower:</em> Partition 1</td>
+        <td><em>Follower:</em> Partition 0</td>
+        <td><strong>Leader:</strong> Partition 0</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<p>Every broker serves as the Leader for some partitions and simultaneously serves as the Follower for others. This symmetric design distributes CPU, network socket I/O, and disk load uniformly across the hardware fleet.</p>
+
+<h3 id="isr-and-high-watermark">The In-Sync Replicas (ISR) Set &amp; High Watermark Mechanics</h3>
+<p>How does the cluster know which followers are eligible to take over if the Leader crashes?</p>
+
+<p>The Leader tracks a dynamic set of replicas called the <strong>ISR (In-Sync Replicas)</strong>:</p>
 <ul>
-  <li><strong>Kafka Cluster:</strong> A group of Kafka brokers working together to provide scalability, fault tolerance, and high availability. There is no single point of failure.</li>
-  <li><strong>Replication Factor:</strong> Defines how many copies of a partition should exist across the cluster. For example, a replication factor of 2 means 1 Leader and 1 Follower.</li>
+  <li>A Follower is considered "in-sync" if it has fetched and caught up with the Leader's log within the threshold defined by <code>replica.lag.time.max.ms</code> (default: 30,000 ms / 30 seconds).</li>
+  <li>If a Follower network-stalls, suffers garbage collection pauses, or falls behind, the Leader automatically evicts it from the ISR set.</li>
+  <li><strong>Log End Offset (LEO):</strong> The offset of the next record to be written in a replica's log.</li>
+  <li><strong>High Watermark (HW):</strong> The highest offset that has been successfully replicated across <strong>all</strong> members of the ISR set.</li>
 </ul>
 
-<h2 id="leader-follower">5. Leader and Follower Partitions</h2>
-<p>Partitions are distributed across multiple brokers. Each partition has one Leader and zero or more Followers.</p>
+<div class="callout callout-important">
+  <div class="callout-title">The Consumer Read Boundary</div>
+  <p>Consumers are <strong>only permitted to read records up to the High Watermark (HW)</strong>. Even if the Leader has written records up to LEO 105 in its local log, if followers have only replicated up to LEO 102, the HW remains 102. Records between 103 and 105 are invisible to consumers until replicated. This prevents dirty reads in the event that the Leader crashes and an un-replicated record is lost.</p>
+</div>
+
+<h3 id="leader-failover">Automatic Leader Election &amp; Failover</h3>
+<p>When Broker 101 (hosting the Leader of Partition 0) crashes:</p>
+<ol>
+  <li>The Kafka cluster controller (KRaft / ZooKeeper) detects heartbeat timeout.</li>
+  <li>The controller selects an active member from the partition's <strong>ISR set</strong> (e.g., Broker 102) and promotes it to become the new Leader.</li>
+  <li>The controller broadcasts updated cluster metadata to all brokers and connected clients.</li>
+  <li>Producers and consumers instantly reconnect their sockets to Broker 102 and resume I/O with <strong>zero data loss</strong> because Broker 102 was fully caught up to the High Watermark.</li>
+</ol>
+
+<h2 id="rebalance-protocol">6. Group Coordination &amp; Consumer Rebalancing Mechanics</h2>
+<p>When consumer instances join, leave, or crash, Kafka triggers a <strong>Consumer Rebalance</strong> to reassign partitions among active group members.</p>
+
+<div class="diagram-wrapper">
+  <div class="mermaid">
+sequenceDiagram
+  autonumber
+  participant C1 as Consumer 1 (Group Leader)
+  participant C2 as Consumer 2
+  participant GC as Group Coordinator (Broker)
+
+  Note over C1,C2: Steady State Consumption
+  C2->>GC: Heartbeat (every 3s)
+  Note over C2: C2 crashes or network disconnects
+  Note over GC: session.timeout.ms (45s) expires!
+
+  GC-->>C1: Trigger Rebalance via next Heartbeat response
+  C1->>GC: JoinGroupRequest
+  Note over GC: Elects C1 as Group Leader
+  GC-->>C1: JoinGroupResponse (List of active members)
+  
+  Note over C1: Runs PartitionAssignor Algorithm (e.g. CooperativeSticky)
+  C1->>GC: SyncGroupRequest (Submits partition assignments)
+  GC-->>C1: SyncGroupResponse (Assigned Partitions: P0, P1, P2, P3)
+  Note over C1: Resumes consumption of all partitions!
+  </div>
+  <div class="diagram-caption">Figure 4: Consumer group rebalance protocol execution between worker instances and the Group Coordinator broker.</div>
+</div>
+
+<h3 id="rebalance-triggers">Rebalance Trigger Conditions</h3>
+<p>A rebalance is initiated whenever group topology changes:</p>
 <ul>
-  <li><strong>Leader Responsibilities:</strong> The Leader handles all read and write requests from producers and consumers. It maintains the partition logs and coordinates with followers.</li>
-  <li><strong>Follower Responsibilities:</strong> Followers act as backups. Their only job is to replicate data and stay in sync with the Leader. Followers never serve clients. If a Leader fails, a Follower takes over as the new Leader.</li>
-  <li><strong>Broker Distribution:</strong> A single broker can host the Leader for one partition (e.g., Partition 0) while simultaneously hosting the Follower for a completely different partition (e.g., Partition 1).</li>
+  <li><strong>Instance Join:</strong> A new consumer pod boots up and calls <code>subscribe()</code>.</li>
+  <li><strong>Instance Clean Shutdown:</strong> A consumer executes <code>consumer.close()</code>, sending a <code>LeaveGroupRequest</code> to the coordinator.</li>
+  <li><strong>Heartbeat Timeout (Crash):</strong> The consumer fails to send a heartbeat within <code>session.timeout.ms</code> (default: 45 seconds).</li>
+  <li><strong>Processing Stall:</strong> The consumer takes longer than <code>max.poll.interval.ms</code> (default: 5 minutes) to process a batch and invoke the next <code>poll()</code> call. The coordinator assumes the consumer thread is deadlocked and forcibly ejects it.</li>
+  <li><strong>Topic Expansion:</strong> A cluster administrator adds partitions to the subscribed topic.</li>
 </ul>
+
+<h3 id="rebalance-protocols">Eager vs Cooperative Sticky Rebalancing</h3>
+<ul>
+  <li><strong>Legacy Eager Rebalance (Stop-the-World):</strong> In early Kafka clients, a rebalance required all consumers to give up all assigned partitions, halt processing entirely, rejoin the group, and wait for re-assignment. In high-partition topics, this caused 10- to 30-second processing freezes across the entire service fleet.</li>
+  <li><strong>Modern Cooperative Sticky Rebalancing (Kafka 2.4+):</strong> Uses the <code>CooperativeStickyAssignor</code>. Consumers do not revoke all partitions. Instead, consumers continue reading unaffected partitions while only the specific migrating partitions are safely revoked and reassigned over two lightweight rebalance phases. This eliminates processing freezes in modern microservice deployments.</li>
+</ul>
+
+<h2 id="summary-and-takeaways">7. Architectural Summary &amp; Production Best Practices</h2>
+
+<div class="table-wrapper">
+  <table>
+    <thead>
+      <tr>
+        <th>Architecture Invariant</th>
+        <th>System Mechanism</th>
+        <th>Production Engineering Rule</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Exclusive Read Invariant</strong></td>
+        <td>One consumer per partition within a group.</td>
+        <td>To scale consumer throughput, you must increase topic partition count ($C \le N$).</td>
+      </tr>
+      <tr>
+        <td><strong>State Tracking</strong></td>
+        <td>Compacted <code>__consumer_offsets</code> topic.</td>
+        <td>Coordinator broker is derived via $\text{hash}(\text{GroupID}) \pmod{50}$.</td>
+      </tr>
+      <tr>
+        <td><strong>Offset Commits</strong></td>
+        <td>Manual commit (<code>commitSync</code> / <code>commitAsync</code>).</td>
+        <td>Always set <code>enable.auto.commit = false</code> for critical business transactions to prevent silent data loss.</td>
+      </tr>
+      <tr>
+        <td><strong>Replication HA</strong></td>
+        <td>Leader handles client traffic; Followers fetch passively.</td>
+        <td>Set <code>replication.factor = 3</code> and <code>min.insync.replicas = 2</code> with producer <code>acks = all</code> for zero-loss durability.</td>
+      </tr>
+      <tr>
+        <td><strong>High Watermark</strong></td>
+        <td>Max offset acknowledged by all ISR members.</td>
+        <td>Guarantees that consumers never read uncommitted or potentially lossy leader records.</td>
+      </tr>
+      <tr>
+        <td><strong>Rebalancing</strong></td>
+        <td><code>CooperativeStickyAssignor</code> protocol.</td>
+        <td>Tune <code>max.poll.interval.ms</code> higher than your slowest external API call to avoid cascading group rebalances.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
 
       </article>
 
       <aside class="toc-sidebar">
         <div class="toc-title">Table of Contents</div>
         <ul class="toc-list">
-          <li><a href="#consumers-groups">1. Consumers &amp; Groups</a></li>
-          <li><a href="#offset-management">2. Offset Management</a></li>
-          <li><a href="#commit-strategies">3. Offset Commit Strategies</a></li>
-          <li><a href="#cluster-ha">4. Cluster &amp; High Availability</a></li>
-          <li><a href="#leader-follower">5. Leader &amp; Follower Partitions</a></li>
+          <li><a href="#consumer-groups">1. Consumers &amp; Group Scaling</a></li>
+          <li><a href="#offset-management">2. Offset Tracking &amp; __consumer_offsets</a></li>
+          <li><a href="#commit-strategies">3. Auto vs Manual Commit Strategies</a></li>
+          <li><a href="#cluster-ha">4. Cluster High Availability</a></li>
+          <li><a href="#leader-follower">5. Leader-Follower ISR Replication</a></li>
+          <li><a href="#rebalance-protocol">6. Consumer Rebalancing Mechanics</a></li>
+          <li><a href="#summary-and-takeaways">7. Architectural Summary &amp; Best Practices</a></li>
         </ul>
       </aside>
     </div>
@@ -196,32 +625,36 @@ flowchart TD
       <div class="footer-col">
         <h5>Core Categories</h5>
         <ul>
-          <li><a href="kafka-architecture-part2.html">Kafka Consumers &amp; HA</a></li>
           <li><a href="kafka-architecture-part1.html">Apache Kafka Fundamentals</a></li>
+          <li><a href="kafka-architecture-part2.html">Kafka Consumers &amp; HA</a></li>
           <li><a href="kafka-exactly-once-semantics.html">Kafka Exactly-Once Semantics</a></li>
           <li><a href="grab-data-layer-architecture.html">Grab Data Layer Architecture</a></li>
-          <li><a href="consistent-hashing.html">Consistent Hashing Guide</a></li>
-          <li><a href="storage-compute-separation-aurora.html">Aurora Storage-Compute Separation</a></li>
         </ul>
       </div>
       <div class="footer-col">
-        <h5>Quick Links</h5>
+        <h5>Architectural Deep Dives</h5>
         <ul>
-          <li><a href="../index.html">All Notes &amp; Deep Dives</a></li>
-          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank">GitHub Repository</a></li>
-          <li><a href="../index.html#pdf-library">Reference Documents</a></li>
+          <li><a href="bitcask-storage-engine.html">Bitcask Storage Engine</a></li>
+          <li><a href="consistent-hashing.html">Consistent Hashing</a></li>
+          <li><a href="cap-theorem-and-google-spanner.html">CAP Theorem &amp; Spanner</a></li>
+          <li><a href="storage-compute-separation-aurora.html">Storage-Compute Separation</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Production Case Studies</h5>
+        <ul>
+          <li><a href="uber-emergency-sos-service.html">Uber Emergency SOS Architecture</a></li>
+          <li><a href="booking-user-review-system.html">Booking.com Review System</a></li>
+          <li><a href="zomato-search-intent-nlp.html">Zomato Search Intent &amp; NLP</a></li>
+          <li><a href="dragonflydb-bplus-tree-sorted-set.html">DragonflyDB B+ Tree Sorted Set</a></li>
         </ul>
       </div>
     </div>
     <div class="footer-bottom">
-      <div>System Design Notes · Open source under MIT License.</div>
-      <div>Hosted on GitHub Pages</div>
+      <p>&copy; 2026 System Design Notes. Built for systems engineers and software architects.</p>
     </div>
   </footer>
 
-  <button id="back-to-top" class="back-to-top" aria-label="Back to top">↑</button>
-
-  <script src="../assets/js/articles-data.js"></script>
   <script src="../assets/js/main.js"></script>
 </body>
 </html>

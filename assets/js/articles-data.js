@@ -106,8 +106,8 @@ const ARTICLES_DATA = [
     date: "Feb 24, 2026",
     badge: "Real-World Architecture",
     pdfSource: "Docs/Grab_Configured_Data_Layer.pdf",
-    excerpt: "How Grab handles spiky food delivery traffic and millions of transactions per day: Redis Cache-Aside, Read-Write Splitting, Geographic Sharding, DynamoDB Partial Indexing optimization, and Kafka pipelines.",
-    tags: ["Grab", "High Concurrency", "Database Sharding", "Redis", "DynamoDB", "Kafka"],
+    excerpt: "How Grab handles spiky food delivery traffic and millions of transactions per day: Bifurcated OLTP (DynamoDB) and OLAP (MySQL) architecture, sparse GSI partial indexing on user_id_gsi, 3-month TTL cleanup, Kafka to SQS fallback pipeline, and MySQL upsert timestamp reconciliation.",
+    tags: ["Grab", "High Concurrency", "DynamoDB", "MySQL", "Sparse GSI", "Kafka", "AWS SQS"],
     featured: false
   },
   {
