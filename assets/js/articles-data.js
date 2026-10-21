@@ -213,6 +213,18 @@ const ARTICLES_DATA = [
     excerpt: "Demystifying Kafka's Exactly-Once Semantics: distinguishing delivery from processing, producer idempotence via PID and monotonic sequence numbers, transactional IDs with zombie fencing, and atomic multi-partition writes via Two-Phase Commit and __transaction_state.",
     tags: ["Apache Kafka", "Exactly-Once", "EOS", "Two-Phase Commit", "Idempotence", "Distributed Transactions"],
     featured: true
+  },
+  {
+    id: "zomato-search-intent-nlp",
+    slug: "zomato-search-intent-nlp.html",
+    title: "How Zomato Improved Search Relevance by Identifying Multi-Entity Intent Using NLP",
+    category: "Case Studies",
+    categorySlug: "case-studies",
+    badge: "Case Study",
+    pdfSource: "Docs/Zomato_Search_Intent_NLP_Technical_Breakdown.pdf",
+    excerpt: "Architectural decomposition based on Arpit Bhayani's engineering dissection: overcoming naive Elasticsearch title-boosting failures, multi-entity decomposition (Dishes, Restaurants, Cuisines, Locations), Byte Pair Encoding (BPE), domain Word2Vec, BiLSTM with CRF sequence tagging, and the Intent Detour microservice architecture.",
+    tags: ["Zomato", "Search Relevance", "NLP", "Elasticsearch", "Word2Vec", "BiLSTM", "Named Entity Recognition"],
+    featured: true
   }
 ];
 

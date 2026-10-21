@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>How Zomato Improved Search Relevance by Identifying Multi-Entity Intent Using NLP — System Design Notes</title>
+  <meta name="description" content="Architectural breakdown of Zomato's search relevance engine: overcoming naive Elasticsearch title-boosting failures, multi-entity decomposition (Dishes, Restaurants, Cuisines, Locations), Byte Pair Encoding (BPE), domain-trained Word2Vec, BiLSTM with CRF sequence tagging, and the Intent Detour microservice architecture.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Lora:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">← All Notes</a></li>
+        </ul>
+        <button id="theme-toggle" class="btn-icon" data-tooltip="Toggle light/dark theme" aria-label="Toggle Theme">
+          <span class="theme-icon">☀️</span>
+        </button>
+        <a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="btn-icon" data-tooltip="View GitHub Repository" aria-label="GitHub Repository">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+          </svg>
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="article-page">
+    <div class="article-breadcrumbs">
+      <a href="../index.html">Home</a>
+      <span>/</span>
+      <a href="../index.html#case-studies">Case Studies</a>
+      <span>/</span>
+      <span>Zomato Search Intent NLP</span>
+    </div>
+
+    <header class="article-header">
+      <span class="article-header-badge">Case Study • Search &amp; Information Retrieval</span>
+      <h1 class="article-header-title">How Zomato Improved Search Relevance by Identifying Multi-Entity Intent Using NLP</h1>
+      <div class="article-header-meta">
+        <span>📁 Category: Case Studies &amp; Information Retrieval</span>
+      </div>
+      <div class="article-header-actions">
+        <a href="../Docs/Zomato_Search_Intent_NLP_Technical_Breakdown.pdf" target="_blank" download class="btn-secondary">
+          <span>📥 Download Technical PDF (3 Pages)</span>
+        </a>
+      </div>
+    </header>
+
+    <div class="article-container">
+      <aside class="toc-sidebar">
+        <div class="toc-title">Table of Contents</div>
+        <ul class="toc-list">
+          <li><a href="#executive-summary">1. Executive Summary &amp; Core Dilemma</a></li>
+          <li><a href="#aggregator-entities">2. Aggregator Entities &amp; Query Structure</a></li>
+          <li><a href="#naive-search-failures">3. Naive Search Engine Failure Modes</a></li>
+          <li class="toc-sub"><a href="#best-coffee-dilemma">The "Best Coffee Near Me" Dilemma</a></li>
+          <li class="toc-sub"><a href="#index-weighting">Title vs. Description Field Boosts</a></li>
+          <li><a href="#voice-search-inflection">4. The Voice Search Inflection</a></li>
+          <li class="toc-sub"><a href="#conversational-verbose">Conversational Speech vs. Lazy Typing</a></li>
+          <li class="toc-sub"><a href="#voice-query-types">Dual-Dish &amp; Mixed Locality Queries</a></li>
+          <li><a href="#query-classification">5. Query Classification Taxonomy</a></li>
+          <li><a href="#production-challenges">6. Production NLP Challenges</a></li>
+          <li class="toc-sub"><a href="#unlabeled-data">Lack of Labeled Training Data</a></li>
+          <li class="toc-sub"><a href="#multilingual-code-mixing">Multilingual &amp; Hinglish Code-Mixing</a></li>
+          <li class="toc-sub"><a href="#synonyms-variations">Culinary Synonyms &amp; Spellings</a></li>
+          <li><a href="#nlp-pipeline-architecture">7. The Machine Learning Pipeline</a></li>
+          <li class="toc-sub"><a href="#subword-bpe">Byte Pair Encoding (BPE)</a></li>
+          <li class="toc-sub"><a href="#word2vec-geometry">Domain Word2Vec &amp; Vector Geometry</a></li>
+          <li class="toc-sub"><a href="#bilstm-context">BiLSTM Context Encoding</a></li>
+          <li class="toc-sub"><a href="#crf-tagging">CRF Global Sequence Tagging</a></li>
+          <li><a href="#production-detour-architecture">8. Production Architecture: The Intent Detour</a></li>
+          <li class="toc-sub"><a href="#legacy-vs-intent-detour">Direct Search vs. Intent Detour</a></li>
+          <li class="toc-sub"><a href="#end-to-end-walkthrough">Walkthrough: "Jack's Aloo Tikki Burger"</a></li>
+          <li class="toc-sub"><a href="#system-flowchart">End-to-End System Architecture</a></li>
+          <li><a href="#architectural-comparison">9. Architectural Trade-offs &amp; Performance</a></li>
+          <li><a href="#engineering-takeaways">10. Systems Engineering Takeaways</a></li>
+        </ul>
+      </aside>
+
+      <article class="prose">
+        <div class="callout callout-note">
+          <div class="callout-title">📌 Primary Architectural Takeaway: Decoupling Understanding from Retrieval</div>
+          <p>Standard search engines (Elasticsearch, Apache Solr) are optimized for inverted index lookups and TF-IDF/BM25 text scoring, but they are completely blind to multi-entity grammatical intent. In food aggregation platforms, queries are non-homogeneous composite strings containing dishes, restaurant brands, cuisines, locations, and conversational filler words. Firing raw strings directly into Elasticsearch triggers catastrophic relevance failures where title-boosted full-text matches promote restaurants whose names match stop-words or dish names over actual user targets. By introducing an <strong>Intent Identification Detour</strong> microservice powered by <strong>Byte Pair Encoding (BPE)</strong>, <strong>domain-trained Word2Vec</strong>, and <strong>BiLSTM + CRF sequence tagging</strong>, Zomato converts arbitrary strings into structured entity filters, routing targeted queries to discrete indexes and dramatically improving search precision.</p>
+        </div>
+
+        <h2 id="executive-summary">1. Executive Summary &amp; The Core Dilemma</h2>
+        <p>In food aggregator systems like Zomato, search is the primary discovery engine and the single largest driver of gross merchandise value (GMV). Users interact with an open, unconstrained text box to find restaurants, discover new dishes, and place food orders. However, an open search bar invites users to enter free-form text queries that combine multiple heterogeneous entities into a single sentence without formal syntax or delimiters.</p>
+
+        <p>Consider the query:</p>
+        <pre><code class="language-text">"best Domino's Pizza near me"</code></pre>
+
+        <p>This composite query contains:</p>
+        <ul>
+          <li>A qualitative evaluation modifier: <code>"best"</code></li>
+          <li>A specific restaurant brand: <code>"Domino's"</code></li>
+          <li>A target food item/dish: <code>"Pizza"</code></li>
+          <li>A geographic proximity constraint: <code>"near me"</code></li>
+        </ul>
+
+        <p>If this query is fired directly as a naive text string into a full-text search engine such as Elasticsearch or Apache Solr, the search engine treats every word as a text token to be matched against document fields. Because standard search engine configurations apply significant field-level weight boosts to restaurant titles (e.g., $w_{\text{title}} = 10$) compared to descriptions or menu items ($w_{\text{description}} = 1$), the engine returns merchants whose titles contain the words "Best", "Coffee", or "Near", completely misinterpreting the user's intent.</p>
+
+        <p>To solve this, Zomato engineered an <strong>Intent Identification Service</strong> that leverages Natural Language Processing (NLP) and Named Entity Recognition (NER) to understand user intent before generating targeted Elasticsearch queries. This case study dissects the architectural decomposition, machine learning pipeline, and production systems engineering behind Zomato's intent-driven search engine.</p>
+
+        <h2 id="aggregator-entities">2. Aggregator Entities &amp; Query Structure</h2>
+        <p>To model search intent, we must first examine the fundamental entity domain model of a food delivery platform. In Zomato's catalog, discovery revolves around three core domain entities:</p>
+
+        <div class="grid-3" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem; margin: 1.5rem 0;">
+          <div class="card" style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 6px; padding: 1rem;">
+            <div style="font-weight: 700; color: #f43f5e; margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.5rem;">
+              <span>🍕</span> Dish / Food Item
+            </div>
+            <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0;">Specific culinary preparations, dishes, or menu line items. Examples: <em>Pizza</em>, <em>Burger</em>, <em>Paneer Butter Masala</em>, <em>Dal Makhni</em>, <em>Garlic Bread</em>, <em>Cheese Dip</em>, <em>Chai</em>, <em>Samosa</em>.</p>
+          </div>
+
+          <div class="card" style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 6px; padding: 1rem;">
+            <div style="font-weight: 700; color: #3b82f6; margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.5rem;">
+              <span>🏪</span> Restaurant Merchant
+            </div>
+            <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0;">Merchant brand names, restaurant chains, and localized vendor listings. Examples: <em>Domino's</em>, <em>Pizza Hut</em>, <em>McDonald's (MCD)</em>, <em>Jack's</em>, <em>Haldiram's</em>, <em>KFC</em>.</p>
+          </div>
+
+          <div class="card" style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 6px; padding: 1rem;">
+            <div style="font-weight: 700; color: #10b981; margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.5rem;">
+              <span>🥢</span> Cuisine / Category
+            </div>
+            <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0;">High-level culinary classifications or dietary filters. Examples: <em>Chinese</em>, <em>North Indian</em>, <em>South Indian</em>, <em>Italian</em>, <em>Vegetarian (Veg)</em>, <em>Fast Food</em>.</p>
+          </div>
+        </div>
+
+        <p>Because users interact via a free-form input field, they seamlessly combine multiple entities into a single query string without standard delimiters (e.g., <code>"Pizza Dominos"</code> or <code>"MCD Burger"</code>). The search engine must deduce which token represents a merchant and which token represents an item on that merchant's menu.</p>
+
+        <h2 id="naive-search-failures">3. Naive Search Engine Failure Modes (Elasticsearch / Solr)</h2>
+        <p>To understand why pure information retrieval models fail, consider how distributed search engines like Elasticsearch and Solr are architecturally configured in production systems.</p>
+
+        <h3 id="index-weighting">3.1 Index Decomposition &amp; Field Boosting Mechanics</h3>
+        <p>A typical aggregator search infrastructure maintains separate indexes for different catalog scopes:</p>
+        <ul>
+          <li><strong><code>restaurants</code> Index:</strong> Each document represents a physical merchant outlet. Document fields include <code>title</code> (restaurant name), <code>description</code>, <code>cuisines</code>, and <code>geo_point</code> coordinates.</li>
+          <li><strong><code>food_menu</code> Index:</strong> Each document represents an individual menu item linked to a parent restaurant via <code>restaurant_id</code>. Document fields include <code>dish_name</code>, <code>description</code>, <code>price</code>, and <code>ingredients</code>.</li>
+        </ul>
+
+        <p>In an inverted index, searching a document collection evaluates text relevance using term matching (BM25 or TF-IDF). Search engineers configure field weights (boosting) so that matches in high-importance fields score exponentially higher than matches in secondary fields:</p>
+
+        <div class="callout callout-warning">
+          <div class="callout-title">Standard Field Weighting Configuration</div>
+          <p>$$\text{Score}(\text{doc}) = w_{\text{title}} \times \text{BM25}(\text{query}, \text{title}) + w_{\text{desc}} \times \text{BM25}(\text{query}, \text{description})$$</p>
+          <p>Where standard production weights assign $w_{\text{title}} = 10$ and $w_{\text{desc}} = 1.0$. This ensures that if a user searches for <code>"Domino's"</code>, a restaurant with "Domino's" in its title ranks far above a restaurant whose menu description mentions "competes with Domino's".</p>
+        </div>
+
+        <h3 id="best-coffee-dilemma">3.2 The "Best Coffee Near Me" Failure Mode</h3>
+        <p>While field boosting works seamlessly for single-entity queries (such as searching exclusively for a brand name like <code>"Burger King"</code>), it produces severe relevance degradation when users submit composite queries.</p>
+
+        <p>Consider what occurs when a user fires the query <code>"best coffee near me"</code> directly into Elasticsearch with title boosting enabled ($w_{\text{title}} = 10$):</p>
+        <ol>
+          <li>The query analyzer tokenizes the input into individual terms: <code>["best", "coffee", "near", "me"]</code>.</li>
+          <li>Elasticsearch evaluates the inverted index of the <code>restaurants</code> collection for documents matching these tokens.</li>
+          <li>Because <code>title</code> carries a $10\times$ weight boost, any restaurant whose commercial name happens to contain the words "Best", "Coffee", "Near", or "Me" receives a massive BM25 score multiplier:
+            <ul>
+              <li><strong>Result 1:</strong> <em>"Best Coffee Cafe"</em> (matches 2 title tokens: "best" and "coffee")</li>
+              <li><strong>Result 2:</strong> <em>"Best Bliss"</em> (matches title token: "best")</li>
+              <li><strong>Result 3:</strong> <em>"Bar Best"</em> (matches title token: "best")</li>
+            </ul>
+          </li>
+          <li><strong>The Catastrophic Flaw:</strong> The user did not want a restaurant whose registered name includes the word "Best". The user wanted a high-rated cafe serving quality coffee in close physical proximity. The search engine completely misconstrued the intent because it treated semantic qualifiers and entity targets as flat text tokens.</li>
+        </ol>
+
+        <h2 id="voice-search-inflection">4. The Voice Search Inflection: Conversational &amp; Verbose Inputs</h2>
+        <p>The relevance challenge was accelerated by the widespread adoption of <strong>Voice Search</strong> on mobile devices. Voice search fundamentally alters human querying behavior compared to traditional physical keyboard input.</p>
+
+        <h3 id="conversational-verbose">4.1 Conversational Speech vs. Lazy Typing</h3>
+        <p>When typing on a smartphone keyboard, users are inherently lazy: they minimize keystrokes by typing concise, truncated keyword fragments (e.g., <code>"pizza"</code>, <code>"mcd"</code>, <code>"biryani"</code>). In contrast, when speaking into a microphone, humans communicate in natural, conversational, and verbose sentences. The mobile app's speech-to-text (STT) engine converts this audio stream into full-length prose strings before passing them to the backend search service.</p>
+
+        <h3 id="voice-query-types">4.2 Emergent Voice Query Patterns</h3>
+        <p>Voice querying introduces high syntactic complexity that overwhelms traditional keyword matching:</p>
+        <ul>
+          <li><strong>Dual-Dish Queries (<code>"garlic bread with cheese dip"</code>):</strong> The query contains two independent food items. The search engine must identify both dishes simultaneously and query the menu index for merchants that serve both items together, rather than returning bakeries that only sell garlic bread or groceries that only sell jarred dips.</li>
+          <li><strong>Category + Locality Queries (<code>"veg restaurant koramangala"</code>):</strong> The user seeks a specific category of merchant (vegetarian) within a distinct geographic neighborhood (Koramangala, Bangalore). Direct full-text search ranks merchants named "Koramangala Veg Tiffin" first, even if closed or poorly rated, while ignoring actual vegetarian restaurants located in Koramangala whose names do not contain the locality token.</li>
+          <li><strong>Combo Co-occurrence Queries (<code>"chai and samosa"</code>):</strong> Conversational conjunctions like "and" or "with" indicate joint co-occurrence across the restaurant menu. The engine must score restaurants based on joint menu coverage.</li>
+        </ul>
+
+        <h2 id="query-classification">5. Query Classification Taxonomy</h2>
+        <p>By analyzing millions of historical query logs, Zomato identified that the vast majority of non-homogeneous search queries cluster into three primary composite patterns:</p>
+
+        <div style="overflow-x: auto; margin: 1.5rem 0;">
+          <table style="width: 100%; border-collapse: collapse; font-size: 0.88rem;">
+            <thead>
+              <tr style="border-bottom: 2px solid var(--border-color); text-align: left;">
+                <th style="padding: 0.6rem;">Pattern Classification</th>
+                <th style="padding: 0.6rem;">Canonical Query Example</th>
+                <th style="padding: 0.6rem;">Decomposed Named Entities</th>
+                <th style="padding: 0.6rem;">Optimized Search Routing Strategy</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr style="border-bottom: 1px solid var(--border-color);">
+                <td style="padding: 0.6rem; font-weight: 600;">Dish + Dish</td>
+                <td style="padding: 0.6rem;"><code>"pizza with cheese dip"</code></td>
+                <td style="padding: 0.6rem;"><span style="color: #f43f5e; font-weight: 600;">[Dish: Pizza]</span> + <span style="color: #f43f5e; font-weight: 600;">[Dish: Cheese Dip]</span></td>
+                <td style="padding: 0.6rem;">Query <code>food_menu</code> index for joint dish co-occurrence under a single merchant ID.</td>
+              </tr>
+              <tr style="border-bottom: 1px solid var(--border-color);">
+                <td style="padding: 0.6rem; font-weight: 600;">Restaurant + Dish</td>
+                <td style="padding: 0.6rem;"><code>"MCD Burger"</code> / <code>"Jack's Aloo Tikki Burger"</code></td>
+                <td style="padding: 0.6rem;"><span style="color: #3b82f6; font-weight: 600;">[Rest: Jack's]</span> + <span style="color: #f43f5e; font-weight: 600;">[Dish: Aloo Tikki Burger]</span></td>
+                <td style="padding: 0.6rem;">Filter <code>restaurants</code> index for merchant brand; filter internal menu for target dish item.</td>
+              </tr>
+              <tr style="border-bottom: 1px solid var(--border-color);">
+                <td style="padding: 0.6rem; font-weight: 600;">Entity + Modifier / Locality</td>
+                <td style="padding: 0.6rem;"><code>"best pizza near me"</code> / <code>"Domino's near me"</code></td>
+                <td style="padding: 0.6rem;"><span style="color: #f43f5e; font-weight: 600;">[Dish: Pizza]</span> + <span style="color: #10b981; font-weight: 600;">[Geo: Current GPS]</span></td>
+                <td style="padding: 0.6rem;">Filter dish target; apply Elasticsearch <code>geo_distance</code> radial boundary; sort by rating.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="production-challenges">6. Production NLP Challenges in Food Search</h2>
+        <p>Developing an automated system to deconstruct raw strings into structured entities encounters four real-world production engineering challenges:</p>
+
+        <h3 id="unlabeled-data">6.1 Scarcity of Labeled Ground-Truth Data</h3>
+        <p>Supervised machine learning algorithms require hundreds of thousands of hand-annotated training examples where human annotators mark each word with entity labels. In production food aggregation, millions of unique queries are generated daily, and catalogs change constantly as restaurants add seasonal items and new cloud kitchens launch. Hand-labeling this data is financially prohibitive and operationally unviable. Consequently, the core representation pipeline must leverage unsupervised and self-supervised learning over the catalog corpus.</p>
+
+        <h3 id="multilingual-code-mixing">6.2 Multilingual Dialects &amp; Hinglish Code-Mixing</h3>
+        <p>In India, users communicate across 30 to 35 regional languages, frequently mixing English culinary terms with regional grammar (known as <em>code-mixing</em> or <em>Hinglish</em>). For instance, a user might submit:</p>
+        <pre><code class="language-text">"dal makhni ke saath naan"  (Dal Makhni along with Naan)
+"ek pizza aur do coke"      (One Pizza and two Cokes)
+"bahut accha burger"        (Very good Burger)</code></pre>
+
+        <p>In these queries, words like <code>"ke"</code>, <code>"saath"</code>, and <code>"aur"</code> are grammatical connectives and stop-words that carry zero entity value. An intent recognition model must isolate the core entity keywords (<span style="color: #f43f5e;">Dal Makhni</span>, <span style="color: #f43f5e;">Naan</span>, <span style="color: #f43f5e;">Pizza</span>, <span style="color: #f43f5e;">Coke</span>) while discarding grammatical filler without requiring complete syntactic parsers for 35 distinct languages.</p>
+
+        <h3 id="synonyms-variations">6.3 Culinary Synonyms &amp; Phonetic Variations</h3>
+        <p>Food vocabulary is rich with semantic equivalence and colloquial spelling variations:</p>
+        <ul>
+          <li><strong>Syntactic Equivalence:</strong> <code>"MCD Burger"</code> and <code>"MCD ke Burger"</code> communicate identical commercial intent: the user wants a burger specifically from McDonald's.</li>
+          <li><strong>Regional Culinary Synonyms:</strong> In North India, <code>"rajma rice"</code> and <code>"rajma chawal"</code> refer to the exact same dish (<em>chawal</em> is the Hindi word for rice). A robust model must project both phrases to identical semantic coordinates.</li>
+          <li><strong>Phonetic Transliteration Variations:</strong> Because Indian food names are transliterated phonetically into the Latin script, spellings diverge wildly: <em>rumali roti</em> vs. <em>roomali roti</em>.</li>
+          <li><strong>Speech-to-Text Token Concatenation:</strong> Speech recognition models frequently concatenate adjacent words without spaces (e.g., <code>"friedrice"</code> instead of <code>"fried rice"</code>). Naive tokenization by whitespace (<code>string.split(" ")</code>) fails catastrophically on these compound tokens.</li>
+        </ul>
+
+        <h2 id="nlp-pipeline-architecture">7. The Machine Learning Pipeline: From Characters to Entities</h2>
+        <p>To overcome these challenges, Zomato built a sequence tagging pipeline combining subword tokenization, dense vector embeddings, and recurrent deep learning:</p>
+
+        <div class="diagram-wrapper">
+          <div class="mermaid">
+flowchart TD
+  RawQuery["Raw User Query String<br/>e.g. 'Jack's Aloo Tikki Burger'"] --> BPE["1. Byte Pair Encoding (BPE)<br/>Subword Tokenization (Handles OOV & Compounding)"]
+  BPE --> W2V["2. Domain Word2Vec Model<br/>Dense Embeddings (Vector Dimension = 128 to 256)"]
+  W2V --> BiLSTM["3. Bi-directional LSTM (BiLSTM)<br/>Encodes Past (Forward) & Future (Backward) Context"]
+  BiLSTM --> CRF["4. Conditional Random Fields (CRF)<br/>Enforces Valid Global Sequence Transitions (BIO Tagging)"]
+  CRF --> ExtractedEntities["Structured Entity Output<br/>{ Restaurant: 'Jack\'s', Dish: 'Aloo Tikki Burger' }"]
+          </div>
+        </div>
+
+        <h3 id="subword-bpe">7.1 Byte Pair Encoding (BPE) for Subword Tokenization</h3>
+        <p>Traditional NLP tokenizers split text strings strictly on whitespace boundaries. In food search, this fails whenever speech recognition omits spaces (<code>"friedrice"</code>) or encounters rare compound regional dishes. <strong>Byte Pair Encoding (BPE)</strong> is an unsupervised subword tokenization algorithm that builds a vocabulary by iteratively merging the most frequently co-occurring byte or character pairs in the training corpus.</p>
+
+        <div class="callout callout-tip">
+          <div class="callout-title">Why BPE Excels at Food Domain Tokenization</div>
+          <ul>
+            <li><strong>Out-of-Vocabulary (OOV) Elimination:</strong> Any unseen dish name can be broken down into known subword constituent tokens (e.g., <code>"paneer"</code> + <code>"bhurji"</code>) rather than being discarded as an unknown <code>&lt;UNK&gt;</code> token.</li>
+            <li><strong>Concatenation Resilience:</strong> If an STT engine outputs <code>"friedrice"</code>, BPE splits it into <code>["fried", "rice"]</code> because both subwords are highly frequent in the training vocabulary.</li>
+            <li><strong>Phonetic Robustness:</strong> Spelling variations like <em>rumali</em> and <em>roomali</em> share common subwords (e.g., <code>"mali"</code> and <code>"ro"</code>), preventing complete feature collapse.</li>
+          </ul>
+        </div>
+
+        <h3 id="word2vec-geometry">7.2 Domain-Trained Word2Vec &amp; Culinary Vector Geometry</h3>
+        <p>Computers cannot process text strings directly; words must be mapped to numeric vectors. Assigning arbitrary scalar integers (e.g., <code>Burger = 1</code>, <code>Pizza = 2</code>, <code>Domino's = 3</code>) conveys no semantic meaning: in integer space, $|3 - 1| = 2$ implies mathematical relations that do not reflect reality.</p>
+
+        <p>Zomato trains a <strong>Word2Vec</strong> neural network (using Continuous Bag-of-Words or Skip-Gram architectures) directly on its proprietary corpus: complete food menus, restaurant titles, catalog descriptions, and review logs. Word2Vec maps every vocabulary token into an $N$-dimensional continuous vector space ($d \in [128, 256]$) such that words appearing in similar culinary contexts occupy nearby coordinates:</p>
+
+        <p>In standard natural language processing, Word2Vec demonstrates linear vector compositionality:</p>
+        <p>$$\vec{v}(\text{King}) - \vec{v}(\text{Man}) + \vec{v}(\text{Woman}) \approx \vec{v}(\text{Queen})$$</p>
+
+        <p>When trained on food delivery corpora, the vector space captures culinary relationships and synonymy directly:</p>
+        <p>$$\vec{v}(\text{rajma chawal}) \approx \vec{v}(\text{rajma rice})$$</p>
+        <p>$$\text{cosine\_similarity}(\vec{v}(\text{roti}), \vec{v}(\text{naan})) \approx 1.0$$</p>
+
+        <p>Because "rajma chawal" and "rajma rice" appear in identical contexts across hundreds of Punjabi restaurant menus, their vector dot products are maximized. This geometric proximity allows downstream models to recognize culinary synonyms without maintaining manual alias dictionaries.</p>
+
+        <h3 id="bilstm-context">7.3 Bi-directional Long Short-Term Memory (BiLSTM)</h3>
+        <p>While Word2Vec provides rich static semantic representations, words change meaning depending on surrounding sentence context. In the query <code>"Jack's Aloo Tikki Burger"</code>, whether <em>"Jack's"</em> is a restaurant brand or a menu item depends entirely on the tokens that follow it. A standard unidirected recurrent neural network or LSTM reads tokens strictly from left to right, computing hidden state $\vec{h}_t$ from previous tokens $x_1, \dots, x_t$. This means that when reading <em>"Jack's"</em> at $t=1$, the model has zero knowledge of the subsequent tokens.</p>
+
+        <p>A <strong>Bi-directional LSTM (BiLSTM)</strong> resolves this by processing the sequence in two opposing directions simultaneously:</p>
+        <ul>
+          <li><strong>Forward LSTM ($\vec{h}_t$):</strong> Processes the sequence from left to right, capturing historical context:
+            $$\vec{h}_t = \text{LSTM}_{\text{fwd}}(x_t, \vec{h}_{t-1})$$
+          </li>
+          <li><strong>Backward LSTM ($\overleftarrow{h}_t$):</strong> Processes the sequence from right to left, capturing future context:
+            $$\overleftarrow{h}_t = \text{LSTM}_{\text{bwd}}(x_t, \overleftarrow{h}_{t+1})$$
+          </li>
+          <li><strong>Concatenated Representation:</strong> The comprehensive hidden representation at step $t$ is formed by concatenating both vectors:
+            $$h_t = [\vec{h}_t \,\|\, \overleftarrow{h}_t]$$
+          </li>
+        </ul>
+
+        <p>By observing both past and future tokens, the BiLSTM knows that <em>"Jack's"</em> is immediately followed by a multi-word dish sequence (<em>"Aloo Tikki Burger"</em>), strongly weighting its probability as a restaurant brand prefix.</p>
+
+        <h3 id="crf-tagging">7.4 Conditional Random Fields (CRF) for Global Sequence Tagging</h3>
+        <p>The final layer of the intent extraction pipeline performs <strong>Sequence Tagging / Named Entity Recognition (NER)</strong>. A standard approach might feed the BiLSTM hidden states $h_t$ into an independent Softmax classification layer at each step. However, per-token Softmax makes independent decisions, which frequently yields structurally invalid tag sequences.</p>
+
+        <p>In Named Entity Recognition, tokens are classified using the <strong>BIO tagging scheme</strong>:</p>
+        <ul>
+          <li><code>B-DISH</code>: Beginning of a dish entity</li>
+          <li><code>I-DISH</code>: Inside continuation of a dish entity</li>
+          <li><code>B-REST</code>: Beginning of a restaurant merchant entity</li>
+          <li><code>I-REST</code>: Inside continuation of a restaurant merchant entity</li>
+          <li><code>O</code>: Outside / non-entity token</li>
+        </ul>
+
+        <p>An independent Softmax classifier might output <code>[B-REST, I-DISH]</code>, which is an illegal transition (an <code>I-DISH</code> tag cannot directly follow a <code>B-REST</code> tag without a preceding <code>B-DISH</code>). A <strong>Conditional Random Field (CRF)</strong> layer sits on top of the BiLSTM, modeling the global transition probability matrix $A_{i, j}$ between adjacent tags:</p>
+
+        <p>$$P(y \mid x) = \frac{\exp\left( \sum_{t=1}^T \left( P_{t, y_t} + A_{y_{t-1}, y_t} \right) \right)}{\sum_{\tilde{y}} \exp\left( \sum_{t=1}^T \left( P_{t, \tilde{y}_t} + A_{\tilde{y}_{t-1}, \tilde{y}_t} \right) \right)}$$</p>
+
+        <p>Using the Viterbi dynamic programming algorithm, the CRF decodes the globally optimal tag sequence that satisfies grammatical transitions across the entire query.</p>
+
+        <h2 id="production-detour-architecture">8. Production Architecture: The "Intent Detour"</h2>
+        <p>With the machine learning model trained, Zomato integrated the inference pipeline into its live production search architecture by introducing the <strong>Intent Detour Pattern</strong>.</p>
+
+        <h3 id="legacy-vs-intent-detour">8.1 Legacy Architecture vs. Modern Intent Detour</h3>
+        <div class="grid-2" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem; margin: 1.5rem 0;">
+          <div class="card" style="background: var(--bg-card); border: 1px solid #ef4444; border-radius: 6px; padding: 1rem;">
+            <div style="font-weight: 700; color: #ef4444; margin-bottom: 0.5rem;">Legacy Direct Architecture (Flawed)</div>
+            <pre style="font-size: 0.78rem; background: #1a1a1a; padding: 0.5rem; border-radius: 4px;"><code>Client &rarr; Search Service &rarr; Direct Elasticsearch Query</code></pre>
+            <ul style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.5rem;">
+              <li>Fires raw query string blindly into Elasticsearch.</li>
+              <li>Keyword title boosts ($w_{\text{title}} = 10$) rank irrelevant restaurants whose titles match adjectives or dishes.</li>
+              <li>Conversational speech-to-text filler words pollute document matching scores.</li>
+            </ul>
+          </div>
+
+          <div class="card" style="background: var(--bg-card); border: 1px solid #10b981; border-radius: 6px; padding: 1rem;">
+            <div style="font-weight: 700; color: #10b981; margin-bottom: 0.5rem;">Modern Intent Detour Architecture (Optimized)</div>
+            <pre style="font-size: 0.78rem; background: #1a1a1a; padding: 0.5rem; border-radius: 4px;"><code>Client &rarr; Search Service &rarr; NLP Gateway Detour &rarr; Targeted Multi-Index Query</code></pre>
+            <ul style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.5rem;">
+              <li>Search Service routes raw query to Intent Gateway microservice.</li>
+              <li>Model deconstructs query into discrete named entities.</li>
+              <li>Search Service builds targeted, multi-index queries directed to specific schema fields.</li>
+            </ul>
+          </div>
+        </div>
+
+        <h3 id="system-flowchart">8.2 End-to-End System Flowchart</h3>
+        <p>The complete end-to-end request lifecycle spans mobile clients, an API inference gateway, and Elasticsearch clusters:</p>
+
+        <div class="diagram-wrapper">
+          <div class="mermaid">
+sequenceDiagram
+  autonumber
+  actor User as User Mobile App
+  participant SearchSvc as Search Core Service
+  participant NLPGateway as Intent Inference Gateway (EC2 / Flask)
+  participant ES as Elasticsearch Cluster
+
+  User->>SearchSvc: 1. Submit query "Jack's Aloo Tikki Burger"
+  Note over SearchSvc,NLPGateway: The Intent Detour
+  SearchSvc->>NLPGateway: 2. POST /intent/extract {query: "Jack's Aloo Tikki Burger"}
+  NLPGateway->>NLPGateway: Runs BPE -> Word2Vec -> BiLSTM + CRF
+  NLPGateway-->>SearchSvc: 3. Return Entities: {restaurant: "Jack's", dish: "Aloo Tikki Burger"}
+  Note over SearchSvc,ES: Targeted Multi-Index Query
+  SearchSvc->>ES: 4. Query 'restaurants' where title="Jack's" AND 'food_menu' where dish="Aloo Tikki Burger"
+  ES-->>SearchSvc: 5. Return ranked matching documents
+  SearchSvc->>User: 6. Render Results: "Jack's" outlet on top with "Aloo Tikki Burger" badge highlighted
+          </div>
+        </div>
+
+        <h3 id="end-to-end-walkthrough">8.3 Step-by-Step Walkthrough: "Jack's Aloo Tikki Burger"</h3>
+        <p>Let us trace the physical execution path of a user searching for <code>"Jack's Aloo Tikki Burger"</code>:</p>
+        <ol>
+          <li><strong>Client Submission:</strong> The user speaks or types <code>"Jack's Aloo Tikki Burger"</code> into the mobile application. The request hits the API Gateway and routes to the <strong>Search Core Service</strong>.</li>
+          <li><strong>The Intent Detour:</strong> Instead of generating an immediate Elasticsearch query, the Search Core Service makes a synchronous internal RPC/HTTP call to the <strong>Intent Inference Gateway</strong> (hosted on an EC2 instance running a Python/Flask service with GPU/CPU inference).</li>
+          <li><strong>Inference Execution:</strong>
+            <ul>
+              <li>The query is passed to the Byte Pair Encoding tokenizer, which breaks it into tokens: <code>["Jack's", "Aloo", "Tikki", "Burger"]</code>.</li>
+              <li>Tokens are converted into dense vector sequences via the domain-trained Word2Vec embedding table.</li>
+              <li>The BiLSTM encodes forward and backward contextual hidden vectors.</li>
+              <li>The CRF layer calculates the highest-scoring tag sequence:
+                $$\begin{aligned}
+                \text{"Jack's"} &\to \text{B-REST} \\
+                \text{"Aloo"} &\to \text{B-DISH} \\
+                \text{"Tikki"} &\to \text{I-DISH} \\
+                \text{"Burger"} &\to \text{I-DISH}
+                \end{aligned}$$
+              </li>
+            </ul>
+          </li>
+          <li><strong>Structured Entity Response:</strong> The NLP Gateway returns a JSON payload to the Search Core Service:
+            <pre><code class="language-json">{
+  "restaurant": "Jack's",
+  "dish": "Aloo Tikki Burger",
+  "cuisine": null,
+  "modifiers": []
+}</code></pre>
+          </li>
+          <li><strong>Targeted Query Synthesis:</strong> With explicit entity boundaries established, the Search Core Service synthesizes a specialized, multi-index Elasticsearch query:
+            <pre><code class="language-json">{
+  "query": {
+    "bool": {
+      "must": [
+        {
+          "match": {
+            "restaurants.title": {
+              "query": "Jack's",
+              "boost": 10.0
+            }
+          }
+        },
+        {
+          "nested": {
+            "path": "food_menu",
+            "query": {
+              "match": {
+                "food_menu.dish_name": "Aloo Tikki Burger"
+              }
+            }
+          }
+        }
+      ],
+      "filter": [
+        {
+          "geo_distance": {
+            "distance": "7km",
+            "location": {
+              "lat": 12.9716,
+              "lon": 77.5946
+            }
+          }
+        }
+      ]
+    }
+  }
+}</code></pre>
+          </li>
+          <li><strong>Result Formatting &amp; Highlighting:</strong> Elasticsearch returns documents where the restaurant brand is "Jack's" and the menu contains "Aloo Tikki Burger" within delivery range. The Search Core Service surfaces "Jack's" at the top of the search results, accompanied by an explicit UI badge highlighting the matching "Aloo Tikki Burger".</li>
+        </ol>
+
+        <h2 id="architectural-comparison">9. Architectural Trade-offs &amp; Performance Comparison</h2>
+        <p>Comparing the legacy direct search model against the NLP Intent Detour architecture reveals dramatic improvements in relevance, counterbalanced by modest systems engineering trade-offs:</p>
+
+        <div style="overflow-x: auto; margin: 1.5rem 0;">
+          <table style="width: 100%; border-collapse: collapse; font-size: 0.88rem;">
+            <thead>
+              <tr style="border-bottom: 2px solid var(--border-color); text-align: left;">
+                <th style="padding: 0.6rem;">Dimension</th>
+                <th style="padding: 0.6rem;">Legacy Direct Full-Text Search</th>
+                <th style="padding: 0.6rem;">Modern NLP Intent Detour Architecture</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr style="border-bottom: 1px solid var(--border-color);">
+                <td style="padding: 0.6rem; font-weight: 600;">Relevance &amp; Semantic Precision</td>
+                <td style="padding: 0.6rem; color: #ef4444;">Poor. Matches keywords blindly; title boosts prioritize venues matching dish adjectives.</td>
+                <td style="padding: 0.6rem; color: #10b981;">Exceptional. Deconstructs entities; matches restaurants and menu items to dedicated indexes.</td>
+              </tr>
+              <tr style="border-bottom: 1px solid var(--border-color);">
+                <td style="padding: 0.6rem; font-weight: 600;">Voice Search Compatibility</td>
+                <td style="padding: 0.6rem; color: #ef4444;">Fragile. Fails on conversational filler words and multi-dish combinations.</td>
+                <td style="padding: 0.6rem; color: #10b981;">Highly robust. Discards conversational noise and extracts co-occurring entities.</td>
+              </tr>
+              <tr style="border-bottom: 1px solid var(--border-color);">
+                <td style="padding: 0.6rem; font-weight: 600;">Out-of-Vocabulary &amp; Synonyms</td>
+                <td style="padding: 0.6rem;">Requires expensive edit distance fuzzy matching; misses semantic synonyms (e.g. <em>chawal</em> $\to$ <em>rice</em>).</td>
+                <td style="padding: 0.6rem;">BPE subword tokens eliminate OOV; Word2Vec captures domain synonyms geometrically.</td>
+              </tr>
+              <tr style="border-bottom: 1px solid var(--border-color);">
+                <td style="padding: 0.6rem; font-weight: 600;">End-to-End Latency Overhead</td>
+                <td style="padding: 0.6rem; color: #10b981;">Lowest. Single network round-trip to Elasticsearch cluster (~15–25ms).</td>
+                <td style="padding: 0.6rem; color: #f59e0b;">Moderate. Introduces inference hop (+10–20ms); mitigated by aggressive LRU caching of frequent queries.</td>
+              </tr>
+              <tr style="border-bottom: 1px solid var(--border-color);">
+                <td style="padding: 0.6rem; font-weight: 600;">Operational Complexity</td>
+                <td style="padding: 0.6rem; color: #10b981;">Simple. Manages only Elasticsearch cluster configuration and index mappings.</td>
+                <td style="padding: 0.6rem; color: #f59e0b;">Higher. Requires model training pipelines, embedding stores, and microservice inference clusters.</td>
+              </tr>
+              <tr style="border-bottom: 1px solid var(--border-color);">
+                <td style="padding: 0.6rem; font-weight: 600;">Search Conversion Rate (GMV)</td>
+                <td style="padding: 0.6rem; color: #ef4444;">Low on conversational or composite queries due to searcher abandonment.</td>
+                <td style="padding: 0.6rem; color: #10b981;">Significantly higher. Direct promotion of target dishes inside target merchants increases orders.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="engineering-takeaways">10. Systems Engineering &amp; Architectural Takeaways</h2>
+        <div class="callout callout-tip">
+          <div class="callout-title">Core First-Principles Lessons for Large-Scale Search Systems</div>
+          <ol>
+            <li><strong>Search Engines Are Inverted Index Stores, Not Language Models:</strong> Distributed search engines like Elasticsearch and Solr excel at high-throughput token matching, boolean filtering, and BM25 document scoring. Expecting a retrieval engine to infer human grammatical intent from unstructured multi-entity strings is an architectural antipattern. Retrieval and query understanding must be separated into distinct architectural tiers.</li>
+            <li><strong>The Intent Detour Pattern:</strong> Inserting an inference gateway between the client search service and the storage cluster decouples query comprehension from document retrieval. This allows ML teams to retrain models, update embedding spaces, and add entity types without altering underlying database schemas or reindexing millions of catalog documents.</li>
+            <li><strong>Domain-Specific Pre-Training Outperforms Massive Generic Models:</strong> Large foundational language models frequently miss hyperlocal culinary nuances. Training Word2Vec directly on restaurant menus, regional dish names, and review logs produces domain embeddings that capture localized culinary geometry (e.g., $\vec{v}(\text{rajma chawal}) \approx \vec{v}(\text{rajma rice})$) with a microscopic footprint (&lt; 50 MB) that can be served at sub-10ms latencies.</li>
+            <li><strong>Subword Tokenization Solves Transliteration and Speech Errors:</strong> Byte Pair Encoding (BPE) provides an elegant, unsupervised mechanism to handle spelling variations (<em>rumali</em> vs. <em>roomali</em>), speech-to-text token concatenation (<code>"friedrice"</code>), and out-of-vocabulary compound dishes without requiring manual regex dictionaries or exhaustive human curation.</li>
+          </ol>
+        </div>
+      </article>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-container">
+      <div class="footer-col">
+        <div class="footer-brand">
+          <div class="brand-icon">⚡</div>
+          <span>System Design Notes</span>
+        </div>
+        <p class="footer-tagline">Curated engineering notes, production architecture dissections, and distributed systems research papers.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Core Categories</h5>
+        <ul>
+          <li><a href="storage-compute-separation-aurora.html">Storage-Compute Separation</a></li>
+          <li><a href="atlassian-cache-invalidation.html">Atlassian Cache Invalidation</a></li>
+          <li><a href="bitcask-storage-engine.html">Bitcask Storage Engine</a></li>
+          <li><a href="kafka-exactly-once-semantics.html">Kafka Exactly-Once (EOS)</a></li>
+          <li><a href="amazon-aurora-cloud-native-databases.html">Amazon Aurora Architecture</a></li>
+          <li><a href="cap-theorem-and-google-spanner.html">Google Spanner &amp; TrueTime</a></li>
+          <li><a href="consistent-hashing.html">Consistent Hashing Guide</a></li>
+          <li><a href="grab-data-layer-architecture.html">Grab Data Layer Architecture</a></li>
+          <li><a href="kafka-architecture-part1.html">Apache Kafka Fundamentals</a></li>
+          <li><a href="kafka-architecture-part2.html">Kafka Cluster &amp; Consumer Offsets</a></li>
+          <li><a href="microservices-design-patterns.html">Microservices Patterns</a></li>
+          <li><a href="redis-internals-and-architecture.html">Redis Internal Mechanics</a></li>
+          <li><a href="dragonflydb-bplus-tree-sorted-set.html">DragonflyDB B+ Tree Sorted Set</a></li>
+          <li><a href="zomato-search-intent-nlp.html">Zomato Search Intent NLP</a></li>
+          <li><a href="redis-java-implementation.html">Java Redis Event Loop Server</a></li>
+          <li><a href="system-design-foundations-and-scaling.html">Foundations &amp; Scaling Guide</a></li>
+          <li><a href="system-design-case-studies.html">System Design Case Studies</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Repository</h5>
+        <ul>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank">GitHub Repository</a></li>
+          <li><a href="../Docs/System_Design_Notes.pdf" target="_blank">Complete Notes (184 Pages)</a></li>
+          <li><a href="../Docs/Zomato_Search_Intent_NLP_Technical_Breakdown.pdf" target="_blank">Zomato NLP PDF (3 Pages)</a></li>
+          <li><a href="../Docs/DragonflyDB_BPlus_Tree_Sorted_Set_Technical_Breakdown.pdf" target="_blank">DragonflyDB PDF (3 Pages)</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>Released under MIT License • Open Source Engineering Notes</p>
+    </div>
+  </footer>
+
+  <script src="../assets/js/main.js"></script>
+</body>
+</html>
