@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>How Stripe Scales MongoDB to 5 Million Queries Per Second — System Design Notes</title>
+  <meta name="description" content="Technical deep-dive into Stripe's DocDB architecture: scaling MongoDB Community Edition to 5M+ QPS across 2,000+ shards, Go-based database proxies, dynamic shard splitting, and the Data Movement Platform.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css">
+  <link rel="stylesheet" href="../blog-theme.css">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+  <div id="progress" aria-hidden="true"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">Articles</a></li>
+          <li><a href="../index.html#system-eval">Architecture Index</a></li>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="nav-gh">GitHub</a></li>
+        </ul>
+        <div class="swatches" role="group" aria-label="Colour theme">
+          <button class="swatch" data-set-theme="light"  style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+          <button class="swatch" data-set-theme="dark"   style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+          <button class="swatch" data-set-theme="sepia"  style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+        </div>
+        <button id="theme-toggle" class="theme-toggle" aria-label="Toggle Theme">
+          <span class="theme-icon">☀️</span>
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <header class="article-header">
+    <div class="article-header-inner">
+      <div class="post-category-badge">Case Study</div>
+      <h1 class="article-title">How Stripe Scales MongoDB to 5 Million Queries Per Second</h1>
+      <div class="article-meta">
+        <span>By Arpit Bhayani Dissection &amp; Stripe Engineering</span>
+        <span>•</span>
+        <span>October 2026</span>
+        <span>•</span>
+        <span>15 min read</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="article-body">
+    <aside class="toc-sidebar">
+      <div class="toc-title">Table of Contents</div>
+      <ul class="toc-list">
+        <li><a href="#scale-overview">1. The 5M QPS Operational Reality</a></li>
+        <li><a href="#why-docdb">2. Evolution: From Raw MongoDB to DocDB</a></li>
+        <li><a href="#proxy-architecture">3. The Go-Based Database Proxy Layer</a></li>
+        <li><a href="#logical-physical">4. Decoupling Logical from Physical Shards</a></li>
+        <li><a href="#data-movement">5. The Data Movement Platform</a></li>
+        <li><a href="#versioned-config-flip">6. The Versioned Config-Flip Mechanism</a></li>
+        <li><a href="#bin-packing">7. Dynamic Shard Splitting &amp; Bin-Packing</a></li>
+        <li><a href="#key-takeaways">8. Core Architectural Lessons</a></li>
+      </ul>
+    </aside>
+
+    <article class="prose">
+      <blockquote>
+        <p><strong>Source Attribution:</strong> This deep-dive synthesizes Arpit Bhayani's engineering dissection on Stripe's MongoDB scaling strategies and technical publications from Stripe Engineering detailing DocDB and the Data Movement Platform.</p>
+      </blockquote>
+
+      <h2 id="scale-overview">1. The 5M QPS Operational Reality</h2>
+      <p>Stripe serves as the economic backbone for millions of businesses worldwide, executing transactions across hundreds of payment rails. Underneath its global checkout and billing engines sits an enormous data infrastructure footprint that operates with extreme reliability requirements:</p>
+
+      <div class="stats-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin: 1.5rem 0;">
+        <div style="background: var(--code-bg); border: 1px solid var(--border); padding: 1.25rem; border-radius: 8px;">
+          <div style="font-size: 1.8rem; font-weight: 700; color: var(--accent);">5M+ QPS</div>
+          <div style="font-size: 0.85rem; color: var(--muted);">Peak transactional read/write query volume</div>
+        </div>
+        <div style="background: var(--code-bg); border: 1px solid var(--border); padding: 1.25rem; border-radius: 8px;">
+          <div style="font-size: 1.8rem; font-weight: 700; color: var(--accent);">2,000+ Shards</div>
+          <div style="font-size: 0.85rem; color: var(--muted);">Independently managed database shards</div>
+        </div>
+        <div style="background: var(--code-bg); border: 1px solid var(--border); padding: 1.25rem; border-radius: 8px;">
+          <div style="font-size: 1.8rem; font-weight: 700; color: var(--accent);">5,000+</div>
+          <div style="font-size: 0.85rem; color: var(--muted);">Collections with distinct schema models</div>
+        </div>
+        <div style="background: var(--code-bg); border: 1px solid var(--border); padding: 1.25rem; border-radius: 8px;">
+          <div style="font-size: 1.8rem; font-weight: 700; color: var(--accent);">99.999%</div>
+          <div style="font-size: 0.85rem; color: var(--muted);">Five-nines availability across financial ledgers</div>
+        </div>
+      </div>
+
+      <p>When Stripe was founded in 2011, cloud-managed database solutions (like MongoDB Atlas) did not exist. Facing hyper-growth, Stripe chose to build an in-house Database-as-a-Service (DBaaS) platform named <strong>DocDB</strong>, wrapping standard open-source MongoDB Community Edition in a resilient, horizontally scalable control plane.</p>
+
+      <h2 id="why-docdb">2. Evolution: From Raw MongoDB to DocDB</h2>
+      <p>While raw MongoDB provides document flexibility and JSON-native developer productivity, out-of-the-box cluster architectures face fundamental scaling ceilings under financial workloads:</p>
+      <ul>
+        <li><strong>Mongos Routing Ceilings:</strong> Native MongoDB sharding relies on <code>mongos</code> routing daemons and centralized config replica sets. At thousands of shards and millions of concurrent client connections, metadata synchronization becomes a severe contention point.</li>
+        <li><strong>Hot Shard Vulnerability:</strong> Large enterprise merchants (e.g., Shopify, Amazon, Zoom) generate massive transaction spikes that easily saturate a single physical shard's CPU, disk IOPS, and memory.</li>
+        <li><strong>Heavy Monolithic Shards:</strong> When physical shards swell past several terabytes, backup restoration, replica rebuilds, and disk resync operations take days, dramatically increasing Mean Time To Repair (MTTR).</li>
+      </ul>
+
+      <p>Stripe resolved these hurdles by engineering DocDB around a core principle: <strong>keep physical shards small, numerous, and dynamically movable with zero client downtime.</strong></p>
+
+      <h2 id="proxy-architecture">3. The Go-Based Database Proxy Layer</h2>
+      <p>Instead of application services connecting directly to MongoDB replica sets, every database query passes through a high-performance, stateless proxy fleet written in Go:</p>
+
+      <div class="mermaid">
+flowchart TD
+  App1["Application Service A"] --> ProxyCluster["Go-Based Database Proxy Fleet"]
+  App2["Application Service B"] --> ProxyCluster
+  App3["Application Service C"] --> ProxyCluster
+
+  subgraph ProxyInternals["Stateless Go Proxy Responsibilities"]
+    AuthGate["Mutual TLS & Token Authentication"]
+    RateLimiter["Adaptive Admission Control & Rate Limiting"]
+    RouteResolver["Chunk Routing & Topology Cache"]
+    CircuitBreaker["Latency Tracking & Circuit Breaking"]
+    
+    AuthGate --> RateLimiter
+    RateLimiter --> RouteResolver
+    RouteResolver --> CircuitBreaker
+  end
+
+  ProxyCluster --> ProxyInternals
+
+  subgraph StorageTier["Physical Database Shard Fleet"]
+    Shard1[("Shard 01 (Primary + Replicas)")]
+    Shard2[("Shard 02 (Primary + Replicas)")]
+    ShardN[("Shard N (Primary + Replicas)")]
+  end
+
+  CircuitBreaker -->|"Targeted Dispatch"| Shard1
+  CircuitBreaker -->|"Targeted Dispatch"| Shard2
+  CircuitBreaker -->|"Targeted Dispatch"| ShardN
+      </div>
+
+      <p><strong>Key Duties of the Proxy Fleet:</strong></p>
+      <ol>
+        <li><strong>Connection Multiplexing:</strong> Protects MongoDB mongod processes from connection exhaustion by aggregating tens of thousands of client connections into pre-warmed connection pools.</li>
+        <li><strong>Query Routing:</strong> Maps client queries to specific physical shards using an in-memory chunk-routing topology cache populated by the central control plane.</li>
+        <li><strong>Traffic Shaping &amp; Rate Limiting:</strong> Sheds excess load and rejects malformed or unindexed query shapes before they consume backend database compute cycles.</li>
+      </ol>
+
+      <h2 id="logical-physical">4. Decoupling Logical from Physical Shards</h2>
+      <p>A central architectural breakthrough in DocDB is the <strong>strict decoupling of logical shards from physical database instances</strong>:</p>
+
+      <div class="mermaid">
+flowchart LR
+  subgraph LogicalDomain["Logical Key Space"]
+    C1["Chunk 1 [000 - 099]"]
+    C2["Chunk 2 [100 - 199]"]
+    C3["Chunk 3 [200 - 299]"]
+    C4["Chunk 4 [300 - 399]"]
+  end
+
+  subgraph PhysicalTier["Physical Hardware Shards"]
+    PhysA[("Physical Node Alpha")]
+    PhysB[("Physical Node Beta")]
+  end
+
+  C1 --> PhysA
+  C2 --> PhysA
+  C3 --> PhysB
+  C4 --> PhysB
+      </div>
+
+      <p>Applications query data using logical partition keys (e.g., <code>merchant_id</code>). The mapping from logical chunk ID to physical host is maintained in a centralized Chunk Metadata Service. This allows the infrastructure team to migrate chunks between physical servers without changing a single line of application code.</p>
+
+      <h2 id="data-movement">5. The Data Movement Platform</h2>
+      <p>To keep shards balanced, Stripe built an automated orchestration engine called the <strong>Data Movement Platform</strong>. Moving live financial collections across shards executes through five seamless stages:</p>
+
+      <div class="mermaid">
+sequenceDiagram
+  autonumber
+  participant Coord as Migration Coordinator
+  participant Source as Source Physical Shard
+  participant Target as Target Physical Shard
+  participant Proxy as Database Proxy Fleet
+  participant CDC as CDC / Kafka Stream
+
+  Coord->>Target: 1. Provision target collections & pre-warm secondary indexes
+  Coord->>Source: 2. Capture cursor snapshot point (T_0)
+  Source->>Target: 3. Parallel cursor bulk-copy historical records
+  Source->>CDC: 4. Capture change stream (live updates since T_0)
+  CDC->>Target: 5. Apply ongoing mutations continuously
+  Coord->>Coord: 6. Run automated verification & checksum parity audit
+  Coord->>Proxy: 7. Flip routing epoch (Versioned Config-Flip)
+  Note over Proxy,Target: All new traffic routes to Target Shard!
+      </div>
+
+      <h2 id="versioned-config-flip">6. The Versioned Config-Flip Mechanism</h2>
+      <p>In a distributed system with thousands of proxy nodes, broadcasting a routing update atomically to all proxies simultaneously is impossible. A distributed race condition occurs where some proxies continue routing writes to the old shard while others route to the new shard, causing catastrophic split-brain state.</p>
+
+      <p>Stripe resolved this with <strong>Versioned Routing Epochs</strong>:</p>
+      <ul>
+        <li>Every chunk mapping has a monotonically increasing epoch number: $E_{\text{chunk}}$.</li>
+        <li>When the migration coordinator finishes data synchronization, it updates the epoch in the target shard: $E_{\text{new}} = E_{\text{old}} + 1$, and marks the old shard read-only.</li>
+        <li>Proxies stamp every outbound query with their cached epoch version.</li>
+        <li>If a proxy with a stale epoch attempts to write to the old shard, the shard explicitly rejects the query with a <code>STALE_ROUTING_EPOCH</code> exception.</li>
+        <li>The proxy catches the error, refreshes its local topology cache from the Chunk Metadata Service, and re-routes the query to the new target shard within milliseconds.</li>
+      </ul>
+
+      <h2 id="bin-packing">7. Dynamic Shard Splitting &amp; Bin-Packing</h2>
+      <p>The Data Movement Platform allows Stripe to adapt dynamically to changing merchant workloads:</p>
+
+      <div class="grid-2" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1.5rem 0;">
+        <div style="background: var(--code-bg); border: 1px solid var(--border); padding: 1.25rem; border-radius: 8px;">
+          <h4 style="color: var(--accent); margin-top: 0;">Dynamic Shard Splitting</h4>
+          <p style="font-size: 0.9rem; margin-bottom: 0;">During major shopping events (Black Friday / Cyber Monday), a high-volume merchant can suddenly saturate a shard. DocDB splits the chunk, migrating the hot merchant to dedicated, isolated physical hardware in minutes without downtime.</p>
+        </div>
+        <div style="background: var(--code-bg); border: 1px solid var(--border); padding: 1.25rem; border-radius: 8px;">
+          <h4 style="color: var(--accent); margin-top: 0;">Elastic Bin-Packing (Consolidation)</h4>
+          <p style="font-size: 0.9rem; margin-bottom: 0;">When traffic subsides, thousands of small, low-traffic logical chunks are merged and packed into fewer physical servers, dramatically slashing cloud compute and memory costs while maintaining full isolation.</p>
+        </div>
+      </div>
+
+      <h2 id="key-takeaways">8. Core Architectural Lessons</h2>
+      <ol>
+        <li><strong>Small Shards are Healthy Shards:</strong> Large monolithic databases fail catastrophically. Dividing petabytes into thousands of small, easily restorable shards keeps MTTR low and failovers swift.</li>
+        <li><strong>Decouple Applications from Topology:</strong> Proxies and logical-to-physical chunk abstractions allow infrastructure teams to migrate, split, and rebalance databases transparently without coordinating with product teams.</li>
+        <li><strong>Embrace Lazy Consistency for Routing Updates:</strong> Rather than relying on fragile two-phase commit protocols across distributed proxy fleets, versioned epochs and rejection-triggered cache invalidation deliver reliable, split-brain-free cutovers.</li>
+      </ol>
+    </article>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-col">
+        <div class="footer-brand">
+          <div class="brand-icon">⚡</div>
+          <span>System Design Notes</span>
+        </div>
+        <p class="footer-tagline">Curated engineering notes, production architecture dissections, and distributed systems research papers.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Core Categories</h5>
+        <ul>
+          <li><a href="stripe-scaling-mongodb-5m-qps.html">Stripe MongoDB at 5M QPS</a></li>
+          <li><a href="stripe-canonical-log-lines.html">Stripe Canonical Log Lines</a></li>
+          <li><a href="stripe-zero-downtime-schema-migrations.html">Stripe Schema Migrations</a></li>
+          <li><a href="google-monorepo-architecture.html">Google Monorepo Architecture</a></li>
+          <li><a href="storage-compute-separation-aurora.html">Storage-Compute Separation</a></li>
+          <li><a href="kafka-exactly-once-semantics.html">Kafka Exactly-Once (EOS)</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Repository</h5>
+        <ul>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank">GitHub Repository</a></li>
+          <li><a href="../Docs/System_Design_Notes.pdf" target="_blank">Complete Notes (184 Pages)</a></li>
+          <li><a href="../Docs/Stripe_Scaling_MongoDB_5M_QPS_Technical_Breakdown.pdf" target="_blank">Stripe MongoDB PDF (3 Pages)</a></li>
+          <li><a href="../Docs/Stripe_Canonical_Log_Lines_Technical_Breakdown.pdf" target="_blank">Stripe Logging PDF (3 Pages)</a></li>
+          <li><a href="../Docs/Stripe_Zero_Downtime_Schema_Migrations_Technical_Breakdown.pdf" target="_blank">Stripe Migrations PDF (3 Pages)</a></li>
+          <li><a href="../Docs/Google_Monorepo_Architecture_Technical_Breakdown.pdf" target="_blank">Google Monorepo PDF (3 Pages)</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>Released under MIT License • Open Source Engineering Notes</p>
+    </div>
+  </footer>
+
+  <script src="../assets/js/main.js"></script>
+  <script src="../theme.js"></script>
+</body>
+</html>

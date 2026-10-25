@@ -285,6 +285,30 @@ const ARTICLES_DATA = [
     excerpt: "Technical breakdown of Stripe's canonical log line pattern: replacing fragmented microservice log noise with pre-joined, high-cardinality wide events, request-scoped context accumulators, and ultra-fast incident analytics.",
     tags: ["Stripe", "Observability", "Logging", "Wide Events", "ClickHouse", "Distributed Systems", "Incident Triage"],
     featured: true
+  },
+  {
+    id: "stripe-scaling-mongodb-5m-qps",
+    slug: "stripe-scaling-mongodb-5m-qps.html",
+    title: "How Stripe Scales MongoDB to 5 Million Queries Per Second",
+    category: "Case Studies",
+    categorySlug: "case-studies",
+    badge: "Case Study",
+    pdfSource: "Docs/Stripe_Scaling_MongoDB_5M_QPS_Technical_Breakdown.pdf",
+    excerpt: "Architectural decomposition based on Arpit Bhayani's engineering dissection: scaling MongoDB to 5M QPS across hundreds of clusters, hot shard elimination, custom Mongo proxies, hedge reads, automated failover, and index lifecycle governance.",
+    tags: ["Stripe", "MongoDB", "High Throughput", "Database Sharding", "Hedge Reads", "High Availability", "Distributed Systems"],
+    featured: true
+  },
+  {
+    id: "openai-postgres-scaling-chatgpt",
+    slug: "openai-postgres-scaling-chatgpt.html",
+    title: "How OpenAI Handles 800M ChatGPT Users on a Single PostgreSQL Primary",
+    category: "Case Studies",
+    categorySlug: "case-studies",
+    badge: "Case Study",
+    pdfSource: "Docs/OpenAI_Postgres_Scaling_ChatGPT_Technical_Breakdown.pdf",
+    excerpt: "Technical deep-dive into OpenAI's PostgreSQL architecture: scaling a single primary database to 800M+ ChatGPT users, 50 read replicas, PgBouncer transaction pooling, cache stampede mitigation, and write offloading.",
+    tags: ["OpenAI", "PostgreSQL", "ChatGPT", "Database Engineering", "PgBouncer", "Read Replicas", "High Availability"],
+    featured: true
   }
 ];
 
