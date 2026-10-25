@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sample post</title>
+
+  <!-- Applies the saved theme before first paint, so there is no flash -->
+  <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="theme.css">
+</head>
+<body>
+  <div id="progress" aria-hidden="true"></div>
+
+  <header class="site-header">
+    <a class="site-name" href="index.html">System Design Notes</a>
+    <nav class="site-nav" aria-label="Main">
+      <a href="index.html" aria-current="page">Writing</a>
+      <a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank">GitHub</a>
+    </nav>
+    <div class="swatches" role="group" aria-label="Colour theme">
+      <button class="swatch" data-set-theme="light"  style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+      <button class="swatch" data-set-theme="dark"   style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+      <button class="swatch" data-set-theme="sepia"  style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+    </div>
+  </header>
+
+  <main>
+    <article>
+      <header class="post-head">
+        <h1>Why I stopped tuning for throughput first</h1>
+        <p class="meta">
+          <time datetime="2026-10-25">25 October 2026</time>
+          <span>6 min read</span>
+        </p>
+      </header>
+
+      <p class="lede">For a long time I treated every slow system as a throughput problem. Most of the time it was a waiting problem, and the two need very different fixes.</p>
+
+      <p>When a queue backs up, the instinct is to make the consumer faster. Profile it, trim the hot loop, add a thread. Sometimes that works. More often the consumer is already quick and spends most of its life waiting on something it cannot see: a lock, a slow neighbour, a request that has not arrived yet.</p>
+
+      <h2>Measure the wait, not the work</h2>
+
+      <p>The first habit worth building is recording how long an item sits before anyone touches it. Work time tells you how good the code is. Wait time tells you how good the <em>system</em> is, and it is usually the larger number.</p>
+
+      <blockquote>
+        <p>A fast worker behind a bad queue is still a slow system.</p>
+      </blockquote>
+
+      <p>A small example. Stamp each item on the way in, and read the difference on the way out:</p>
+
+<pre><code>using Clock = std::chrono::steady_clock;
+
+struct Job {
+    Clock::time_point enqueued;
+    Payload data;
+};
+
+void worker(Queue&lt;Job&gt;&amp; q) {
+    while (auto job = q.pop()) {
+        auto waited = Clock::now() - job-&gt;enqueued;
+        // the number that matters
+        metrics.record_wait(waited);
+        handle(job-&gt;data);
+    }
+}</code></pre>
+
+      <h3>What the numbers usually say</h3>
+
+      <ul>
+        <li>High wait, low work: the bottleneck is upstream or in coordination, not in your code.</li>
+        <li>Low wait, high work: now it really is a throughput problem, and profiling pays off.</li>
+        <li>Both high: fix the wait first, because it hides how slow the work really is.</li>
+      </ul>
+
+      <p>None of this is new. It is just easy to forget when the profiler is already open and the flame graph looks so inviting.</p>
+
+      <hr>
+
+      <p>If you only change one thing after reading this, add the wait metric. Everything else follows from what it shows you.</p>
+    </article>
+  </main>
+
+  <footer class="site-footer">
+    <p>&copy; 2026 System Design Notes</p>
+  </footer>
+
+  <script src="theme.js"></script>
+</body>
+</html>

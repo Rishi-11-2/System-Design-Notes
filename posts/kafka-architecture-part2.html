@@ -7,7 +7,7 @@
   <meta name="description" content="Deep-dive technical breakdown of Apache Kafka Architecture Part 2: Consumer group scaling invariants, offset tracking in __consumer_offsets, auto vs manual commit failure modes, cluster HA, and Leader-Follower ISR replication.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,wght@0,400;0,600;1,400&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Lora:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="../blog-theme.css">
   <link rel="stylesheet" href="../assets/css/style.css">
   <script>
@@ -45,6 +45,7 @@
 </head>
 <body>
   <div id="reading-progress"></div>
+  <div id="progress" aria-hidden="true"></div>
 
   <nav class="navbar">
     <div class="nav-container">
@@ -60,6 +61,11 @@
         <ul class="nav-links">
           <li><a href="../index.html">← All Notes</a></li>
         </ul>
+                <div class="swatches" role="group" aria-label="Colour theme">
+          <button class="swatch" data-set-theme="light"  style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+          <button class="swatch" data-set-theme="dark"   style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+          <button class="swatch" data-set-theme="sepia"  style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+        </div>
         <button id="theme-toggle" class="btn-icon" data-tooltip="Toggle light/dark theme" aria-label="Toggle Theme">
           <span class="theme-icon">☀️</span>
         </button>

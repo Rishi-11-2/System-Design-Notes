@@ -49,6 +49,7 @@ function initTheme() {
   const themes = ["light", "dark", "sepia"];
   const root = document.documentElement;
   const toggleBtn = document.getElementById('theme-toggle');
+  const swatches = document.querySelectorAll('[data-set-theme]');
   const prefersDark = (typeof window.matchMedia === 'function') 
     ? window.matchMedia('(prefers-color-scheme: dark)').matches 
     : false;
@@ -61,6 +62,19 @@ function initTheme() {
   // Default to saved theme, or system dark/light preference if not set
   const initialTheme = savedTheme || (prefersDark ? 'dark' : 'light');
   applyTheme(initialTheme);
+
+  // Support 3-dot swatches
+  swatches.forEach(swatch => {
+    swatch.addEventListener('click', () => {
+      const theme = swatch.dataset.setTheme;
+      if (theme) {
+        applyTheme(theme);
+        try {
+          localStorage.setItem('theme', theme);
+        } catch (e) {}
+      }
+    });
+  });
 
   if (toggleBtn) {
     toggleBtn.addEventListener('click', () => {
@@ -98,6 +112,12 @@ function applyTheme(theme) {
   root.dataset.theme = theme;
   root.setAttribute('data-theme', theme);
 
+  // Update swatches pressed state
+  const swatches = document.querySelectorAll('[data-set-theme]');
+  swatches.forEach(s => {
+    s.setAttribute('aria-pressed', String(s.dataset.setTheme === theme));
+  });
+
   const toggleBtn = document.getElementById('theme-toggle');
   if (toggleBtn) {
     const icon = toggleBtn.querySelector('.theme-icon');
@@ -122,17 +142,29 @@ function applyTheme(theme) {
 // Reading Progress Bar
 function initReadingProgress() {
   const progressBar = document.getElementById('reading-progress');
-  if (!progressBar) return;
+  const bar = document.getElementById('progress');
+  if (!progressBar && !bar) return;
+
+  let ticking = false;
+  const update = function () {
+    const max = document.documentElement.scrollHeight - window.innerHeight;
+    const ratio = max > 0 ? Math.min(1, Math.max(0, window.scrollY / max)) : 0;
+    if (progressBar) {
+      progressBar.style.width = `${ratio * 100}%`;
+    }
+    if (bar) {
+      bar.style.transform = "scaleX(" + ratio + ")";
+    }
+    ticking = false;
+  };
 
   window.addEventListener('scroll', () => {
-    const totalHeight = document.documentElement.scrollHeight - window.innerHeight;
-    if (totalHeight <= 0) {
-      progressBar.style.width = '0%';
-      return;
+    if (!ticking) {
+      ticking = true;
+      requestAnimationFrame(update);
     }
-    const progress = (window.scrollY / totalHeight) * 100;
-    progressBar.style.width = `${Math.min(100, Math.max(0, progress))}%`;
   }, { passive: true });
+  update();
 }
 
 // Search and Filtering (for Home/Index Page)
