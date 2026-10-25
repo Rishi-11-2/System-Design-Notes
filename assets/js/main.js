@@ -44,32 +44,78 @@ function initKaTeX() {
 }
 window.initKaTeX = initKaTeX;
 
-// Theme Management (Obsidian Carbon & Paper Light)
+// Theme Management: Light, Dark & Sepia Themes
 function initTheme() {
+  const themes = ["light", "dark", "sepia"];
+  const root = document.documentElement;
   const toggleBtn = document.getElementById('theme-toggle');
-  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-  const savedTheme = localStorage.getItem('theme') || (prefersDark ? 'dark' : 'light');
+  const prefersDark = (typeof window.matchMedia === 'function') 
+    ? window.matchMedia('(prefers-color-scheme: dark)').matches 
+    : false;
   
-  applyTheme(savedTheme);
+  let savedTheme = null;
+  try {
+    savedTheme = localStorage.getItem('theme');
+  } catch (e) {}
+
+  // Default to saved theme, or system dark/light preference if not set
+  const initialTheme = savedTheme || (prefersDark ? 'dark' : 'light');
+  applyTheme(initialTheme);
 
   if (toggleBtn) {
     toggleBtn.addEventListener('click', () => {
-      const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
-      const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
-      applyTheme(newTheme);
-      localStorage.setItem('theme', newTheme);
+      const currentTheme = root.dataset.theme || (prefersDark ? 'dark' : 'light');
+      const currentIndex = themes.indexOf(currentTheme);
+      const nextTheme = themes[(currentIndex !== -1 ? currentIndex + 1 : 0) % themes.length];
+      applyTheme(nextTheme);
+      try {
+        localStorage.setItem('theme', nextTheme);
+      } catch (e) {}
     });
+  }
+
+  // Follow system theme changes if user has not explicitly locked a theme in localStorage
+  if (typeof window.matchMedia === 'function') {
+    try {
+      const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+      if (mediaQuery && mediaQuery.addEventListener) {
+        mediaQuery.addEventListener('change', (e) => {
+          let hasSaved = false;
+          try {
+            hasSaved = !!localStorage.getItem('theme');
+          } catch (err) {}
+          if (!hasSaved) {
+            applyTheme(e.matches ? 'dark' : 'light');
+          }
+        });
+      }
+    } catch (e) {}
   }
 }
 
 function applyTheme(theme) {
-  document.documentElement.setAttribute('data-theme', theme);
+  const root = document.documentElement;
+  root.dataset.theme = theme;
+  root.setAttribute('data-theme', theme);
+
   const toggleBtn = document.getElementById('theme-toggle');
   if (toggleBtn) {
     const icon = toggleBtn.querySelector('.theme-icon');
+    const themeIcons = {
+      light: '☀️',
+      dark: '🌙',
+      sepia: '📜'
+    };
     if (icon) {
-      icon.textContent = theme === 'dark' ? '☀️' : '🌙';
+      icon.textContent = themeIcons[theme] || '☀️';
     }
+    const themeTooltips = {
+      light: 'Light Theme (Click for Dark)',
+      dark: 'Dark Theme (Click for Sepia)',
+      sepia: 'Sepia Theme (Click for Light)'
+    };
+    toggleBtn.setAttribute('data-tooltip', themeTooltips[theme] || `Theme: ${theme}`);
+    toggleBtn.setAttribute('aria-label', `Theme toggle: currently ${theme}`);
   }
 }
 
@@ -263,35 +309,48 @@ function initBackToTop() {
   });
 }
 
-// Initialize Mermaid.js with Subtle #272822 / #F8F8F2 / #F92672 Palette
+// Initialize Mermaid.js with Theme-Adaptive Palette (Light, Dark & Sepia)
 async function initMermaid() {
   if (typeof mermaid !== 'undefined') {
+    const root = document.documentElement;
+    const prefersDark = (typeof window.matchMedia === 'function') 
+      ? window.matchMedia('(prefers-color-scheme: dark)').matches 
+      : false;
+    const currentTheme = root.dataset.theme || (prefersDark ? 'dark' : 'light');
+    
+    const isDark = currentTheme === 'dark';
+    const bkgColor = isDark ? '#222226' : (currentTheme === 'sepia' ? '#faf4e6' : '#ffffff');
+    const primaryCol = isDark ? '#7fb5b5' : (currentTheme === 'sepia' ? '#8a4b2a' : '#2f6f73');
+    const textCol = isDark ? '#d8d8d8' : (currentTheme === 'sepia' ? '#433422' : '#2b2b2b');
+    const borderCol = isDark ? '#333338' : (currentTheme === 'sepia' ? '#e0d3b8' : '#e6dfd3');
+    const lineCol = isDark ? '#7fb5b5' : (currentTheme === 'sepia' ? '#8a4b2a' : '#2f6f73');
+
     mermaid.initialize({
       startOnLoad: false,
-      theme: 'dark',
+      theme: isDark ? 'dark' : 'default',
       themeVariables: {
-        darkMode: true,
-        background: '#20211d',
-        primaryColor: '#F92672',
-        primaryTextColor: '#F8F8F2',
-        primaryBorderColor: '#3e3f35',
-        lineColor: '#66D9EF',
-        secondaryColor: '#272822',
-        tertiaryColor: '#1e1f1c',
-        noteBkgColor: '#272822',
-        noteTextColor: '#F8F8F2',
-        noteBorderColor: '#3e3f35',
-        actorBkg: '#20211d',
-        actorBorder: '#F92672',
-        actorTextColor: '#F8F8F2',
-        actorLineColor: '#3e3f35',
-        signalColor: '#F92672',
-        signalTextColor: '#F8F8F2',
-        labelBoxBkgColor: '#20211d',
-        labelBoxBorderColor: '#3e3f35',
-        labelTextColor: '#F8F8F2',
-        loopTextColor: '#F8F8F2',
-        altSectionBkgColor: '#20211d',
+        darkMode: isDark,
+        background: bkgColor,
+        primaryColor: primaryCol,
+        primaryTextColor: textCol,
+        primaryBorderColor: borderCol,
+        lineColor: lineCol,
+        secondaryColor: bkgColor,
+        tertiaryColor: bkgColor,
+        noteBkgColor: bkgColor,
+        noteTextColor: textCol,
+        noteBorderColor: borderCol,
+        actorBkg: bkgColor,
+        actorBorder: primaryCol,
+        actorTextColor: textCol,
+        actorLineColor: borderCol,
+        signalColor: primaryCol,
+        signalTextColor: textCol,
+        labelBoxBkgColor: bkgColor,
+        labelBoxBorderColor: borderCol,
+        labelTextColor: textCol,
+        loopTextColor: textCol,
+        altSectionBkgColor: bkgColor,
         fontFamily: "'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif"
       }
     });
