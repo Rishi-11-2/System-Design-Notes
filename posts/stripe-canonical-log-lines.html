@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stripe's Canonical Log Lines — A Smarter Architecture for High-Scale Structured Observability — System Design Notes</title>
+  <meta name="description" content="Technical breakdown of Stripe's canonical log line pattern: replacing fragmented microservice log noise with pre-joined, high-cardinality wide events, request-scoped context accumulators, and ultra-fast incident analytics.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,wght@0,400;0,600;1,400&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Lora:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../blog-theme.css">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <script>
+    (function() {
+      const saved = localStorage.getItem('theme');
+      if (saved) document.documentElement.dataset.theme = saved;
+    })();
+  </script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">Articles</a></li>
+          <li><a href="../index.html#system-eval">Architecture Index</a></li>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="nav-gh">GitHub</a></li>
+        </ul>
+        <button id="theme-toggle" class="theme-toggle" aria-label="Toggle Theme">
+          <span class="theme-icon">☀️</span>
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <header class="article-header">
+    <div class="article-header-inner">
+      <div class="post-category-badge">Case Study</div>
+      <h1 class="article-title">Stripe's Canonical Log Lines — A Smarter Architecture for High-Scale Structured Observability</h1>
+      <div class="article-meta">
+        <span>By Arpit Bhayani Dissection &amp; Brandur Leach (Stripe)</span>
+        <span>•</span>
+        <span>October 2026</span>
+        <span>•</span>
+        <span>14 min read</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="article-body">
+    <aside class="toc-sidebar">
+      <div class="toc-title">Table of Contents</div>
+      <ul class="toc-list">
+        <li><a href="#logging-nightmare">1. The Fragmented Log Nightmare</a></li>
+        <li><a href="#canonical-concept">2. The Core Thesis: One Wide Event per Unit of Work</a></li>
+        <li><a href="#log-anatomy">3. Anatomy of a Canonical Log Line</a></li>
+        <li><a href="#context-accumulator">4. The Request Context Accumulator Architecture</a></li>
+        <li><a href="#cardinality-math">5. Resolving the High-Cardinality Analytics Dilemma</a></li>
+        <li><a href="#comparison-matrix">6. Canonical Logs vs Metrics vs Distributed Traces</a></li>
+        <li><a href="#code-implementation">7. Production Implementation Pattern</a></li>
+        <li><a href="#observability-verdict">8. Engineering Takeaways &amp; Best Practices</a></li>
+      </ul>
+    </aside>
+
+    <article class="prose">
+      <blockquote>
+        <p><strong>Source Attribution:</strong> This deep-dive synthesizes Arpit Bhayani's engineering dissection on Stripe's Logging Architecture and Brandur Leach's influential Stripe engineering publication, <em>"Fast and flexible observability with canonical log lines"</em>.</p>
+      </blockquote>
+
+      <h2 id="logging-nightmare">1. The Fragmented Log Nightmare</h2>
+      <p>In standard microservice and monolithic web applications, developers traditionally log ad-hoc messages throughout the lifecycle of an HTTP request. As execution flows across routers, authentication middleware, database queries, cache layers, external payment gateways, and serialization routines, engineers scatter print statements like:</p>
+
+      <pre><code class="language-text">2026-10-25 14:02:01.102 [INFO] Received POST /v1/charges for merchant acct_9281
+2026-10-25 14:02:01.108 [DEBUG] Authenticated API key rk_live_49182
+2026-10-25 14:02:01.125 [INFO] Cache miss for customer cus_9921 on Redis cluster 04
+2026-10-25 14:02:01.189 [DEBUG] Executed SQL query (SELECT * FROM customers WHERE id = ...) [duration=64ms]
+2026-10-25 14:02:01.214 [INFO] Rate limit token consumed. Remaining: 89
+2026-10-25 14:02:01.450 [INFO] Outbound Visa network dispatch succeeded [latency=236ms]
+2026-10-25 14:02:01.465 [INFO] Request completed with status 200 in 363ms</code></pre>
+
+      <p>While this feels intuitive during development, at Stripe's scale—processing billions of API calls daily—this logging philosophy creates severe operational failure modes:</p>
+
+      <div class="mermaid">
+flowchart TD
+  subgraph BrokenWorld["Traditional Fragmented Logging (The 3 AM Nightmare)"]
+    R1["Request R1"] --> L1["Log Line 1: Ingress Route"]
+    R1 --> L2["Log Line 2: Auth"]
+    R1 --> L3["Log Line 3: DB Query"]
+    R1 --> L4["Log Line 4: Redis Cache"]
+    R1 --> L5["Log Line 5: Exit 500"]
+
+    Interleaved["100,000 Concurrent Requests Interleaving Thousands of Lines Every Millisecond"]
+    L1 -.-> Interleaved
+    L2 -.-> Interleaved
+    L3 -.-> Interleaved
+    L4 -.-> Interleaved
+    L5 -.-> Interleaved
+  end
+
+  Interleaved --> SearchHell["Engineer forced to regex-join request_id across multi-terabyte log clusters!"]
+      </div>
+
+      <p><strong>Core Flaws of Fragmented Logging:</strong></p>
+      <ul>
+        <li><strong>Expensive Multi-Log Joins:</strong> Answering a simple question like <em>"What was the database query time for requests that failed with HTTP 500 for merchant X?"</em> requires joining line 3 (the DB log) with line 5 (the status log) and line 1 (the merchant ID log). In Splunk, Elasticsearch, or BigQuery, log-joins over petabytes of data are agonizingly slow and frequently time out.</li>
+        <li><strong>Astronomical Storage Overhead:</strong> Every single fragmented log line repeats identical ambient boilerplate (host IP, timestamp, process ID, environment, thread ID, trace ID). Over 70% of ingested bytes represent redundant envelope metadata rather than actionable business context.</li>
+        <li><strong>Incomplete Visibility on Crashes:</strong> If a process crashes or is killed by an OOM (Out Of Memory) event midway through execution, early lines are stored while trailing lines vanish, leaving engineers with no record of total duration, memory consumption, or the terminal error state.</li>
+      </ul>
+
+      <h2 id="canonical-concept">2. The Core Thesis: One Wide Event per Unit of Work</h2>
+      <p>Stripe dismantled this paradigm by introducing the <strong>Canonical Log Line</strong> pattern (often called <em>Wide Events</em> or <em>Structured Service Logs</em>).</p>
+
+      <div class="mermaid">
+flowchart LR
+  subgraph RequestFlow["Request Ingress to Egress"]
+    Req["Incoming HTTP Request"] --> MW["Middleware: Init Context Bag"]
+    MW --> Auth["Auth & API Key Layer"]
+    Auth --> DB["Database / Cache Layer"]
+    DB --> Biz["Business Execution"]
+    Biz --> Resp["Response Delivery / Error"]
+  end
+
+  ContextBag[("Request Context Accumulator (Thread-Local / Context Bag)")]
+  MW -.->|"Inject request_id, client_ip"| ContextBag
+  Auth -.->|"Append merchant_id, api_key_type"| ContextBag
+  DB -.->|"Accumulate db_queries=4, db_time_ms=38.4"| ContextBag
+  Biz -.->|"Record amount=4999, currency=usd"| ContextBag
+  Resp -.->|"Record status=200, duration_ms=142.1"| ContextBag
+
+  Resp ==>|"EMIT EXACTLY ONE CANONICAL LOG LINE"| Engine[("Columnar Log Store (Splunk / ClickHouse)")]
+      </div>
+
+      <div class="box">
+        <div class="box-title">The Fundamental Principle</div>
+        For every HTTP request (or background asynchronous worker job), the service emits <strong>exactly one authoritative, structured, and information-dense log line at the very end of execution</strong>. This log line contains every piece of diagnostic, routing, performance, and business context accumulated during the request.
+      </div>
+
+      <h2 id="log-anatomy">3. Anatomy of a Canonical Log Line</h2>
+      <p>Instead of 30 isolated messages, a single canonical log line provides a complete, pre-joined dimensional snapshot formatted as JSON or structured <code>logfmt</code>:</p>
+
+      <pre><code class="language-json">{
+  "timestamp": "2026-10-25T14:02:01.465Z",
+  "log_type": "canonical_log_line",
+  "service": "api-charges",
+  "environment": "production",
+  "request_id": "req_8492048fjs82",
+  "http_method": "POST",
+  "http_path": "/v1/charges",
+  "http_status": 200,
+  "duration_ms": 363.4,
+  "client_ip": "198.51.100.42",
+  "user_agent": "Stripe/v1 PythonBindings/7.12.0",
+  "merchant_id": "acct_928194",
+  "customer_id": "cus_992144",
+  "api_key_id": "rk_live_49182",
+  "charge_amount": 4999,
+  "currency": "usd",
+  "card_brand": "visa",
+  "card_funding": "credit",
+  "idempotency_key": "idem_930281048",
+  "idempotent_replayed": false,
+  "rate_limit_tokens_remaining": 89,
+  "db_query_count": 4,
+  "db_duration_ms": 64.2,
+  "cache_hit_count": 3,
+  "cache_miss_count": 1,
+  "external_call_count": 1,
+  "external_network_duration_ms": 236.1,
+  "active_feature_flags": ["use_new_risk_engine_v3", "optimized_tls_pool"],
+  "allocated_memory_bytes": 1492040,
+  "error_code": null,
+  "error_message": null
+}</code></pre>
+
+      <h2 id="context-accumulator">4. The Request Context Accumulator Architecture</h2>
+      <p>How do modular services append metadata into a single unified record without coupling their domain logic to logging frameworks? Stripe uses a <strong>Request Context Accumulator</strong>.</p>
+
+      <div class="mermaid">
+sequenceDiagram
+  autonumber
+  participant Client as HTTP Client
+  participant Middleware as Ingress Middleware
+  participant Context as RequestContextBag
+  participant Service as Business Domain Logic
+  participant DBClient as Instrumented DB Client
+  participant Logger as Canonical Logger
+
+  Client->>Middleware: POST /v1/charges
+  Middleware->>Context: Instantiate empty ContextBag
+  Middleware->>Context: Set(request_id, path, client_ip, start_time)
+  
+  Middleware->>Service: Dispatch Request
+  Service->>Context: Set(merchant_id, charge_amount)
+  
+  Service->>DBClient: Query customer profile
+  DBClient->>DBClient: Execute SQL query
+  DBClient->>Context: Increment(db_query_count, 1)
+  DBClient->>Context: Add(db_duration_ms, 14.2)
+  DBClient-->>Service: Return Record
+
+  Service-->>Middleware: Return HTTP 200 Response
+  Middleware->>Context: Set(http_status=200, end_time=now)
+  
+  Middleware->>Logger: Flush ContextBag to stdout
+  Logger-->>Logger: Serialize single wide JSON record
+  Middleware-->>Client: Send HTTP 200 Response to Client
+      </div>
+
+      <p><strong>Architectural Requirements:</strong></p>
+      <ul>
+        <li><strong>Async / Thread Isolation:</strong> The context bag is bound to the execution scope (using <code>async_hooks</code> in Node.js, <code>context.Context</code> in Go, or <code>contextvars</code> / <code>ThreadLocal</code> in Python/Java). It cannot leak across concurrent requests on the same worker thread.</li>
+        <li><strong>Thread-Safe Mutators:</strong> Layers can concurrently increment counters (e.g., parallel database queries incrementing <code>db_query_count</code>) using atomic CAS (Compare-And-Swap) primitives.</li>
+        <li><strong>Guaranteed Flushes (Ensure / Defer):</strong> The flush operation is wrapped in a <code>defer</code> or <code>try...finally</code> block at the outermost middleware boundary. Even if an unhandled panic or exception crashes the handler, the canonical log line is guaranteed to emit with <code>http_status=500</code> and the stack trace captured.</li>
+      </ul>
+
+      <h2 id="cardinality-math">5. Resolving the High-Cardinality Analytics Dilemma</h2>
+      <p>Traditional monitoring tools struggle with the <strong>cardinality problem</strong>. Standard time-series metrics (StatsD, Prometheus) calculate unique metric streams for every combination of dimensions:</p>
+      $$\text{Total Time-Series Keys} = \prod_{i=1}^{k} |\text{Dimension}_i|$$
+      <p>If you tag a metric with <code>merchant_id</code> (1,000,000 values) and <code>request_id</code> (100,000,000 values), Prometheus consumes gigabytes of RAM and crashes due to cardinality explosion.</p>
+
+      <p>Canonical log lines resolve this by transforming log telemetry into a <strong>columnar data stream</strong>:</p>
+      <ul>
+        <li>They safely store arbitrarily high-cardinality values (<code>request_id</code>, <code>customer_id</code>, <code>idempotency_key</code>) alongside low-cardinality operational states (<code>status_code</code>, <code>region</code>).</li>
+        <li>When indexed by columnar engines (ClickHouse, Snowflake, Splunk, Elastic), engineers can execute sub-second analytical queries without multi-table joins:</li>
+      </ul>
+
+      <pre><code class="language-sql">-- Instantly pinpoint the slowest merchant on failing requests across 500 million logs
+SELECT 
+  merchant_id,
+  count(*) as failures,
+  quantile(0.99)(db_duration_ms) as p99_db_latency
+FROM canonical_logs
+WHERE http_status = 500 
+  AND timestamp >= NOW() - INTERVAL 1 HOUR
+GROUP BY merchant_id
+ORDER BY failures DESC
+LIMIT 10;
+</code></pre>
+
+      <h2 id="comparison-matrix">6. Canonical Logs vs Metrics vs Distributed Traces</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Observability Pillar</th>
+            <th>Primary Strengths</th>
+            <th>Critical Limitations</th>
+            <th>Role in System</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Time-Series Metrics (Prometheus)</strong></td>
+            <td>Ultra-fast alerting, lightweight scalar dashboards (CPU, RPS).</td>
+            <td>Zero support for high-cardinality tags (cannot tag by <code>merchant_id</code> or <code>user_id</code>).</td>
+            <td>High-level system health alerting (the <em>"What"</em>).</td>
+          </tr>
+          <tr>
+            <td><strong>Distributed Tracing (OpenTelemetry)</strong></td>
+            <td>Visualizes parent-child microservice call graphs and network spans.</td>
+            <td>Expensive to sample 100% of traffic; difficult to run ad-hoc aggregate group-bys.</td>
+            <td>Deep call-graph inspection for distributed latency bottlenecks (the <em>"Where"</em>).</td>
+          </tr>
+          <tr>
+            <td><strong>Canonical Log Lines (Wide Events)</strong></td>
+            <td>Pre-joined, 100% sample rate, high-cardinality analytical slicing, zero log-join overhead.</td>
+            <td>Requires deliberate request-scoped instrumentation in middleware.</td>
+            <td>Authoritative source of truth for forensic debugging and incident triage (the <em>"Why"</em>).</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2 id="code-implementation">7. Production Implementation Pattern</h2>
+      <p>Here is a production-grade implementation of the Canonical Context Accumulator pattern in Go:</p>
+
+      <pre><code class="language-go">package observability
+
+import (
+    "context"
+    "encoding/json"
+    "net/http"
+    "os"
+    "sync"
+    "time"
+)
+
+type contextKey struct{}
+
+// CanonicalLog contains all telemetry for a single HTTP transaction
+type CanonicalLog struct {
+    mu             sync.Mutex
+    Data           map[string]interface{}
+    StartTime      time.Time
+}
+
+func NewCanonicalLog(r *http.Request) *CanonicalLog {
+    cl := &CanonicalLog{
+        Data:      make(map[string]interface{}),
+        StartTime: time.Now(),
+    }
+    cl.Data["request_id"] = r.Header.Get("X-Request-Id")
+    cl.Data["http_method"] = r.Method
+    cl.Data["http_path"] = r.URL.Path
+    cl.Data["client_ip"] = r.RemoteAddr
+    return cl
+}
+
+func (cl *CanonicalLog) Set(key string, value interface{}) {
+    cl.mu.Lock()
+    defer cl.mu.Unlock()
+    cl.Data[key] = value
+}
+
+func (cl *CanonicalLog) Increment(key string, delta int64) {
+    cl.mu.Lock()
+    defer cl.mu.Unlock()
+    if val, ok := cl.Data[key].(int64); ok {
+        cl.Data[key] = val + delta
+    } else {
+        cl.Data[key] = delta
+    }
+}
+
+// Middleware attaches the accumulator and flushes exactly one line at completion
+func CanonicalLogMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        cl := NewCanonicalLog(r)
+        ctx := context.WithValue(r.Context(), contextKey{}, cl)
+
+        // Capture status code via response recorder
+        rec := &responseRecorder{ResponseWriter: w, status: 200}
+
+        defer func() {
+            cl.Set("http_status", rec.status)
+            cl.Set("duration_ms", float64(time.Since(cl.StartTime).Microseconds())/1000.0)
+            
+            // Atomically flush exactly one JSON log line to stdout
+            bytes, _ := json.Marshal(cl.Data)
+            os.Stdout.Write(append(bytes, '\n'))
+        }()
+
+        next.ServeHTTP(rec, r.WithContext(ctx))
+    })
+}
+</code></pre>
+
+      <h2 id="observability-verdict">8. Engineering Takeaways &amp; Best Practices</h2>
+      <ol>
+        <li><strong>Fewer, Wider Events Win:</strong> Stop emitting 50 fragmented log messages for a single request. One wide event carrying 40 fields is infinitely more valuable, costs less to store, and requires zero joins.</li>
+        <li><strong>Pre-Join at the Source:</strong> In-memory context accumulation is essentially free (microseconds and kilobytes of RAM). Performing that same join in Elasticsearch or Splunk across 100 million lines costs thousands of dollars and minutes of query latency.</li>
+        <li><strong>Unify Business &amp; Systems Metrics:</strong> The magic of canonical log lines happens when you combine system metrics (<code>db_duration_ms</code>, <code>memory_allocated</code>) with business entities (<code>merchant_id</code>, <code>charge_amount</code>, <code>tier</code>). This allows engineers to immediately determine if an outage is isolated to a specific tier, API version, or merchant.</li>
+      </ol>
+    </article>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-col">
+        <div class="footer-brand">
+          <div class="brand-icon">⚡</div>
+          <span>System Design Notes</span>
+        </div>
+        <p class="footer-tagline">Curated engineering notes, production architecture dissections, and distributed systems research papers.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Core Categories</h5>
+        <ul>
+          <li><a href="stripe-canonical-log-lines.html">Stripe Canonical Log Lines</a></li>
+          <li><a href="stripe-zero-downtime-schema-migrations.html">Stripe Schema Migrations</a></li>
+          <li><a href="google-monorepo-architecture.html">Google Monorepo Architecture</a></li>
+          <li><a href="storage-compute-separation-aurora.html">Storage-Compute Separation</a></li>
+          <li><a href="atlassian-cache-invalidation.html">Atlassian Cache Invalidation</a></li>
+          <li><a href="bitcask-storage-engine.html">Bitcask Storage Engine</a></li>
+          <li><a href="kafka-exactly-once-semantics.html">Kafka Exactly-Once (EOS)</a></li>
+          <li><a href="amazon-aurora-cloud-native-databases.html">Amazon Aurora Architecture</a></li>
+          <li><a href="cap-theorem-and-google-spanner.html">Google Spanner &amp; TrueTime</a></li>
+          <li><a href="consistent-hashing.html">Consistent Hashing Guide</a></li>
+          <li><a href="grab-data-layer-architecture.html">Grab Data Layer Architecture</a></li>
+          <li><a href="kafka-architecture-part1.html">Apache Kafka Fundamentals</a></li>
+          <li><a href="kafka-architecture-part2.html">Kafka Cluster &amp; Consumer Offsets</a></li>
+          <li><a href="microservices-design-patterns.html">Microservices Patterns</a></li>
+          <li><a href="redis-internals-and-architecture.html">Redis Internal Mechanics</a></li>
+          <li><a href="dragonflydb-bplus-tree-sorted-set.html">DragonflyDB B+ Tree Sorted Set</a></li>
+          <li><a href="zomato-search-intent-nlp.html">Zomato Search Intent NLP</a></li>
+          <li><a href="booking-user-review-system.html">Booking.com Review System</a></li>
+          <li><a href="uber-emergency-sos-service.html">Uber Emergency SOS Service</a></li>
+          <li><a href="google-monorepo-architecture.html">Google Monorepo Architecture</a></li>
+          <li><a href="stripe-zero-downtime-schema-migrations.html">Stripe Schema Migrations</a></li>
+          <li><a href="stripe-canonical-log-lines.html">Stripe Canonical Log Lines</a></li>
+          <li><a href="redis-java-implementation.html">Java Redis Event Loop Server</a></li>
+          <li><a href="system-design-foundations-and-scaling.html">Foundations &amp; Scaling Guide</a></li>
+          <li><a href="system-design-case-studies.html">System Design Case Studies</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Repository</h5>
+        <ul>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank">GitHub Repository</a></li>
+          <li><a href="../Docs/System_Design_Notes.pdf" target="_blank">Complete Notes (184 Pages)</a></li>
+          <li><a href="../Docs/Stripe_Canonical_Log_Lines_Technical_Breakdown.pdf" target="_blank">Stripe Logging PDF (3 Pages)</a></li>
+          <li><a href="../Docs/Stripe_Zero_Downtime_Schema_Migrations_Technical_Breakdown.pdf" target="_blank">Stripe Migrations PDF (3 Pages)</a></li>
+          <li><a href="../Docs/Google_Monorepo_Architecture_Technical_Breakdown.pdf" target="_blank">Google Monorepo PDF (3 Pages)</a></li>
+          <li><a href="../Docs/Uber_Emergency_SOS_Architecture_Breakdown.pdf" target="_blank">Uber SOS PDF (3 Pages)</a></li>
+          <li><a href="../Docs/Booking_User_Review_System_Technical_Breakdown.pdf" target="_blank">Booking.com Review PDF (3 Pages)</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>Released under MIT License • Open Source Engineering Notes</p>
+    </div>
+  </footer>
+
+  <script src="../assets/js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>How Google Manages 2 Billion Lines of Code in a Single Monorepo — System Design Notes</title>
+  <meta name="description" content="Deep technical breakdown of Google's monorepo architecture: managing 2+ billion lines of code, 86 TB of data, Piper distributed VCS, CitC FUSE virtual file system, Blaze/Bazel hermetic builds, Rosie automated refactoring, and eliminating diamond dependencies.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,wght@0,400;0,600;1,400&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Lora:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../blog-theme.css">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <script>
+    (function() {
+      const saved = localStorage.getItem('theme');
+      if (saved) document.documentElement.dataset.theme = saved;
+    })();
+  </script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">Articles</a></li>
+          <li><a href="../index.html#system-eval">Architecture Index</a></li>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="nav-gh">GitHub</a></li>
+        </ul>
+        <button id="theme-toggle" class="theme-toggle" aria-label="Toggle Theme">
+          <span class="theme-icon">☀️</span>
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <header class="article-header">
+    <div class="article-header-inner">
+      <div class="post-category-badge">Architecture Breakdown</div>
+      <h1 class="article-title">How Google Manages 2 Billion Lines of Code in a Single Monorepo</h1>
+      <div class="article-meta">
+        <span>By Arpit Bhayani Dissection &amp; Rachel Potvin (ACM Paper)</span>
+        <span>•</span>
+        <span>October 2026</span>
+        <span>•</span>
+        <span>14 min read</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="article-body">
+    <aside class="toc-sidebar">
+      <div class="toc-title">Table of Contents</div>
+      <ul class="toc-list">
+        <li><a href="#scale-metrics">1. Colossal Scale &amp; Operating Realities</a></li>
+        <li><a href="#polyrepo-vs-monorepo">2. The Monorepo Dilemma: Trade-offs</a></li>
+        <li><a href="#evolution-vcs">3. Evolution of Version Control at Google</a></li>
+        <li><a href="#piper-architecture">4. Piper: Distributed VCS on Spanner</a></li>
+        <li><a href="#citc-fuse">5. CitC &amp; The FUSE Virtual Filesystem</a></li>
+        <li><a href="#trunk-based-diamond">6. Trunk-Based Development &amp; Diamond Dependencies</a></li>
+        <li><a href="#blaze-bazel">7. Blaze: Hermetic Distributed Build Graph</a></li>
+        <li><a href="#rosie-governance">8. Rosie, Critique &amp; Automated Refactoring</a></li>
+        <li><a href="#engineering-verdict">9. Architectural Verdict &amp; Takeaways</a></li>
+      </ul>
+    </aside>
+
+    <article class="prose">
+      <blockquote>
+        <p><strong>Source Attribution:</strong> This deep-dive synthesizes Arpit Bhayani's engineering dissection on Google's Monorepo architecture and Rachel Potvin &amp; Josh Levenberg's seminal Communications of the ACM paper, <em>"Why Google Stores Billions of Lines of Code in a Single Repository"</em>.</p>
+      </blockquote>
+
+      <h2 id="scale-metrics">1. Colossal Scale &amp; Operating Realities</h2>
+      <p>Managing software engineering across thousands of engineers is traditionally solved by segmenting systems into independent code repositories (the <em>polyrepo</em> approach). Google famously chose the exact opposite path: housing virtually all of its consumer, search, ads, cloud, infrastructure, and mobile software in a <strong>single, shared monolithic repository</strong>.</p>
+
+      <div class="stats-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin: 1.5rem 0;">
+        <div style="background: var(--code-bg); border: 1px solid var(--border); padding: 1.25rem; border-radius: 8px;">
+          <div style="font-size: 1.8rem; font-weight: 700; color: var(--accent);">2+ Billion</div>
+          <div style="font-size: 0.85rem; color: var(--muted);">Lines of source code in the unified mainline</div>
+        </div>
+        <div style="background: var(--code-bg); border: 1px solid var(--border); padding: 1.25rem; border-radius: 8px;">
+          <div style="font-size: 1.8rem; font-weight: 700; color: var(--accent);">86 Terabytes</div>
+          <div style="font-size: 0.85rem; color: var(--muted);">Content tree size across 1B+ files</div>
+        </div>
+        <div style="background: var(--code-bg); border: 1px solid var(--border); padding: 1.25rem; border-radius: 8px;">
+          <div style="font-size: 1.8rem; font-weight: 700; color: var(--accent);">40,000+</div>
+          <div style="font-size: 0.85rem; color: var(--muted);">Commits committed per day (human + automated)</div>
+        </div>
+        <div style="background: var(--code-bg); border: 1px solid var(--border); padding: 1.25rem; border-radius: 8px;">
+          <div style="font-size: 1.8rem; font-weight: 700; color: var(--accent);">25,000+</div>
+          <div style="font-size: 0.85rem; color: var(--muted);">Engineers sharing the single trunk</div>
+        </div>
+      </div>
+
+      <p>At this volume, off-the-shelf version control tools completely disintegrate. Standard Git operations such as <code>git clone</code>, <code>git status</code>, or <code>git log</code> require scanning and packing directory trees locally. Downloading an 86 TB repository over a commercial gigabit connection would take days, consume several high-end SSDs, and freeze developer IDEs indefinitely.</p>
+
+      <h2 id="polyrepo-vs-monorepo">2. The Monorepo Dilemma: Trade-offs</h2>
+      <p>To understand Google’s design decisions, we must examine the core structural friction between polyrepos and monorepos at enterprise scale.</p>
+
+      <table style="width: 100%; border-collapse: collapse; margin: 1.5rem 0; font-size: 0.95rem;">
+        <thead>
+          <tr style="border-bottom: 2px solid var(--border); text-align: left;">
+            <th style="padding: 0.75rem;">Vector</th>
+            <th style="padding: 0.75rem;">Polyrepo Architecture</th>
+            <th style="padding: 0.75rem;">Google Monorepo</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style="border-bottom: 1px solid var(--border);">
+            <td style="padding: 0.75rem; font-weight: 600;">Dependency Management</td>
+            <td style="padding: 0.75rem;">Fragmented package versions; prone to transitive diamond dependency hell.</td>
+            <td style="padding: 0.75rem;">Strict single-version rule; zero version skew across services.</td>
+          </tr>
+          <tr style="border-bottom: 1px solid var(--border);">
+            <td style="padding: 0.75rem; font-weight: 600;">Cross-Boundary Refactoring</td>
+            <td style="padding: 0.75rem;">Requires coordinated PRs across dozens of independent repositories over weeks.</td>
+            <td style="padding: 0.75rem;">Atomic commits modifying an API and all 5,000 callers in a single transaction.</td>
+          </tr>
+          <tr style="border-bottom: 1px solid var(--border);">
+            <td style="padding: 0.75rem; font-weight: 600;">Tooling Complexity</td>
+            <td style="padding: 0.75rem;">Standard Git, GitHub, GitLab; low custom infrastructure overhead.</td>
+            <td style="padding: 0.75rem;">Requires massive investment in proprietary distributed VCS, FUSE drivers, and build clusters.</td>
+          </tr>
+          <tr>
+            <td style="padding: 0.75rem; font-weight: 600;">Code Discovery</td>
+            <td style="padding: 0.75rem;">Siloed search across fragmented orgs; code duplication is rampant.</td>
+            <td style="padding: 0.75rem;">Unified global search across every project; seamless code reuse.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2 id="evolution-vcs">3. Evolution of Version Control at Google</h2>
+      <p>Google did not immediately build a custom distributed filesystem. Its version control infrastructure progressed through three distinct eras:</p>
+      <ul>
+        <li><strong>CVS Era (1998–1999):</strong> In Google’s initial university startup days, Concurrent Versions System (CVS) managed the fledgling search engine. It rapidly choked on concurrent directory locks.</li>
+        <li><strong>Perforce Scale-Up (2000–2012):</strong> Google migrated to Perforce, a centralized commercial version control system. As the codebase grew to millions of files, Google customized Perforce extensively, sharding databases and deploying regional read caching proxies. Eventually, Perforce hit hard horizontal limits: metadata synchronization, storage capacity, and concurrent lock contention on the single master server.</li>
+        <li><strong>Piper Era (2012–Present):</strong> Google engineered <strong>Piper</strong>, an enterprise-grade distributed version control system designed natively on top of Google’s global cloud infrastructure (Bigtable, Spanner, and Colossus).</li>
+      </ul>
+
+      <h2 id="piper-architecture">4. Piper: Distributed VCS on Spanner</h2>
+      <p>Piper decouples metadata indexing from immutable blob storage, operating as a globally replicated distributed database:</p>
+
+      <div class="mermaid">
+flowchart TD
+  subgraph ClientWorkstation["Developer Workstation"]
+    Editor["IDE / Vim / VS Code"]
+    FUSE["Linux FUSE Driver (/google/src/cloud)"]
+    Editor --> FUSE
+  end
+
+  subgraph CitCPlatform["Clients in the Cloud (CitC)"]
+    CitCDaemon["CitC Local Daemon"]
+    FUSE <-->|"VFS File Ops (open, read, write)"| CitCDaemon
+    WorkspaceMeta["Workspace Overlay DB (Modifications)"]
+    CitCDaemon <--> WorkspaceMeta
+  end
+
+  subgraph GoogleCloudInfra["Piper Distributed Core"]
+    PiperProxy["Regional Piper Caching Proxies"]
+    PiperMaster["Piper Metadata Cluster (Google Spanner)"]
+    Colossus["Colossus Distributed File Store (File Blobs)"]
+    
+    CitCDaemon -.->|"Cache Miss Read"| PiperProxy
+    PiperProxy <--> PiperMaster
+    PiperProxy <--> Colossus
+    CitCDaemon -->|"Commit / Presubmit"| PiperMaster
+  end
+      </div>
+
+      <p><strong>Core Architectural Attributes of Piper:</strong></p>
+      <ul>
+        <li><strong>Distributed Consensus via Spanner:</strong> Commit metadata, directory tree pointers, and change history are stored in Google Spanner, utilizing TrueTime for linearizable transactions across global regions.</li>
+        <li><strong>Immutable Blob Storage on Colossus:</strong> File bodies are hashed and stored in Colossus (Google's successor to GFS). Unmodified files are referenced by content hash, eliminating data duplication.</li>
+        <li><strong>Regional Caching Proxies:</strong> Caching servers located in Google engineering offices worldwide cache frequently accessed trees and historical revisions, offloading over 95% of read bandwidth from the central cluster.</li>
+      </ul>
+
+      <h2 id="citc-fuse">5. CitC &amp; The FUSE Virtual Filesystem</h2>
+      <p>How does a developer work with an 86 TB codebase without cloning it? Google solved this with <strong>CitC (Clients in the Cloud)</strong>.</p>
+      <p>Instead of copying files to a local drive, CitC provisions a lightweight virtual workspace hosted in the cloud. A specialized Linux kernel module, <strong>FUSE (Filesystem in Userspace)</strong>, mounts the entire repository under <code>/google/src/cloud/username/workspace/google3</code>.</p>
+
+      <div class="mermaid">
+sequenceDiagram
+  autonumber
+  participant Dev as Developer / Tool
+  participant FUSE as FUSE VFS Layer
+  participant CitC as CitC Local Cache
+  participant Piper as Piper Remote Proxy
+
+  Dev->>FUSE: ls /google/src/cloud/my_ws/google3/search
+  FUSE->>CitC: Query directory metadata
+  CitC->>Piper: Fetch tree structure for rev 4829104
+  Piper-->>CitC: Return file list & hashes
+  CitC-->>FUSE: Return directory entries
+  FUSE-->>Dev: Directory contents listed (< 15ms)
+
+  Note over Dev,FUSE: Developer reads file contents
+  Dev->>FUSE: cat query_parser.cc
+  FUSE->>CitC: Read file bytes
+  CitC->>Piper: Stream blob bytes from Colossus
+  Piper-->>CitC: Deliver chunks
+  CitC-->>FUSE: Provide buffer
+  FUSE-->>Dev: File content displayed
+
+  Note over Dev,CitC: Developer edits file (Copy-On-Write)
+  Dev->>FUSE: vim query_parser.cc (save edits)
+  FUSE->>CitC: Write modified blocks
+  CitC->>CitC: Store diff in local Workspace Overlay DB
+  Note over CitC: Unmodified 1B+ files remain remote pointers!
+      </div>
+
+      <p><strong>Mechanics of the Virtual Workspace:</strong></p>
+      <ul>
+        <li><strong>Zero Clone Latency:</strong> Creating a new CitC workspace takes less than two seconds because it merely generates an isolated metadata overlay row in Spanner.</li>
+        <li><strong>Lazy Hydration:</strong> Files are never downloaded until a process issues an <code>open()</code> or <code>read()</code> syscall. If an engineer only edits 3 files in a 500,000-file project, only those 3 files ever touch local storage.</li>
+        <li><strong>Copy-on-Write (CoW) Isolation:</strong> Workspaces show a snapshot of the repository at a chosen changelist. Edits are recorded in a private workspace overlay, keeping the underlying trunk unmodified.</li>
+      </ul>
+
+      <h2 id="trunk-based-diamond">6. Trunk-Based Development &amp; Diamond Dependencies</h2>
+      <p>Google enforces strict <strong>Trunk-Based Development</strong>. More than 99% of changes are submitted directly to the single mainline branch (the <em>trunk</em>). Feature branches that live for days or weeks are heavily discouraged.</p>
+
+      <h3>Eliminating Diamond Dependency Hell</h3>
+      <p>In a microservice or multi-repo ecosystem, dependencies form arbitrary directed acyclic graphs (DAGs). Consider the classic <strong>Diamond Dependency Conflict</strong>:</p>
+
+      <div class="mermaid">
+flowchart TD
+  App["Application Service"]
+  LibB["Library B (Depends on Lib D v1.0)"]
+  LibC["Library C (Depends on Lib D v2.0)"]
+  LibD1["Library D v1.0 (Class HashCollision)"]
+  LibD2["Library D v2.0 (Class HashCollision incompatible)"]
+
+  App --> LibB
+  App --> LibC
+  LibB --> LibD1
+  LibC --> LibD2
+  LibD1 -.->|"Classpath Collision / ABI Incompatibility"| LibD2
+      </div>
+
+      <p>When compiled in Java, C++, or Go, the linker or runtime loader encounters two conflicting definitions of Library D. Either the application fails to link, throws <code>NoSuchMethodError</code> at runtime, or unpredictably executes mismatched ABI logic.</p>
+      <p>In Google's monorepo, <strong>there is strictly one version of Library D in existence</strong>. If Library D introduces a breaking change, the author cannot simply publish a new semantic version tag and leave callers behind. Under the <strong>One-Version Rule</strong>, the author of the change is responsible for migrating every downstream consumer across Google before or alongside the commit.</p>
+
+      <h2 id="blaze-bazel">7. Blaze: Hermetic Distributed Build Graph</h2>
+      <p>Building a multi-billion-line codebase requires a build tool that fundamentally rejects conventional compilation paradigms. Google built <strong>Blaze</strong> (open-sourced as <strong>Bazel</strong>).</p>
+      <p>In Blaze, builds are structured as deterministic, mathematical functions:
+      $$\text{Output Artifacts} = f(\text{Declared Source Inputs}, \text{Hermetic Toolchain}, \text{Compiler Flags})$$</p>
+
+      <p><strong>Key Tenets of Blaze Hermeticity:</strong></p>
+      <ul>
+        <li><strong>Explicit Dependency Declarations:</strong> Every source file belongs to a package with a declarative <code>BUILD</code> file. A file cannot include a header or import a module unless that dependency is explicitly listed in its <code>deps</code> list.</li>
+        <li><strong>Sandboxed Execution:</strong> Compilers execute inside isolated container namespaces without network access. Builds cannot curl external packages, query system time, or read arbitrary host files.</li>
+        <li><strong>Global Content-Addressed Action Cache:</strong> Blaze computes a cryptographic SHA-256 fingerprint over all input files, compiler binaries, and command arguments. If another engineer or continuous integration worker has already executed that exact action, the pre-built binary artifact is downloaded from the global cache in milliseconds.</li>
+        <li><strong>Remote Build Execution (RBE):</strong> Compilation tasks are parallelized across a cluster of tens of thousands of compute cores, turning 40-minute C++ compilations into 30-second distributed jobs.</li>
+      </ul>
+
+      <h2 id="rosie-governance">8. Rosie, Critique &amp; Automated Refactoring</h2>
+      <p>If you have 2 billion lines of code and need to deprecate an old logging API used across 12,000 files, manual pull requests are mathematically impossible. Google solved this via <strong>Rosie (Large-Scale Changes)</strong>.</p>
+
+      <div class="mermaid">
+flowchart LR
+  Dev["Engineer / Refactor Script"] -->|"1. Generate Massive Diff (10,000 files)"| LSC["Large Scale Change Engine (Rosie)"]
+  LSC -->|"2. Split by OWNERS directory boundary"| Shards["500 Independent Sub-Patches"]
+  
+  subgraph ReviewPipeline["Automated Review & CI Routing"]
+    Shards --> P1["Patch 1 -> Search Team OWNERS"]
+    Shards --> P2["Patch 2 -> Ads Team OWNERS"]
+    Shards --> P3["Patch 3 -> Maps Team OWNERS"]
+  end
+
+  P1 --> CI["Automated Presubmit Testing (TAP)"]
+  P2 --> CI
+  P3 --> CI
+
+  CI -->|"Green Tests + Owner Sign-off"| AutoCommit["Piper Automatic Commit Engine"]
+  AutoCommit --> Trunk[("Mainline Trunk")]
+      </div>
+
+      <p><strong>The Tooling Suite:</strong></p>
+      <ul>
+        <li><strong>Critique:</strong> Google's unified code review platform. Code cannot be merged without explicit sign-off from designated team members listed in recursive <code>OWNERS</code> files.</li>
+        <li><strong>Tricorder:</strong> A static analysis framework integrated into Critique. Over 30 analyzers inspect changesets in real time, detecting memory leaks, concurrency races, compiler warnings, and security anti-patterns before humans review the diff.</li>
+        <li><strong>TAP (Test Automation Platform):</strong> Every change is tested against its direct and transitive dependency graph. Tens of millions of automated unit and integration tests run continuously across Google's fleet.</li>
+      </ul>
+
+      <h2 id="engineering-verdict">9. Architectural Verdict &amp; Takeaways</h2>
+      <p>Google’s monorepo is one of the most successful scaling engineering feats in software history, but its architecture cannot be understood in isolation from its massive infrastructure footprint:</p>
+      <ol>
+        <li><strong>The Monorepo is an Ecosystem, Not a Directory:</strong> Without distributed virtual filesystems (CitC), hermetic distributed build graphs (Blaze/Bazel), and automated large-scale refactoring pipelines (Rosie), a monorepo at scale will fail catastrophically.</li>
+        <li><strong>Culture Follows Code Structure:</strong> Operating on a single trunk enforces collaborative responsibility. Upgrades cannot be kicked down the road through semantic version pinning; backward compatibility and atomic migration are mandatory engineering virtues.</li>
+        <li><strong>Pragmatic Guidance for Modern Teams:</strong> For 99% of companies, standard Git with modular microservices or bounded monorepos (powered by modern open-source tooling like Bazel, Nx, or Turborepo) offers the best balance of simplicity and velocity without requiring hundreds of dedicated internal tool engineers.</li>
+      </ol>
+    </article>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-col">
+        <div class="footer-brand">
+          <div class="brand-icon">⚡</div>
+          <span>System Design Notes</span>
+        </div>
+        <p class="footer-tagline">Curated engineering notes, production architecture dissections, and distributed systems research papers.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Core Categories</h5>
+        <ul>
+          <li><a href="google-monorepo-architecture.html">Google Monorepo Architecture</a></li>
+          <li><a href="storage-compute-separation-aurora.html">Storage-Compute Separation</a></li>
+          <li><a href="atlassian-cache-invalidation.html">Atlassian Cache Invalidation</a></li>
+          <li><a href="bitcask-storage-engine.html">Bitcask Storage Engine</a></li>
+          <li><a href="kafka-exactly-once-semantics.html">Kafka Exactly-Once (EOS)</a></li>
+          <li><a href="amazon-aurora-cloud-native-databases.html">Amazon Aurora Architecture</a></li>
+          <li><a href="cap-theorem-and-google-spanner.html">Google Spanner &amp; TrueTime</a></li>
+          <li><a href="consistent-hashing.html">Consistent Hashing Guide</a></li>
+          <li><a href="grab-data-layer-architecture.html">Grab Data Layer Architecture</a></li>
+          <li><a href="kafka-architecture-part1.html">Apache Kafka Fundamentals</a></li>
+          <li><a href="kafka-architecture-part2.html">Kafka Cluster &amp; Consumer Offsets</a></li>
+          <li><a href="microservices-design-patterns.html">Microservices Patterns</a></li>
+          <li><a href="redis-internals-and-architecture.html">Redis Internal Mechanics</a></li>
+          <li><a href="dragonflydb-bplus-tree-sorted-set.html">DragonflyDB B+ Tree Sorted Set</a></li>
+          <li><a href="zomato-search-intent-nlp.html">Zomato Search Intent NLP</a></li>
+          <li><a href="booking-user-review-system.html">Booking.com Review System</a></li>
+          <li><a href="uber-emergency-sos-service.html">Uber Emergency SOS Service</a></li>
+          <li><a href="google-monorepo-architecture.html">Google Monorepo Architecture</a></li>
+          <li><a href="stripe-zero-downtime-schema-migrations.html">Stripe Schema Migrations</a></li>
+          <li><a href="stripe-canonical-log-lines.html">Stripe Canonical Log Lines</a></li>
+          <li><a href="redis-java-implementation.html">Java Redis Event Loop Server</a></li>
+          <li><a href="system-design-foundations-and-scaling.html">Foundations &amp; Scaling Guide</a></li>
+          <li><a href="system-design-case-studies.html">System Design Case Studies</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Repository</h5>
+        <ul>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank">GitHub Repository</a></li>
+          <li><a href="../Docs/System_Design_Notes.pdf" target="_blank">Complete Notes (184 Pages)</a></li>
+          <li><a href="../Docs/Google_Monorepo_Architecture_Technical_Breakdown.pdf" target="_blank">Google Monorepo PDF (3 Pages)</a></li>
+          <li><a href="../Docs/Uber_Emergency_SOS_Architecture_Breakdown.pdf" target="_blank">Uber SOS PDF (3 Pages)</a></li>
+          <li><a href="../Docs/Booking_User_Review_System_Technical_Breakdown.pdf" target="_blank">Booking.com Review PDF (3 Pages)</a></li>
+          <li><a href="../Docs/Zomato_Search_Intent_NLP_Technical_Breakdown.pdf" target="_blank">Zomato NLP PDF (3 Pages)</a></li>
+          <li><a href="../Docs/DragonflyDB_BPlus_Tree_Sorted_Set_Technical_Breakdown.pdf" target="_blank">DragonflyDB PDF (3 Pages)</a></li>
+          <li><a href="../Docs/Google_Monorepo_Architecture_Technical_Breakdown.pdf" target="_blank">Google Monorepo PDF (3 Pages)</a></li>
+          <li><a href="../Docs/Stripe_Zero_Downtime_Schema_Migrations_Technical_Breakdown.pdf" target="_blank">Stripe Migrations PDF (3 Pages)</a></li>
+          <li><a href="../Docs/Stripe_Canonical_Log_Lines_Technical_Breakdown.pdf" target="_blank">Stripe Logging PDF (3 Pages)</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>Released under MIT License • Open Source Engineering Notes</p>
+    </div>
+  </footer>
+
+  <script src="../assets/js/main.js"></script>
+</body>
+</html>

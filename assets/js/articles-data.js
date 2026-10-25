@@ -249,6 +249,42 @@ const ARTICLES_DATA = [
     excerpt: "Architectural decomposition based on Arpit Bhayani's engineering dissection: achieving 99.999% availability and sub-second dispatch latency (< 1000ms), dual-channel mobile telemetry (IP + native voice dialer + encrypted SMS), spatial reverse geocoding, RapidSOS 911 integration, and hybrid synchronous/asynchronous Kafka pipelines.",
     tags: ["Uber", "High Availability", "Emergency SOS", "RapidSOS", "Apache Kafka", "Geocoding", "Distributed Systems"],
     featured: true
+  },
+  {
+    id: "google-monorepo-architecture",
+    slug: "google-monorepo-architecture.html",
+    title: "How Google Manages 2 Billion Lines of Code in a Single Monorepo",
+    category: "Architecture",
+    categorySlug: "architecture",
+    badge: "Architecture Breakdown",
+    pdfSource: "Docs/Google_Monorepo_Architecture_Technical_Breakdown.pdf",
+    excerpt: "Deep technical breakdown of Google's monorepo architecture: managing 2+ billion lines of code, 86 TB of data, Piper distributed VCS on Spanner, CitC FUSE virtual file system, Blaze/Bazel hermetic builds, Rosie automated refactoring, and eliminating diamond dependencies.",
+    tags: ["Google", "Monorepo", "Piper", "CitC", "Bazel", "Distributed Systems", "Software Engineering"],
+    featured: true
+  },
+  {
+    id: "stripe-zero-downtime-schema-migrations",
+    slug: "stripe-zero-downtime-schema-migrations.html",
+    title: "How Stripe Achieves Zero-Downtime Schema Migrations at Scale",
+    category: "Case Studies",
+    categorySlug: "case-studies",
+    badge: "Case Study",
+    pdfSource: "Docs/Stripe_Zero_Downtime_Schema_Migrations_Technical_Breakdown.pdf",
+    excerpt: "Architectural decomposition based on Arpit Bhayani's engineering dissection: migrating hundreds of millions of financial records with zero downtime, dual-writing, offline snapshot backfills, shadow-mode discrepancy validation, and reverse dual-writing rollback safety nets.",
+    tags: ["Stripe", "Database Engineering", "Zero Downtime", "Schema Migration", "Dual-Writing", "High Availability"],
+    featured: true
+  },
+  {
+    id: "stripe-canonical-log-lines",
+    slug: "stripe-canonical-log-lines.html",
+    title: "Stripe's Canonical Log Lines — High-Scale Structured Observability",
+    category: "Case Studies",
+    categorySlug: "case-studies",
+    badge: "Case Study",
+    pdfSource: "Docs/Stripe_Canonical_Log_Lines_Technical_Breakdown.pdf",
+    excerpt: "Technical breakdown of Stripe's canonical log line pattern: replacing fragmented microservice log noise with pre-joined, high-cardinality wide events, request-scoped context accumulators, and ultra-fast incident analytics.",
+    tags: ["Stripe", "Observability", "Logging", "Wide Events", "ClickHouse", "Distributed Systems", "Incident Triage"],
+    featured: true
   }
 ];
 
