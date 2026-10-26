@@ -417,6 +417,42 @@ const ARTICLES_DATA = [
     excerpt: "Architectural decomposition of Trello's real-time messaging evolution: migrating from a 15-node RabbitMQ mesh to Apache Kafka and Socket Masters, cutting infrastructure costs 5x, eliminating split-brain outages, and doubling CPU efficiency.",
     tags: ["Trello", "Apache Kafka", "RabbitMQ", "WebSockets", "Real-Time", "Event Streaming", "Distributed Systems"],
     featured: true
+  },
+  {
+    id: "atlassian-load-balancer-outage-dissection",
+    slug: "atlassian-load-balancer-outage-dissection.html",
+    title: "Load Balancers are Not Magic: Dissecting Atlassian's Cloud Outage",
+    category: "Infrastructure Postmortem",
+    categorySlug: "infrastructure-postmortem",
+    badge: "Postmortem Deep Dive",
+    pdfSource: "Docs/Atlassian_Load_Balancer_Outage_Technical_Breakdown.pdf",
+    excerpt: "Architectural dissection of Atlassian's cloud outage: why AWS Elastic Load Balancers (ELBs) are not infinite black boxes, cold deployment traps, proxy memory exhaustion (OOM), and pre-warming best practices.",
+    tags: ["Atlassian", "Load Balancing", "AWS ELB", "Postmortem", "Site Reliability", "OOM Killer", "Infrastructure"],
+    featured: true
+  },
+  {
+    id: "airbnb-http-streaming-performance",
+    slug: "airbnb-http-streaming-performance.html",
+    title: "Everything About HTTP Streaming & How Airbnb Leverages It in Production",
+    category: "Web Performance",
+    categorySlug: "web-performance",
+    badge: "Architecture Breakdown",
+    pdfSource: "Docs/Airbnb_HTTP_Streaming_Technical_Breakdown.pdf",
+    excerpt: "Technical deep-dive into HTTP Streaming and chunked transfer encoding: how Airbnb optimizes page load performance with Early Flush, breaking network waterfalls, and reducing First Contentful Paint by 100ms+.",
+    tags: ["Airbnb", "HTTP Streaming", "Chunked Encoding", "Web Performance", "Early Flush", "Frontend Architecture"],
+    featured: true
+  },
+  {
+    id: "github-rate-limiter-wobbling-reset-bug",
+    slug: "github-rate-limiter-wobbling-reset-bug.html",
+    title: "A Bug in GitHub's Rate Limiter: The Wobbling Reset Header",
+    category: "Distributed Systems Debugging",
+    categorySlug: "distributed-systems-debugging",
+    badge: "Debugging Deep Dive",
+    pdfSource: "Docs/GitHub_Rate_Limiter_Bug_Technical_Breakdown.pdf",
+    excerpt: "Technical breakdown of the classic distributed systems bug in GitHub's Redis-based rate limiter: diagnosing the wobbling X-RateLimit-Reset header, dynamic TTL arithmetic flaws, clock drift, and atomic Lua script persistence.",
+    tags: ["GitHub", "Redis", "Rate Limiting", "Distributed Systems", "Debugging", "Lua Scripts", "Clock Drift"],
+    featured: true
   }
 ];
 

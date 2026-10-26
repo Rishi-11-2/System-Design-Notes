@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Load Balancers are Not Magic: Dissecting Atlassian's Cloud Outage — System Design Notes</title>
+  <meta name="description" content="Technical postmortem and architecture deep dive into Atlassian's cloud outage: why AWS Elastic Load Balancers (ELBs) are not infinite black boxes, cold deployment traps, proxy memory exhaustion (OOM), and pre-warming best practices.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css">
+  <link rel="stylesheet" href="../blog-theme.css">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+  <div id="progress" aria-hidden="true"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">Articles</a></li>
+          <li><a href="../index.html#system-eval">Architecture Index</a></li>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="nav-gh">GitHub</a></li>
+        </ul>
+        <div class="swatches" role="group" aria-label="Colour theme">
+          <button class="swatch" data-set-theme="light"  style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+          <button class="swatch" data-set-theme="dark"   style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+          <button class="swatch" data-set-theme="sepia"  style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+        </div>
+        <button id="theme-toggle" class="theme-toggle" aria-label="Toggle Theme">
+          <span class="theme-icon">☀️</span>
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <header class="article-header">
+    <div class="article-header-inner">
+      <div class="post-category-badge">Infrastructure Postmortem</div>
+      <h1 class="article-title">Load Balancers are Not Magic: Dissecting Atlassian's Cloud Outage</h1>
+      <div class="article-meta">
+        <span>By Arpit Bhayani Dissection &amp; Cloud Reliability Engineering</span>
+        <span>•</span>
+        <span>October 2026</span>
+        <span>•</span>
+        <span>15 min read</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="article-body">
+    <aside class="toc-sidebar">
+      <div class="toc-title">Table of Contents</div>
+      <ul class="toc-list">
+        <li><a href="#blackbox-fallacy">1. The "Infinite Black Box" Fallacy</a></li>
+        <li><a href="#atlassian-incident-anatomy">2. Anatomy of the Atlassian Incident</a></li>
+        <li><a href="#elb-internals">3. What Actually Happens Inside an Elastic Load Balancer?</a></li>
+        <li><a href="#cold-deployment-trap">4. The Cold Deployment Trap</a></li>
+        <li><a href="#memory-exhaustion-oom">5. Proxy Memory Exhaustion &amp; TCP State Flooding</a></li>
+        <li><a href="#mitigation-strategies">6. Mitigation: Pre-Warming, Target Shifting &amp; Rate Gates</a></li>
+        <li><a href="#engineering-verdict">7. First-Principles Summary &amp; Design Lessons</a></li>
+      </ul>
+      <div class="download-box" style="margin-top: 2rem; padding: 1rem; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-surface);">
+        <div style="font-weight: 600; font-size: 0.85rem; margin-bottom: 0.5rem;">Companion Artifact</div>
+        <a href="../Docs/Atlassian_Load_Balancer_Outage_Technical_Breakdown.pdf" target="_blank" download class="btn-primary" style="display: block; text-align: center; font-size: 0.8rem; padding: 0.5rem;">
+          📥 Download 3-Page PDF
+        </a>
+      </div>
+    </aside>
+
+    <article class="article-content">
+      <section id="#blackbox-fallacy">
+        <h2>1. The "Infinite Black Box" Fallacy</h2>
+        <p>
+          In cloud-native system design, managed load balancers (such as AWS Application Load Balancers (ALBs) or Classic ELBs) are frequently treated by software engineers as magical, abstract primitives. Diagrams depict an ELB as a tiny cloud or diamond icon that absorbs infinite client queries, negotiates TLS, terminates HTTP/2, and smoothly balances requests across backend worker pods.
+        </p>
+        <p>
+          This mental model is dangerously flawed. <strong>Load balancers are not magic. Load balancers are computers.</strong>
+        </p>
+        <p>
+          Behind every managed load balancer DNS name (e.g. <code>my-service-12345.elb.amazonaws.com</code>) sits a dynamic fleet of standard EC2 proxy instances running customized proxies (such as Envoy or Nginx). They possess finite CPU cores, physical network interface cards (NICs), finite Linux socket buffers, connection state tracking tables, and finite RAM. If subjected to instantaneous surges or deployed improperly, they can run out of memory, crash with Out-Of-Memory (OOM) kernel panics, and trigger catastrophic platform-wide outages.
+        </p>
+      </section>
+
+      <section id="atlassian-incident-anatomy">
+        <h2>2. Anatomy of the Atlassian Incident</h2>
+        <p>
+          In 2019, Atlassian suffered a severe, confounding cloud outage affecting multiple cloud products. The operational metrics presented an eerie paradox:
+        </p>
+        <ul>
+          <li><strong>Healthy Backend Fleets:</strong> The backend microservices (Jira and Confluence API pods) exhibited $0\%$ error rates, low CPU utilization, abundant RAM, and healthy healthcheck responses.</li>
+          <li><strong>Total User Blackout:</strong> Millions of end-users were receiving connection resets, timeouts, and HTTP 502/504 errors.</li>
+          <li><strong>Zero Request Ingress:</strong> Telemetry showed that incoming requests reaching the backend pods had flatlined to zero! Traffic wasn't failing in the application layer—it wasn't even reaching the front door.</li>
+        </ul>
+
+        <div class="mermaid-box">
+          <pre class="mermaid">
+sequenceDiagram
+    autonumber
+    actor Users as Millions of Global Users
+    actor DNS as Amazon Route 53 DNS
+    participant ELB as Newly Deployed Cold ELB Proxy Fleet
+    participant App as Backend Jira/Confluence Pods (100% HEALTHY)
+
+    Note over Users,ELB: Step 1: Blue/Green Deployment switches Route 53 to Brand-New Cold ELB
+    Users->>DNS: Resolve api.atlassian.com
+    DNS-->>Users: IP Addresses of Cold ELB (Just 2 small proxy nodes!)
+    Users->>ELB: 100,000+ Concurrent TCP & TLS Handshakes per second!
+    Note over ELB: Cold ELB connection state tables exhaust RAM!
+    Note over ELB: Linux OOM Killer terminates Proxy Daemon!
+    ELB-->>Users: Connection Reset / Gateway Timeout 504
+    Note over App: Zero requests reach backend; pods remain 100% idle and healthy
+          </pre>
+        </div>
+      </section>
+
+      <section id="elb-internals">
+        <h2>3. What Actually Happens Inside an Elastic Load Balancer?</h2>
+        <p>
+          To understand why the load balancer died, we must inspect the internal operating model of AWS Elastic Load Balancing:
+        </p>
+        <ol>
+          <li><strong>Dynamic DNS Allocation:</strong> An ELB DNS record resolves to multiple public IP addresses. Each IP address corresponds to an individual EC2 proxy instance provisioned by the cloud provider inside each Availability Zone (AZ).</li>
+          <li><strong>Horizontal Auto-Scaling of Proxies:</strong> As traffic increases gradually, AWS monitoring daemons detect rising CPU or network bandwidth on the proxy nodes, spin up additional proxy instances, and add their new IP addresses to the Route 53 DNS round-robin pool.</li>
+          <li><strong>The Multi-Minute Scaling Lag:</strong> Provisioning new proxy instances, joining them to network VPCs, warming connection buffers, and propagating Route 53 DNS TTLs takes between <strong>3 and 10 minutes</strong>.</li>
+        </ol>
+
+        <div class="note-box alert alert-danger">
+          <strong>The Scale-Out Rate Limit:</strong>
+          AWS ELB cannot scale from $2\text{ proxy nodes}$ to $50\text{ proxy nodes}$ in milliseconds. It requires a sustained, gradual ramp-up curve (typically $+50\%$ traffic over 5 minutes) to trigger auto-scaling without dropping packets.
+        </div>
+      </section>
+
+      <section id="cold-deployment-trap">
+        <h2>4. The Cold Deployment Trap</h2>
+        <p>
+          The root cause of Atlassian's outage was an architectural anti-pattern in their automated deployment pipeline: <strong>recreating load balancers on blue/green deployments</strong>.
+        </p>
+        <p>
+          Rather than keeping existing, warmed-up load balancers and shifting backend target groups, the automated pipeline:
+        </p>
+        <ul>
+          <li>Spun up a completely fresh "Green" environment, complete with a <strong>brand-new, cold ELB</strong>.</li>
+          <li>A brand-new ELB initializes with the minimum default footprint: typically just <strong>one or two tiny proxy instances per AZ</strong>.</li>
+          <li>The pipeline updated Route 53 DNS to instantly swing 100% of global production traffic (tens of thousands of requests per second with hundreds of thousands of concurrent TCP sockets) from the old, warmed cluster to the brand-new, ice-cold ELB!</li>
+        </ul>
+      </section>
+
+      <section id="memory-exhaustion-oom">
+        <h2>5. Proxy Memory Exhaustion &amp; TCP State Flooding</h2>
+        <p>
+          When the massive tsunami of global traffic collided with the tiny two-node proxy cluster:
+        </p>
+        <div class="note-box alert alert-warning">
+          <strong>The Anatomy of Proxy OOM:</strong>
+          <ol>
+            <li><strong>TLS Cryptographic Overhead:</strong> 50,000 simultaneous TLS handshakes consumed 100% of the proxy nodes' CPU cores executing asymmetric RSA/ECDHE key exchanges.</li>
+            <li><strong>TCP Socket Buffer Saturation:</strong> Every open TCP connection allocates Linux kernel socket buffers (<code>rmem</code> and <code>wmem</code>, typically 16 KB to 128 KB per socket). Hundreds of thousands of concurrent SYN packets rapidly consumed all available DRAM.</li>
+            <li><strong>Connection State Table Exhaustion:</strong> The proxy software's in-memory connection tracking tables blew past available physical memory.</li>
+            <li><strong>The Kernel OOM Killer:</strong> The Linux kernel invoked <code>oom-killer</code>, instantly terminating the Envoy/Nginx proxy processes. The proxies crashed, rebooted in a loop, and stopped responding entirely.</li>
+          </ol>
+        </div>
+      </section>
+
+      <section id="mitigation-strategies">
+        <h2>6. Mitigation: Pre-Warming, Target Shifting &amp; Rate Gates</h2>
+        <p>
+          Following the postmortem, Atlassian and the broader systems engineering community established rigorous architectural guardrails:
+        </p>
+
+        <h3>1. Shift Targets, Never Recreate Load Balancers</h3>
+        <p>
+          In modern CI/CD, the load balancer tier must be treated as long-lived, persistent infrastructure:
+        </p>
+        <div class="mermaid-box">
+          <pre class="mermaid">
+flowchart TD
+    subgraph "Persistent, Pre-Warmed Load Balancer Fleet"
+        ELB[Persistent AWS ALB Fleet: 30+ Pre-Warmed Proxy Instances]
+    end
+
+    subgraph "Target Group Switching (Safe Blue/Green)"
+        TG_BLUE[Target Group Blue: Version 1.0 (Draining)]
+        TG_GREEN[Target Group Green: Version 2.0 (Active)]
+    end
+
+    ELB -->|Weighted Target Shift: 90% -> 50% -> 0%| TG_BLUE
+    ELB -->|Weighted Target Shift: 10% -> 50% -> 100%| TG_GREEN
+          </pre>
+        </div>
+
+        <h3>2. Pre-Warming Load Balancers for Surges</h3>
+        <p>
+          When anticipating massive flash sales, product launches, or regional migrations, teams must coordinate with cloud support to <strong>pre-warm</strong> the load balancer fleet. Cloud engineers pre-scale the proxy cluster to dozens of high-memory instances in advance, preventing cold-start collapse.
+        </p>
+
+        <h3>3. Gradual DNS Weighted Shifts &amp; Rate Limiting</h3>
+        <p>
+          If DNS-level cutovers are unavoidable, traffic must be shifted gradually over time using weighted Route 53 record sets:
+          $$10\% \xrightarrow{5\text{ mins}} 25\% \xrightarrow{5\text{ mins}} 50\% \xrightarrow{5\text{ mins}} 100\%$$
+          This gradual curve grants the cloud auto-scaler sufficient observation windows to scale out proxy capacity organically.
+        </p>
+      </section>
+
+      <section id="engineering-verdict">
+        <h2>7. First-Principles Summary &amp; Design Lessons</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Architecture Vector</th>
+              <th>Naive Anti-Pattern</th>
+              <th>Production Engineering Standard</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Load Balancer Model</strong></td>
+              <td>Assuming managed ELBs have infinite, instant capacity</td>
+              <td>Recognizing ELBs are fleets of real servers with finite CPU, RAM, and scaling lag</td>
+            </tr>
+            <tr>
+              <td><strong>Deployment Strategy</strong></td>
+              <td>Destroying and recreating ELBs on every blue/green deploy</td>
+              <td>Keeping pre-warmed ELBs static; shifting backend target groups dynamically</td>
+            </tr>
+            <tr>
+              <td><strong>Traffic Cutover</strong></td>
+              <td>Instant 0% to 100% Route 53 DNS flips</td>
+              <td>Gradual weighted percentage ramp-ups over 15–30 minutes</td>
+            </tr>
+            <tr>
+              <td><strong>Surge Preparation</strong></td>
+              <td>Relying on reactive cloud auto-scaling during spikes</td>
+              <td>Proactive pre-warming of proxy fleets prior to high-traffic events</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+    </article>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-brand">
+        <h4>System Design Notes</h4>
+        <p>Production architecture breakdowns and low-level systems engineering dissections.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Explore</h5>
+        <ul>
+          <li><a href="../index.html">All Articles</a></li>
+          <li><a href="trello-rabbitmq-to-kafka-migration.html">Trello RabbitMQ to Kafka</a></li>
+          <li><a href="jira-json-to-protobuf-migration.html">Jira JSON to Protobuf</a></li>
+          <li><a href="bitbucket-read-your-write-consistency.html">Bitbucket RYW Consistency</a></li>
+        </ul>
+      </div>
+    </div>
+  </footer>
+
+  <script src="../theme.js"></script>
+</body>
+</html>

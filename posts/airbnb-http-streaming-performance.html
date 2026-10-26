@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Everything About HTTP Streaming & How Airbnb Leverages It in Production — System Design Notes</title>
+  <meta name="description" content="Technical deep dive into HTTP Streaming and chunked transfer encoding: how Airbnb optimizes page load performance with Early Flush, breaking network waterfalls, and reducing First Contentful Paint by 100ms+.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css">
+  <link rel="stylesheet" href="../blog-theme.css">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+  <div id="progress" aria-hidden="true"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">Articles</a></li>
+          <li><a href="../index.html#system-eval">Architecture Index</a></li>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="nav-gh">GitHub</a></li>
+        </ul>
+        <div class="swatches" role="group" aria-label="Colour theme">
+          <button class="swatch" data-set-theme="light"  style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+          <button class="swatch" data-set-theme="dark"   style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+          <button class="swatch" data-set-theme="sepia"  style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+        </div>
+        <button id="theme-toggle" class="theme-toggle" aria-label="Toggle Theme">
+          <span class="theme-icon">☀️</span>
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <header class="article-header">
+    <div class="article-header-inner">
+      <div class="post-category-badge">Web Performance</div>
+      <h1 class="article-title">Everything About HTTP Streaming &amp; How Airbnb Leverages It in Production</h1>
+      <div class="article-meta">
+        <span>By Arpit Bhayani Dissection &amp; Airbnb Performance Engineering</span>
+        <span>•</span>
+        <span>October 2026</span>
+        <span>•</span>
+        <span>15 min read</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="article-body">
+    <aside class="toc-sidebar">
+      <div class="toc-title">Table of Contents</div>
+      <ul class="toc-list">
+        <li><a href="#buffered-response-flaw">1. The Flaw in the Buffered "Cup" Model</a></li>
+        <li><a href="#network-waterfall-problem">2. The Network Waterfall Bottleneck</a></li>
+        <li><a href="#chunked-transfer-encoding">3. HTTP Streaming: Chunked Wire Protocols</a></li>
+        <li><a href="#airbnb-early-flush">4. Airbnb's Solution: The "Early Flush" Architecture</a></li>
+        <li><a href="#parallel-execution-pipeline">5. Parallel Pipeline: Browser Preload Scanner</a></li>
+        <li><a href="#quantitative-impact">6. Quantitative Impact: Slashing FCP by 100ms+</a></li>
+        <li><a href="#implementation-pitfalls">7. Production Pitfalls: Gzip Buffering &amp; CDNs</a></li>
+        <li><a href="#engineering-verdict">8. First-Principles Summary &amp; Design Lessons</a></li>
+      </ul>
+      <div class="download-box" style="margin-top: 2rem; padding: 1rem; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-surface);">
+        <div style="font-weight: 600; font-size: 0.85rem; margin-bottom: 0.5rem;">Companion Artifact</div>
+        <a href="../Docs/Airbnb_HTTP_Streaming_Technical_Breakdown.pdf" target="_blank" download class="btn-primary" style="display: block; text-align: center; font-size: 0.8rem; padding: 0.5rem;">
+          📥 Download 3-Page PDF
+        </a>
+      </div>
+    </aside>
+
+    <article class="article-content">
+      <section id="buffered-response-flaw">
+        <h2>1. The Flaw in the Buffered "Cup" Model</h2>
+        <p>
+          For decades, the standard mental model for HTTP web servers has been the <strong>Buffered Response Model</strong>:
+        </p>
+        <ul>
+          <li>A client makes an HTTP <code>GET /rooms/12345</code> request.</li>
+          <li>The application server (Node.js, Ruby on Rails, Django, Go) initializes an empty memory buffer—like a cup.</li>
+          <li>The server executes multiple database queries, queries microservices for pricing and user reviews, computes recommendation models, renders the HTML template, and fills the cup.</li>
+          <li>Once the entire HTML page is 100% assembled, the server calculates the <code>Content-Length</code> header, flushes the entire response buffer down the TCP socket, and closes the transmission.</li>
+        </ul>
+
+        <div class="note-box alert alert-warning">
+          <strong>The Waste of Client Idle Time:</strong>
+          While the backend server is busy spending $400\text{ ms}$ querying databases and computing prices, the user's high-speed broadband connection and browser CPU sit <strong>completely idle</strong>. The browser has zero work to do because not a single byte has crossed the wire!
+        </div>
+      </section>
+
+      <section id="network-waterfall-problem">
+        <h2>2. The Network Waterfall Bottleneck</h2>
+        <p>
+          The true cost of the buffered model is the compounding <strong>Network Waterfall</strong>:
+        </p>
+
+        <div class="mermaid-box">
+          <pre class="mermaid">
+gantt
+    title Traditional Buffered Response Waterfall (Sequential Delay)
+    dateFormat X
+    axisFormat %s ms
+
+    section Backend Server
+    DB & Business Logic (Wait)    :crit, 0, 400
+    Flush Full HTML Payload       :done, 400, 450
+
+    section Browser Client
+    Idle Waiting for First Byte   :active, 0, 400
+    Parse HTML <head>             :done, 450, 470
+    Fetch External CSS & JS       :crit, 470, 750
+    First Contentful Paint (FCP)  :milestone, 750, 750
+          </pre>
+        </div>
+
+        <p>
+          Browsers cannot begin downloading critical CSS stylesheets, JavaScript bundles, or web fonts referenced in the HTML <code>&lt;head&gt;</code> until they receive the opening bytes of the document. Under the buffered model, asset discovery is artificially held hostage until the slowest backend database query completes!
+        </p>
+      </section>
+
+      <section id="chunked-transfer-encoding">
+        <h2>3. HTTP Streaming: Chunked Wire Protocols</h2>
+        <p>
+          <strong>HTTP Streaming</strong> fundamentally inverts this model. Instead of waiting for the entire response to be generated, the server streams data in discrete chunks as soon as parts become available.
+        </p>
+
+        <h3>The HTTP/1.1 <code>Transfer-Encoding: chunked</code> Wire Format</h3>
+        <p>
+          In HTTP/1.1, streaming is enabled by omitting <code>Content-Length</code> and setting:
+          <pre><code class="language-http">HTTP/1.1 200 OK
+Content-Type: text/html; charset=utf-8
+Transfer-Encoding: chunked</code></pre>
+          Each chunk is transmitted as a hexadecimal size string, followed by CRLF (<code>\r\n</code>), the raw byte payload, and another CRLF. The stream terminates with a 0-byte chunk:
+        </p>
+        <pre><code class="language-text">1F\r\n
+&lt;!DOCTYPE html&gt;&lt;html&gt;&lt;head&gt;...\r\n
+4A\r\n
+&lt;body&gt;&lt;div id="listings"&gt;... [Chunk 2 Payload] ...&lt;/div&gt;\r\n
+0\r\n
+\r\n</code></pre>
+        <p>
+          In HTTP/2 and HTTP/3, chunking is built directly into the transport layer as native multiplexed <strong>DATA frames</strong> with an <code>END_STREAM</code> flag on the final frame.
+        </p>
+      </section>
+
+      <section id="airbnb-early-flush">
+        <h2>4. Airbnb's Solution: The "Early Flush" Architecture</h2>
+        <p>
+          Airbnb receives massive global traffic on complex search and listing pages that pull data from dozens of internal microservices (pricing engines, review aggregators, host calendars, recommendation systems).
+        </p>
+        <p>
+          To eliminate network waterfalls, Airbnb re-engineered its rendering pipeline around <strong>Early Flush</strong>:
+        </p>
+
+        <div class="mermaid-box">
+          <pre class="mermaid">
+flowchart TD
+    REQ[Client HTTP Request Arrives at t0] --> FORK{Fork Execution Pipeline}
+
+    subgraph "Phase 1: Immediate Early Flush (t = 15ms)"
+        FORK --> HEAD[Render Static <head> + Preloads]
+        HEAD --> FLUSH1[FLUSH CHUNK 1 IMMEDIATELY TO WIRE]
+    end
+
+    subgraph "Phase 2: Parallel Backend Execution (t = 15ms to 350ms)"
+        FORK --> SVC1[Query Pricing Service]
+        FORK --> SVC2[Query Listing DB]
+        FORK --> SVC3[Query Review Microservice]
+        SVC1 & SVC2 & SVC3 --> ASSEMBLE[Assemble Main Page Body]
+    end
+
+    FLUSH1 --> WIRE[(High-Speed Wire Transfer)]
+    WIRE --> BROWSER[Browser Preload Scanner starts fetching CSS/JS/Fonts!]
+
+    ASSEMBLE --> FLUSH2[FLUSH CHUNK 2 (Page Body) TO WIRE]
+    FLUSH2 --> FINISH[FLUSH CHUNK 3 (Closing </html>)]
+          </pre>
+        </div>
+
+        <div class="note-box alert alert-success">
+          <strong>The Early Flush Concept:</strong>
+          Within <strong>15 to 20 milliseconds</strong> of receiving a request, the server renders and immediately flushes the entire HTML <code>&lt;head&gt;</code> block containing:
+          <ul>
+            <li>Meta tags, page titles, and viewport configurations.</li>
+            <li>Critical CSS stylesheet links (<code>&lt;link rel="stylesheet" ...&gt;</code>).</li>
+            <li>JavaScript bundle script tags (<code>&lt;script src="..." defer&gt;</code>).</li>
+            <li>Preload hints for custom fonts and hero image assets (<code>&lt;link rel="preload" ...&gt;</code>).</li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="parallel-execution-pipeline">
+        <h2>5. Parallel Pipeline: Browser Preload Scanner</h2>
+        <p>
+          By flushing the <code>&lt;head&gt;</code> early, Airbnb triggers the browser's <strong>Preload Scanner</strong> while the backend server is still waiting on slow database queries:
+        </p>
+
+        <div class="mermaid-box">
+          <pre class="mermaid">
+gantt
+    title Airbnb Early Flush Pipeline (Total Parallelism)
+    dateFormat X
+    axisFormat %s ms
+
+    section Backend Server
+    Render & Flush <head> Chunk 1 :done, 0, 20
+    Query DBs, Pricing & Reviews   :crit, 20, 350
+    Render & Flush Body Chunk 2    :done, 350, 380
+
+    section Browser Client
+    Receive Chunk 1               :done, 25, 30
+    Download Critical CSS & JS    :crit, 30, 250
+    Receive Chunk 2 (Body)        :done, 380, 400
+    Immediate Paint (Assets ready!):milestone, 400, 400
+          </pre>
+        </div>
+
+        <p>
+          Notice how the $220\text{ ms}$ external asset download is completely <strong>overlapped</strong> with the backend database query time! When Chunk 2 (the page body) arrives at millisecond 380, the browser has <em>already finished</em> downloading the CSS stylesheets and scripts. The browser can construct the render tree and paint the screen <strong>instantly</strong>.
+        </p>
+      </section>
+
+      <section id="quantitative-impact">
+        <h2>6. Quantitative Impact: Slashing FCP by 100ms+</h2>
+        <p>
+          By implementing HTTP streaming and early flushing, Airbnb achieved measurable real-world performance wins:
+        </p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Performance Metric</th>
+              <th>Traditional Buffered Model</th>
+              <th>HTTP Streaming (Early Flush)</th>
+              <th>Empirical Gain</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>First Contentful Paint (FCP)</strong></td>
+              <td>$750\text{ ms} - 900\text{ ms}$</td>
+              <td><strong>$600\text{ ms} - 720\text{ ms}$</strong></td>
+              <td><strong>Over 100ms FCP reduction</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Asset Download Start Time</strong></td>
+              <td>$t = 450\text{ ms}$ (Post-backend computation)</td>
+              <td>$t = 30\text{ ms}$ (Immediately post-ingress)</td>
+              <td>Asset discovery accelerated by $420\text{ ms}$</td>
+            </tr>
+            <tr>
+              <td><strong>Server Memory Pressure</strong></td>
+              <td>Buffers full 500 KB HTML in RAM per thread</td>
+              <td>Streams chunks incrementally</td>
+              <td>Reduced server memory buffer footprints</td>
+            </tr>
+            <tr>
+              <td><strong>Perceived Latency</strong></td>
+              <td>Blank white screen for 700ms+</td>
+              <td>Instant skeleton &amp; styling paint</td>
+              <td>Significant boost in user engagement &amp; conversion</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="implementation-pitfalls">
+        <h2>7. Production Pitfalls: Gzip Buffering &amp; CDNs</h2>
+        <p>
+          Implementing HTTP streaming in large-scale architectures introduces subtle infrastructural pitfalls that must be mitigated:
+        </p>
+
+        <h3>1. Reverse Proxy &amp; CDN Buffering Traps</h3>
+        <p>
+          Intermediate proxies (Nginx, HAProxy) and CDNs (Cloudflare, Akamai) often default to buffering responses to apply Gzip/Brotli compression or analyze response sizes. If Nginx buffers Chunk 1, the early flush is swallowed and held until the body completes!
+        </p>
+        <div class="note-box alert alert-warning">
+          <strong>The Nginx Fix:</strong> Disable proxy buffering for streaming endpoints by sending the header:
+          <pre><code class="language-http">X-Accel-Buffering: no</code></pre>
+          In Nginx configurations, ensure <code>proxy_buffering off;</code> or tune <code>proxy_buffer_size</code>.
+        </div>
+
+        <h3>2. Gzip Flush Boundaries</h3>
+        <p>
+          Compression algorithms (zlib) buffer data in memory blocks (typically 4 KB to 32 KB) to find compression dictionaries. If Chunk 1 is only 1 KB, zlib will refuse to emit bytes! Servers must explicitly invoke <code>Z_SYNC_FLUSH</code> after flushing Chunk 1 to force the compression engine to emit the compressed bytes immediately.
+        </p>
+      </section>
+
+      <section id="engineering-verdict">
+        <h2>8. First-Principles Summary &amp; Design Lessons</h2>
+        <ul>
+          <li><strong>Overlap Network I/O with Compute I/O:</strong> Never allow the client's network connection to sit idle while the backend computes. Flushing critical headers early enables the browser's preload scanner to fetch assets in parallel with backend database queries.</li>
+          <li><strong>FCP Trumps TTFB:</strong> HTTP streaming may slightly alter Time-To-First-Byte (TTFB) interpretations in monitoring dashboards, but drastically accelerates First Contentful Paint (FCP) and Largest Contentful Paint (LCP)—the metrics that dictate real user experience.</li>
+          <li><strong>Defensive Proxy Tuning:</strong> Transparent streaming requires deliberate coordination across the entire delivery chain (Nginx, reverse proxies, CDN edge nodes, and compression buffers) to ensure early chunks are never held in transit.</li>
+        </ul>
+      </section>
+    </article>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-brand">
+        <h4>System Design Notes</h4>
+        <p>Production architecture breakdowns and low-level systems engineering dissections.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Explore</h5>
+        <ul>
+          <li><a href="../index.html">All Articles</a></li>
+          <li><a href="atlassian-load-balancer-outage-dissection.html">Atlassian Load Balancer Outage</a></li>
+          <li><a href="trello-rabbitmq-to-kafka-migration.html">Trello RabbitMQ to Kafka</a></li>
+          <li><a href="jira-json-to-protobuf-migration.html">Jira JSON to Protobuf</a></li>
+        </ul>
+      </div>
+    </div>
+  </footer>
+
+  <script src="../theme.js"></script>
+</body>
+</html>

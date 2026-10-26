@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>A Bug in GitHub's Rate Limiter: The Wobbling Reset Header — System Design Notes</title>
+  <meta name="description" content="Technical deep dive into the classic distributed systems bug in GitHub's Redis rate limiter: why the X-RateLimit-Reset header wobbled, clock drift across application servers, and fixing distributed time with atomic Lua scripts.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css">
+  <link rel="stylesheet" href="../blog-theme.css">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+  <div id="progress" aria-hidden="true"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">Articles</a></li>
+          <li><a href="../index.html#system-eval">Architecture Index</a></li>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="nav-gh">GitHub</a></li>
+        </ul>
+        <div class="swatches" role="group" aria-label="Colour theme">
+          <button class="swatch" data-set-theme="light"  style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+          <button class="swatch" data-set-theme="dark"   style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+          <button class="swatch" data-set-theme="sepia"  style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+        </div>
+        <button id="theme-toggle" class="theme-toggle" aria-label="Toggle Theme">
+          <span class="theme-icon">☀️</span>
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <header class="article-header">
+    <div class="article-header-inner">
+      <div class="post-category-badge">Distributed Systems Debugging</div>
+      <h1 class="article-title">A Bug in GitHub's Rate Limiter: The Wobbling Reset Header</h1>
+      <div class="article-meta">
+        <span>By Arpit Bhayani Dissection &amp; GitHub Engineering</span>
+        <span>•</span>
+        <span>October 2026</span>
+        <span>•</span>
+        <span>14 min read</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="article-body">
+    <aside class="toc-sidebar">
+      <div class="toc-title">Table of Contents</div>
+      <ul class="toc-list">
+        <li><a href="#github-rate-limiting">1. Context: GitHub's API Rate Limiting Contract</a></li>
+        <li><a href="#the-wobble-anomaly">2. The Anomaly: The "Wobbling" Reset Header</a></li>
+        <li><a href="#naive-ttl-math">3. Root Cause: Dynamic TTL Arithmetic Flaws</a></li>
+        <li><a href="#distributed-time-trap">4. The Distributed Time &amp; Clock Drift Trap</a></li>
+        <li><a href="#the-fix">5. The Fix: Absolute Timestamp Persistence &amp; Lua</a></li>
+        <li><a href="#lua-atomic-implementation">6. Production Implementation: Atomic Redis Script</a></li>
+        <li><a href="#engineering-verdict">7. First-Principles Summary &amp; Design Lessons</a></li>
+      </ul>
+      <div class="download-box" style="margin-top: 2rem; padding: 1rem; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-surface);">
+        <div style="font-weight: 600; font-size: 0.85rem; margin-bottom: 0.5rem;">Companion Artifact</div>
+        <a href="../Docs/GitHub_Rate_Limiter_Bug_Technical_Breakdown.pdf" target="_blank" download class="btn-primary" style="display: block; text-align: center; font-size: 0.8rem; padding: 0.5rem;">
+          📥 Download 3-Page PDF
+        </a>
+      </div>
+    </aside>
+
+    <article class="article-content">
+      <section id="github-rate-limiting">
+        <h2>1. Context: GitHub's API Rate Limiting Contract</h2>
+        <p>
+          GitHub's public REST and GraphQL APIs serve billions of developer requests every day. To protect infrastructure from accidental runaway scripts and malicious abuse, GitHub enforces strict rate limits (e.g. 5,000 requests per hour for authenticated personal access tokens).
+        </p>
+        <p>
+          In accordance with standard HTTP API conventions, GitHub includes rate-limiting metadata in every response header:
+        </p>
+        <pre><code class="language-http">HTTP/1.1 200 OK
+X-RateLimit-Limit: 5000
+X-RateLimit-Remaining: 4982
+X-RateLimit-Reset: 1724064530</code></pre>
+        <ul>
+          <li><code>X-RateLimit-Limit</code>: The maximum number of requests allowed in the current window.</li>
+          <li><code>X-RateLimit-Remaining</code>: The number of remaining requests available before throttling begins.</li>
+          <li><code>X-RateLimit-Reset</code>: The Unix epoch timestamp (in seconds) marking the exact moment when the current 1-hour window expires and resets.</li>
+        </ul>
+        <p>
+          Automated client libraries, CI/CD runners, and developer SDKs rely heavily on <code>X-RateLimit-Reset</code>: when a client receives an HTTP 429 response, it sleeps for $\Delta t = \text{Reset} - \text{CurrentTime}$ before retrying.
+        </p>
+      </section>
+
+      <section id="the-wobble-anomaly">
+        <h2>2. The Anomaly: The "Wobbling" Reset Header</h2>
+        <p>
+          Several years ago, observant developers noticed strange behavior in GitHub's API responses: when issuing multiple concurrent requests within the exact same second, the <code>X-RateLimit-Reset</code> timestamp was not stable.
+        </p>
+        <p>
+          Instead of staying constant throughout the hour, the reset timestamp <strong>wobbled back and forth</strong> by one second across consecutive calls:
+        </p>
+
+        <div class="mermaid-box">
+          <pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant Client as API Client (CLI / SDK)
+    participant Edge as GitHub API Gateway
+
+    Client->>Edge: Request 1 (t = 12:00:00.120)
+    Edge-->>Client: 200 OK | X-RateLimit-Reset: 1724064530
+    Client->>Edge: Request 2 (t = 12:00:00.150)
+    Edge-->>Client: 200 OK | X-RateLimit-Reset: 1724064531 (JUMPED +1s!)
+    Client->>Edge: Request 3 (t = 12:00:00.180)
+    Edge-->>Client: 200 OK | X-RateLimit-Reset: 1724064530 (JUMPED BACK -1s!)
+    Note over Client: Client SDK backoff scheduler gets confused!
+          </pre>
+        </div>
+
+        <div class="note-box alert alert-warning">
+          <strong>The Impact:</strong>
+          While a 1-second drift might seem trivial, to automated systems computing exponential backoffs or scheduling batch jobs, an oscillating reset timestamp caused flaky unit tests, broken retry queues, and race conditions in distributed client pools.
+        </div>
+      </section>
+
+      <section id="naive-ttl-math">
+        <h2>3. Root Cause: Dynamic TTL Arithmetic Flaws</h2>
+        <p>
+          Why would an immutable 1-hour window reset timestamp fluctuate?
+        </p>
+        <p>
+          The bug was rooted in how GitHub originally calculated the reset value. Rather than storing the absolute expiration timestamp when the rate-limiting key was created, the application server calculated it <strong>dynamically on every single incoming request</strong>!
+        </p>
+        <p>
+          The original implementation flow looked like this:
+        </p>
+        <ol>
+          <li>The user sends a request. The application server issues an <code>INCR</code> to increment the user's request count in Redis.</li>
+          <li>If the key was newly created, it issued <code>EXPIRE user:12345 3600</code>.</li>
+          <li>To return the <code>X-RateLimit-Reset</code> header, the Ruby application server executed:
+            <pre><code class="language-ruby">ttl_remaining = redis.ttl("user:12345") # Returns integer seconds e.g. 3542
+reset_timestamp = Time.now.to_i + ttl_remaining</code></pre>
+          </li>
+        </ol>
+
+        <p>
+          Notice the formula:
+          $$\text{Reset} = \text{Time.now} + \text{redis.ttl}(\text{key})$$
+          This seemingly harmless line of code contains a catastrophic distributed systems flaw.
+        </p>
+      </section>
+
+      <section id="distributed-time-trap">
+        <h2>4. The Distributed Time &amp; Clock Drift Trap</h2>
+        <p>
+          The calculation spans two completely separate systems and two separate clocks:
+        </p>
+
+        <div class="mermaid-box">
+          <pre class="mermaid">
+flowchart TD
+    subgraph "Distributed Components with Independent Clocks"
+        APP1[App Server Node 1: Time.now = 12:00:00.450]
+        APP2[App Server Node 2: Time.now = 12:00:00.520]
+        REDIS[(Redis In-Memory Server: Independent TTL Clock)]
+    end
+
+    APP1 -->|1. PING redis.ttl()| REDIS
+    REDIS -->|2. Returns integer: 3599s| APP1
+    APP1 -->|3. Math: 12:00:00.450 + 3599s| R1[Reset = 1724064530]
+
+    APP2 -->|1. PING redis.ttl()| REDIS
+    REDIS -->|2. Crossed subsecond threshold: Returns 3599s| APP2
+    APP2 -->|3. Math: 12:00:00.520 + 3599s (Rounded up!)| R2[Reset = 1724064531]
+          </pre>
+        </div>
+
+        <h3>The Three Compounding Flaws:</h3>
+        <ul>
+          <li><strong>Integer Truncation in Redis <code>TTL</code>:</strong> Redis's standard <code>TTL</code> command rounds remaining milliseconds down to integer seconds. A key with $3599.9\text{s}$ remaining and a key with $3599.1\text{s}$ remaining both return <code>3599</code>.</li>
+          <li><strong>Network Latency Jitter:</strong> The application server records <code>Time.now</code> either before or after the Redis network round-trip. If a network packet incurs a $5\text{ ms}$ delay that crosses an integer second boundary, the sum jumps by an entire second.</li>
+          <li><strong>Distributed Clock Drift:</strong> GitHub routes API traffic across hundreds of application server nodes. Even with Network Time Protocol (NTP) synchronization, server clocks experience minor sub-millisecond drift ($\Delta t \approx 1\text{ms} - 10\text{ms}$). Consecutive requests landing on different application pods evaluate different base times, creating the oscillating "wobble".</li>
+        </ul>
+      </section>
+
+      <section id="the-fix">
+        <h2>5. The Fix: Absolute Timestamp Persistence &amp; Lua</h2>
+        <p>
+          The fundamental rule of distributed systems debugging applies: <strong>Never compute fixed truths dynamically from moving parts.</strong>
+        </p>
+        <p>
+          Instead of dynamically calculating the reset timestamp on every request by querying Redis's decaying TTL, the architecture was refactored so that:
+        </p>
+        <div class="note-box alert alert-success">
+          <strong>The Solution:</strong>
+          Upon creating the rate-limiting window, the server computes the absolute expiration timestamp <strong>once</strong>:
+          $$\text{ResetTimestamp} = \text{WindowStartTime} + 3600$$
+          This absolute Unix timestamp is <strong>persisted directly inside Redis</strong> alongside the request counter!
+        </div>
+        <p>
+          Every subsequent request during that window simply reads the pre-stored timestamp. Because the value is immutable and stored in one place, every application server returns the exact same integer timestamp to the millisecond.
+        </p>
+      </section>
+
+      <section id="lua-atomic-implementation">
+        <h2>6. Production Implementation: Atomic Redis Script</h2>
+        <p>
+          To ensure that initializing the window, incrementing the counter, and retrieving the reset timestamp occur with zero race conditions, GitHub utilizes an atomic <strong>Redis Lua Script</strong>:
+        </p>
+
+        <pre><code class="language-lua">-- rate_limiter.lua
+-- KEYS[1]: Rate limit key (e.g. "rate:user_12345")
+-- ARGV[1]: Max quota (e.g. 5000)
+-- ARGV[2]: Window duration in seconds (e.g. 3600)
+-- ARGV[3]: Current server timestamp (Unix epoch seconds)
+
+local key = KEYS[1]
+local limit = tonumber(ARGV[1])
+local window = tonumber(ARGV[2])
+local now = tonumber(ARGV[3])
+
+-- Check if key exists
+local data = redis.call("HMGET", key, "count", "reset_at")
+local count = tonumber(data[1])
+local reset_at = tonumber(data[2])
+
+if not count then
+    -- Window does NOT exist; initialize new window
+    count = 1
+    reset_at = now + window
+    redis.call("HMSET", key, "count", count, "reset_at", reset_at)
+    redis.call("EXPIRE", key, window)
+else
+    -- Window exists; atomically increment counter
+    count = redis.call("HINCRBY", key, "count", 1)
+end
+
+local remaining = math.max(0, limit - count)
+local allowed = count <= limit and 1 or 0
+
+-- Return: [allowed, count, remaining, reset_at]
+return { allowed, count, remaining, reset_at }</code></pre>
+      </section>
+
+      <section id="engineering-verdict">
+        <h2>7. First-Principles Summary &amp; Design Lessons</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Design Dimension</th>
+              <th>The Flawed GitHub Implementation</th>
+              <th>The Correct Architecture</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Source of Truth</strong></td>
+              <td>Dynamic calculation: <code>Time.now + redis.ttl()</code></td>
+              <td>Static persisted absolute timestamp: <code>reset_at</code></td>
+            </tr>
+            <tr>
+              <td><strong>Clock Dependencies</strong></td>
+              <td>Depended on two clocks (App Server + Redis)</td>
+              <td>Single clock timestamp persisted upon creation</td>
+            </tr>
+            <tr>
+              <td><strong>Precision Loss</strong></td>
+              <td>Redis integer TTL truncation created $\pm 1\text{s}$ rounding wobble</td>
+              <td>Exact integer epoch stored permanently</td>
+            </tr>
+            <tr>
+              <td><strong>Atomicity</strong></td>
+              <td>Separate <code>INCR</code> and <code>TTL</code> network round-trips</td>
+              <td>Atomic single-hop Lua script execution</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="note-box alert alert-info">
+          <strong>Key Takeaway:</strong> Distributed systems bugs often hide in innocent arithmetic. Whenever a system calculates state by combining local wall-clock time with external remote TTLs across network hops, non-deterministic rounding and clock drift will inevitably corrupt the result.
+        </div>
+      </section>
+    </article>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-brand">
+        <h4>System Design Notes</h4>
+        <p>Production architecture breakdowns and low-level systems engineering dissections.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Explore</h5>
+        <ul>
+          <li><a href="../index.html">All Articles</a></li>
+          <li><a href="airbnb-http-streaming-performance.html">Airbnb HTTP Streaming</a></li>
+          <li><a href="atlassian-load-balancer-outage-dissection.html">Atlassian Load Balancer Outage</a></li>
+          <li><a href="trello-rabbitmq-to-kafka-migration.html">Trello RabbitMQ to Kafka</a></li>
+        </ul>
+      </div>
+    </div>
+  </footer>
+
+  <script src="../theme.js"></script>
+</body>
+</html>
