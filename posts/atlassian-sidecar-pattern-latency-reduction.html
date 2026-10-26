@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>How Atlassian Reduced Latency by 70% Using the Sidecar Pattern — System Design Notes</title>
+  <meta name="description" content="Technical deep dive into how Atlassian leveraged the Sidecar pattern to cut latency by 70% on its Tenant Contact Service: abstracting polyglot client complexity, connection pooling, request parallelization, and centralized resilience.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css">
+  <link rel="stylesheet" href="../blog-theme.css">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+  <div id="progress" aria-hidden="true"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">Articles</a></li>
+          <li><a href="../index.html#system-eval">Architecture Index</a></li>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="nav-gh">GitHub</a></li>
+        </ul>
+        <div class="swatches" role="group" aria-label="Colour theme">
+          <button class="swatch" data-set-theme="light"  style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+          <button class="swatch" data-set-theme="dark"   style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+          <button class="swatch" data-set-theme="sepia"  style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+        </div>
+        <button id="theme-toggle" class="theme-toggle" aria-label="Toggle Theme">
+          <span class="theme-icon">☀️</span>
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <header class="article-header">
+    <div class="article-header-inner">
+      <div class="post-category-badge">Distributed Systems</div>
+      <h1 class="article-title">How Atlassian Reduced Latency by 70% Using the Sidecar Pattern</h1>
+      <div class="article-meta">
+        <span>By Arpit Bhayani Dissection &amp; Atlassian Engineering</span>
+        <span>•</span>
+        <span>October 2026</span>
+        <span>•</span>
+        <span>15 min read</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="article-body">
+    <aside class="toc-sidebar">
+      <div class="toc-title">Table of Contents</div>
+      <ul class="toc-list">
+        <li><a href="#tcs-context">1. Context: The Tenant Contact Service (TCS)</a></li>
+        <li><a href="#polyglot-sdk-tax">2. The Polyglot Client SDK Tax &amp; Latency Spikes</a></li>
+        <li><a href="#solve-one-vs-all">3. Architectural Dilemma: "Solve for One" vs. "Solve for All"</a></li>
+        <li><a href="#sidecar-topology">4. Anatomy of the Sidecar Architecture</a></li>
+        <li><a href="#internal-mechanics">5. Internal Mechanics: Multiplexing, Caching &amp; Pooling</a></li>
+        <li><a href="#performance-impact">6. Production Impact: 70% Latency Plummet</a></li>
+        <li><a href="#when-to-use-sidecar">7. Trade-offs: When to Use (and Avoid) Sidecars</a></li>
+        <li><a href="#engineering-verdict">8. First-Principles Summary &amp; Design Lessons</a></li>
+      </ul>
+      <div class="download-box" style="margin-top: 2rem; padding: 1rem; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-surface);">
+        <div style="font-weight: 600; font-size: 0.85rem; margin-bottom: 0.5rem;">Companion Artifact</div>
+        <a href="../Docs/Atlassian_Sidecar_Pattern_Latency_Technical_Breakdown.pdf" target="_blank" download class="btn-primary" style="display: block; text-align: center; font-size: 0.8rem; padding: 0.5rem;">
+          📥 Download 3-Page PDF
+        </a>
+      </div>
+    </aside>
+
+    <article class="article-content">
+      <section id="tcs-context">
+        <h2>1. Context: The Tenant Contact Service (TCS)</h2>
+        <p>
+          Atlassian powers collaboration for hundreds of thousands of organizations worldwide through its flagship products: Jira, Confluence, Bitbucket, and Trello. Behind the scenes, the <strong>Tenant Contact Service (TCS)</strong> is a Tier-0 infrastructure microservice responsible for resolving core organization, workspace, and tenant metadata.
+        </p>
+        <p>
+          Whenever a user opens an issue, loads a wiki page, or performs a git push, consumer services must query TCS to verify permissions, billing tiers, and routing endpoints. Consequently, TCS operates under extreme operational constraints:
+        </p>
+        <ul>
+          <li><strong>High Concurrency:</strong> Handling tens of thousands of requests per second.</li>
+          <li><strong>Tight Latency Budgets:</strong> Required p99 latency in the low single-digit milliseconds (&lt; 5 ms).</li>
+          <li><strong>Zero Tolerance for Downtime:</strong> Any degradation in TCS cascades across every Atlassian cloud product.</li>
+        </ul>
+      </section>
+
+      <section id="polyglot-sdk-tax">
+        <h2>2. The Polyglot Client SDK Tax &amp; Latency Spikes</h2>
+        <p>
+          While the backend TCS service was heavily optimized and responded in sub-millisecond times locally, several critical consumer teams reported severe latency spikes ($100\text{ ms}$ to $300\text{ ms}$) and sporadic HTTP 504 timeouts when calling TCS.
+        </p>
+        <p>
+          An investigation revealed that the bottleneck was not within TCS itself, but in the <strong>consumer client implementations</strong> across Atlassian's polyglot engineering landscape:
+        </p>
+
+        <div class="mermaid-box">
+          <pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant App as Consumer Service (e.g. Jira / Java)
+    participant TCS as Tenant Contact Service (TCS Backend)
+
+    Note over App: Inefficient Client Code: Unpooled Sequential Requests
+    App->>TCS: TCP Handshake + TLS Setup (30ms overhead!)
+    App->>TCS: GET /tenant/123/contact
+    TCS-->>App: 200 OK (Processed in 2ms)
+    App->>TCS: TCP Handshake + TLS Setup (New connection!)
+    App->>TCS: GET /tenant/123/billing
+    TCS-->>App: 200 OK (Processed in 2ms)
+    App->>TCS: TCP Handshake + TLS Setup (New connection!)
+    App->>TCS: GET /tenant/123/features
+    TCS-->>App: 200 OK (Processed in 2ms)
+    Note over App: Total Client Latency: 100ms+ (90% wasted on connection setup and sequential blocking)
+          </pre>
+        </div>
+
+        <h3>The Four Root Causes of Client Degradation:</h3>
+        <ol>
+          <li><strong>Connection Churn:</strong> Teams created fresh HTTP connections per request, incurring costly TCP handshakes and TLS cryptographic negotiations on every call.</li>
+          <li><strong>Sequential Blocking:</strong> Rather than issuing queries in parallel or using bulk endpoints, consumer services executed sequential synchronous requests in loop iterations.</li>
+          <li><strong>Missing Local Caching:</strong> Frequently accessed, immutable tenant contact data was repeatedly refetched across the network instead of being cached in-memory.</li>
+          <li><strong>Polyglot SDK Drift:</strong> Maintaining customized client libraries across Java, Python, Go, and Node.js meant bug fixes and connection tuning took months to propagate across all product teams.</li>
+        </ol>
+      </section>
+
+      <section id="solve-one-vs-all">
+        <h2>3. Architectural Dilemma: "Solve for One" vs. "Solve for All"</h2>
+        <p>
+          Atlassian's systems architects faced a fundamental strategic dilemma:
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>Strategy</th>
+              <th>Execution Mechanism</th>
+              <th>Pros</th>
+              <th>Cons</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>"Solve for One" (Library Approach)</strong></td>
+              <td>Write shared client libraries / SDKs in multiple languages; educate teams to tune connections.</td>
+              <td>No infrastructure changes required; runs in-process.</td>
+              <td><strong>Fails at scale.</strong> Constant library version drift, huge maintenance burden across 4+ languages, developers bypass SDKs or misconfigure thread pools.</td>
+            </tr>
+            <tr>
+              <td><strong>"Solve for All" (Sidecar Pattern)</strong></td>
+              <td>Deploy an out-of-process, language-agnostic sidecar proxy alongside every consumer application.</td>
+              <td><strong>Universal enforcement.</strong> Centralized connection pooling, automatic batching, zero multi-language SDK maintenance, transparent upgrades.</td>
+              <td>Slightly higher local memory overhead per pod; loopback IPC hop.</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="note-box alert alert-success">
+          <strong>The Decision:</strong> Atlassian chose the <strong>Sidecar Pattern</strong>. By abstracting communication out of application codebases entirely, the platform team could enforce high-performance network topology universally without requiring a single application redeployment or code refactor.
+        </div>
+      </section>
+
+      <section id="sidecar-topology">
+        <h2>4. Anatomy of the Sidecar Architecture</h2>
+        <p>
+          In the Sidecar architecture, a lightweight proxy process runs on the <strong>same host or Kubernetes pod</strong> as the primary application container, sharing the same network namespace:
+        </p>
+
+        <div class="mermaid-box">
+          <pre class="mermaid">
+flowchart TD
+    subgraph "Kubernetes Pod / Host (Shared Localhost Network Namespace)"
+        APP[Primary Application Container: Jira / Confluence]
+        IPC[(Localhost Loopback HTTP / Unix Domain Socket: < 0.2ms)]
+        SC[TCS Sidecar Proxy Container]
+        CACHE[(Local In-Memory Cache: LRU)]
+    end
+
+    subgraph "Central Cloud Infrastructure"
+        TCS[(TCS Backend Cluster)]
+    end
+
+    APP <-->|Simple GET /local/tcs/tenant| IPC
+    IPC <--> SC
+    SC <--> CACHE
+    SC ==="Persistent HTTP/2 Long-Lived Connection Pool"===> TCS
+          </pre>
+        </div>
+
+        <p>
+          The application simply issues plain HTTP calls to <code>http://localhost:8080/tenant/...</code>. The sidecar intercepts the request, checks its local memory cache, multiplexes calls over pre-warmed persistent HTTP/2 connections, and returns the result in microseconds.
+        </p>
+      </section>
+
+      <section id="internal-mechanics">
+        <h2>5. Internal Mechanics: Multiplexing, Caching &amp; Pooling</h2>
+        <p>
+          The sidecar proxy implements several critical optimizations under the hood:
+        </p>
+
+        <h3>1. Long-Lived Persistent Connection Pooling</h3>
+        <p>
+          The sidecar maintains a permanent, pre-warmed pool of HTTP/2 connections to the backend TCS cluster. TCP handshakes and TLS handshakes are executed once and reused across millions of requests, completely eliminating connection setup latency.
+        </p>
+
+        <h3>2. Transparent Request Multiplexing &amp; Batching</h3>
+        <p>
+          When an application issues three sequential requests for tenant data, the sidecar automatically collapses them into a single parallel multiplexed HTTP/2 stream or combines them into a bulk backend query:
+        </p>
+        <div class="note-box alert alert-info">
+          <strong>Query Coalescing:</strong> If multiple application threads simultaneously request tenant metadata for the same tenant ID, the sidecar executes a single upstream backend fetch and broadcasts the result to all awaiting threads.
+        </div>
+
+        <h3>3. Near-Zero-Latency In-Memory Caching</h3>
+        <p>
+          Tenant contact information is semi-static (changing only when billing or ownership updates). The sidecar maintains an in-memory LRU cache with a short TTL (e.g. 60 seconds). Over <strong>85% of all calls</strong> are resolved directly from local sidecar RAM in less than $0.3\text{ ms}$, never touching the network!
+        </p>
+      </section>
+
+      <section id="performance-impact">
+        <h2>6. Production Impact: 70% Latency Plummet</h2>
+        <p>
+          The deployment of the TCS sidecar transformed Atlassian's service performance:
+        </p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Performance Dimension</th>
+              <th>Before (Polyglot Client SDKs)</th>
+              <th>After (TCS Sidecar Architecture)</th>
+              <th>Impact</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Client-Observed p99 Latency</strong></td>
+              <td>$120\text{ ms} - 250\text{ ms}$</td>
+              <td><strong>$35\text{ ms}$ (Down to $0.3\text{ ms}$ on cache hits)</strong></td>
+              <td><strong>70% to 90% latency reduction</strong></td>
+            </tr>
+            <tr>
+              <td><strong>TCS Backend Request Load</strong></td>
+              <td>Millions of redundant sequential calls</td>
+              <td>Drastically reduced via local sidecar caching &amp; batching</td>
+              <td>Backend CPU load dropped by 65%</td>
+            </tr>
+            <tr>
+              <td><strong>Connection Overhead</strong></td>
+              <td>Constant TCP/TLS handshake churn</td>
+              <td>Zero handshake overhead; 100% pre-warmed pools</td>
+              <td>Network socket stability restored</td>
+            </tr>
+            <tr>
+              <td><strong>Cross-Language Governance</strong></td>
+              <td>4+ fragile SDKs requiring constant updates</td>
+              <td>1 single language-agnostic sidecar binary</td>
+              <td>Universal rollout of security and protocol fixes</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="when-to-use-sidecar">
+        <h2>7. Trade-offs: When to Use (and Avoid) Sidecars</h2>
+        <p>
+          While powerful, the Sidecar pattern is not a universal silver bullet. Understanding its operational trade-offs is crucial:
+        </p>
+
+        <h3>When to Use the Sidecar Pattern:</h3>
+        <ul>
+          <li><strong>Polyglot Microservice Environments:</strong> When your organization uses multiple languages (Java, Go, Python, Node.js) and maintaining identical client SDKs across all of them is unsustainable.</li>
+          <li><strong>Infrastructure Infrastructure Concerns:</strong> For cross-cutting capabilities such as mutual TLS (mTLS), distributed tracing (OpenTelemetry), rate limiting, and connection pooling.</li>
+          <li><strong>High-Frequency Shared Dependencies:</strong> When dozens of services query the same critical Tier-0 metadata service.</li>
+        </ul>
+
+        <h3>When NOT to Use the Sidecar Pattern:</h3>
+        <ul>
+          <li><strong>Single-Language Monoliths:</strong> If your entire platform is written in a single language (e.g., 100% Go or 100% Java), an in-process library provides lower memory overhead and zero IPC hop latency.</li>
+          <li><strong>Resource-Constrained Edge / Serverless Environments:</strong> In AWS Lambda or tight memory containers, spinning up an extra sidecar process per function instance inflates cold starts and memory billing.</li>
+        </ul>
+      </section>
+
+      <section id="engineering-verdict">
+        <h2>8. First-Principles Summary &amp; Design Lessons</h2>
+        <ul>
+          <li><strong>Architectural Patterns Beat Human Discipline:</strong> Relying on every engineering team to correctly implement connection pooling, retries, and timeouts fails at scale. Centralizing networking logic in a sidecar guarantees compliance.</li>
+          <li><strong>Localhost Loopback is Inexpensive:</strong> Modern Linux loopback interfaces and Unix domain sockets transfer data in microseconds. The microsecond cost of an IPC hop is vastly outweighed by the dozens of milliseconds saved by persistent pooling and local caching.</li>
+          <li><strong>Decouple Application Lifecycles from Protocol Lifecycles:</strong> The sidecar enables zero-downtime upgrades of communication protocols (e.g. migrating from HTTP/1.1 to gRPC or TLS cert rotations) without touching application business code.</li>
+        </ul>
+      </section>
+    </article>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-brand">
+        <h4>System Design Notes</h4>
+        <p>Production architecture breakdowns and low-level systems engineering dissections.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Explore</h5>
+        <ul>
+          <li><a href="../index.html">All Articles</a></li>
+          <li><a href="requestly-api-client-low-level-design.html">Requestly API Client LLD</a></li>
+          <li><a href="stripe-rate-limiter-architecture.html">Stripe Rate Limiter</a></li>
+          <li><a href="github-database-sharding-monolith.html">GitHub Database Sharding</a></li>
+        </ul>
+      </div>
+    </div>
+  </footer>
+
+  <script src="../theme.js"></script>
+</body>
+</html>

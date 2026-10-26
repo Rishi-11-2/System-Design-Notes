@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Low-Level Design and Data Schema Modeling of API Clients Like Requestly — System Design Notes</title>
+  <meta name="description" content="Technical deep dive into the low-level design (LLD) and data schema modeling of production API clients like Requestly, Postman, and Hoppscotch: multi-process architecture, Git-native schemas, variable templating, sandboxed script engines, and payload virtualization.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css">
+  <link rel="stylesheet" href="../blog-theme.css">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+  <div id="progress" aria-hidden="true"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">Articles</a></li>
+          <li><a href="../index.html#system-eval">Architecture Index</a></li>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="nav-gh">GitHub</a></li>
+        </ul>
+        <div class="swatches" role="group" aria-label="Colour theme">
+          <button class="swatch" data-set-theme="light"  style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+          <button class="swatch" data-set-theme="dark"   style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+          <button class="swatch" data-set-theme="sepia"  style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+        </div>
+        <button id="theme-toggle" class="theme-toggle" aria-label="Toggle Theme">
+          <span class="theme-icon">☀️</span>
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <header class="article-header">
+    <div class="article-header-inner">
+      <div class="post-category-badge">Low-Level Design</div>
+      <h1 class="article-title">Low-Level Design and Data Schema Modeling of API Clients Like Requestly</h1>
+      <div class="article-meta">
+        <span>By Arpit Bhayani Dissection &amp; Systems Architecture</span>
+        <span>•</span>
+        <span>October 2026</span>
+        <span>•</span>
+        <span>16 min read</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="article-body">
+    <aside class="toc-sidebar">
+      <div class="toc-title">Table of Contents</div>
+      <ul class="toc-list">
+        <li><a href="#client-evolution">1. Evolution of the Modern Developer API Client</a></li>
+        <li><a href="#multi-process-architecture">2. Multi-Process Architectural Topology</a></li>
+        <li><a href="#data-schema-modeling">3. Data Schema Modeling &amp; Entity Relationships</a></li>
+        <li><a href="#variable-resolution-engine">4. The Variable Resolution Engine</a></li>
+        <li><a href="#sandboxed-scripting">5. Sandboxed Script Execution (Pre &amp; Post Hooks)</a></li>
+        <li><a href="#large-payload-virtualization">6. Large Payload Handling &amp; Memory Virtualization</a></li>
+        <li><a href="#git-native-sync">7. Git-Native Persistence &amp; Secret Isolation</a></li>
+        <li><a href="#engineering-verdict">8. First-Principles Summary &amp; Design Lessons</a></li>
+      </ul>
+      <div class="download-box" style="margin-top: 2rem; padding: 1rem; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-surface);">
+        <div style="font-weight: 600; font-size: 0.85rem; margin-bottom: 0.5rem;">Companion Artifact</div>
+        <a href="../Docs/Requestly_API_Client_LLD_Technical_Breakdown.pdf" target="_blank" download class="btn-primary" style="display: block; text-align: center; font-size: 0.8rem; padding: 0.5rem;">
+          📥 Download 3-Page PDF
+        </a>
+      </div>
+    </aside>
+
+    <article class="article-content">
+      <section id="client-evolution">
+        <h2>1. Evolution of the Modern Developer API Client</h2>
+        <p>
+          Developer API clients have undergone a massive paradigm shift. What once began as simple graphical <code>curl</code> wrappers has evolved into sophisticated developer environments supporting HTTP request construction, live network interception, rule-based redirection, mock servers, scripted test suites, and team collaboration. Tools like <strong>Requestly</strong>, <strong>Postman</strong>, <strong>Insomnia</strong>, and <strong>Hoppscotch</strong> must manage hundreds of thousands of requests, maintain offline-first capabilities, and serialize state cleanly for Git version control without cloud lock-in.
+        </p>
+        <p>
+          Architecting an API client presents complex Low-Level Design (LLD) challenges:
+        </p>
+        <ul>
+          <li><strong>UI Responsiveness Under Load:</strong> Parsing and rendering a 50 MB JSON response payload without freezing the 60 FPS user interface.</li>
+          <li><strong>Untrusted Code Execution:</strong> Running arbitrary JavaScript pre-request scripts and post-response test assertions without exposing host system files or shell execution capabilities.</li>
+          <li><strong>Dynamic Scoped Interpolation:</strong> Resolving nested variable hierarchies (<code>{{base_url}}/api/{{version}}/users/{{user_id}}</code>) across Global, Environment, and Collection scopes in sub-millisecond time.</li>
+          <li><strong>Secret Security:</strong> Ensuring API tokens and bearer credentials can be used dynamically in requests while remaining strictly encrypted and excluded from public Git repositories.</li>
+        </ul>
+      </section>
+
+      <section id="multi-process-architecture">
+        <h2>2. Multi-Process Architectural Topology</h2>
+        <p>
+          Modern desktop and hybrid API clients adopt a <strong>multi-process architecture</strong> (typically built on top of Electron, Tauri, or browser extensions) to isolate heavy I/O and CPU workloads from UI rendering.
+        </p>
+
+        <div class="mermaid-box">
+          <pre class="mermaid">
+flowchart TD
+    subgraph "Renderer Process (UI / Presentation)"
+        UI[React / Zustand State]
+        VIRT[Virtualized JSON Tree Viewer]
+        CODE[Monaco / CodeMirror Editor]
+    end
+
+    subgraph "IPC Communication Layer"
+        IPC[(Asynchronous IPC / Event Bus)]
+    end
+
+    subgraph "Core Process (System & Network Engine)"
+        DISP[Network Dispatcher Engine (libcurl / Fetch)]
+        VAR[Variable Resolution & Template Parser]
+        VM[Sandboxed V8 Isolate / Script Worker]
+        SYNC[Git-Native File Watcher & Storage Engine]
+        KEY[OS SafeStorage / Keychain Encryption]
+    end
+
+    UI <--> IPC
+    IPC <--> DISP
+    IPC <--> VAR
+    IPC <--> VM
+    IPC <--> SYNC
+    VAR --> DISP
+    VM <--> DISP
+    SYNC --> KEY
+          </pre>
+        </div>
+
+        <p>
+          This clean separation ensures that network latency, streaming file downloads, and script timeouts never block user interface interactions.
+        </p>
+      </section>
+
+      <section id="data-schema-modeling">
+        <h2>3. Data Schema Modeling &amp; Entity Relationships</h2>
+        <p>
+          To enable offline persistence, fast querying, and seamless Git diffing, data schemas are structured as normalized entity definitions:
+        </p>
+
+        <div class="mermaid-box">
+          <pre class="mermaid">
+erDiagram
+    WORKSPACE ||--o{ COLLECTION : contains
+    WORKSPACE ||--o{ ENVIRONMENT : manages
+    COLLECTION ||--o{ FOLDER : nests
+    COLLECTION ||--o{ REQUEST : owns
+    FOLDER ||--o{ FOLDER : subfolders
+    FOLDER ||--o{ REQUEST : contains
+    REQUEST ||--|| SCRIPT : configures
+    REQUEST ||--o{ EXECUTION_HISTORY : generates
+
+    WORKSPACE {
+        uuid id PK
+        string name
+        string root_git_path
+        timestamp created_at
+    }
+
+    COLLECTION {
+        uuid id PK
+        uuid workspace_id FK
+        string name
+        string description
+        int order_index
+    }
+
+    REQUEST {
+        uuid id PK
+        uuid collection_id FK
+        uuid folder_id FK
+        string name
+        string method
+        string url_template
+        json headers
+        json query_params
+        json body_config
+        json auth_config
+    }
+
+    ENVIRONMENT {
+        uuid id PK
+        uuid workspace_id FK
+        string name
+        json variables
+    }
+
+    SCRIPT {
+        uuid id PK
+        uuid request_id FK
+        text pre_request_script
+        text post_response_test
+    }
+          </pre>
+        </div>
+
+        <h3>TypeScript Entity Definitions</h3>
+        <pre><code class="language-typescript">export type HTTPMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS';
+
+export interface KeyValuePair {
+  id: string;
+  key: string;
+  value: string;
+  enabled: boolean;
+  isSecret?: boolean;
+  description?: string;
+}
+
+export interface RequestEntity {
+  id: string;
+  collectionId: string;
+  folderId?: string | null;
+  name: string;
+  method: HTTPMethod;
+  url: string; // e.g. "{{base_url}}/v1/users/{{userId}}"
+  headers: KeyValuePair[];
+  params: KeyValuePair[];
+  body: {
+    type: 'none' | 'json' | 'form-data' | 'x-www-form-urlencoded' | 'raw' | 'binary';
+    content: string;
+  };
+  auth: {
+    type: 'none' | 'bearer' | 'basic' | 'apiKey' | 'oauth2';
+    credentials: Record<string, string>;
+  };
+  scripts: {
+    preRequest: string;
+    postResponse: string;
+  };
+  settings: {
+    timeoutMs: number;
+    followRedirects: boolean;
+    rejectUnauthorizedSSL: boolean;
+  };
+}</code></pre>
+      </section>
+
+      <section id="variable-resolution-engine">
+        <h2>4. The Variable Resolution Engine</h2>
+        <p>
+          Before a request dispatches across the network, all dynamic placeholders (e.g., <code>{{base_url}}</code>, <code>{{$randomUUID}}</code>, <code>{{$timestamp}}</code>) must be resolved.
+        </p>
+
+        <div class="note-box alert alert-info">
+          <strong>Variable Precedence Hierarchy (Tightest to Widest Scope):</strong>
+          $$\text{Transient Script Runtime} \succ \text{Folder / Collection Scope} \succ \text{Active Environment} \succ \text{Global Scope}$$
+        </div>
+
+        <p>
+          The engine compiles the raw request template by executing a single-pass recursive replacement algorithm:
+        </p>
+        <pre><code class="language-typescript">export class VariableResolver {
+  private readonly regex = /\{\{([a-zA-Z0-9_$.]+)\}\}/g;
+
+  resolve(template: string, context: Map<string, string>): string {
+    return template.replace(this.regex, (match, key) => {
+      // 1. Dynamic System Generators
+      if (key === '$randomUUID') return crypto.randomUUID();
+      if (key === '$timestamp') return Date.now().toString();
+      
+      // 2. Scoped User Context Lookup
+      if (context.has(key)) {
+        return context.get(key)!;
+      }
+      
+      // Unresolved variable left intact or flagged
+      return match;
+    });
+  }
+}</code></pre>
+      </section>
+
+      <section id="sandboxed-scripting">
+        <h2>5. Sandboxed Script Execution (Pre &amp; Post Hooks)</h2>
+        <p>
+          Users frequently write custom JavaScript to calculate HMAC authentication signatures, generate dynamic nonce tokens, or validate response JSON schemas.
+        </p>
+        <p>
+          Running arbitrary user scripts inside the main application process is a catastrophic security vulnerability: a malicious shared collection could execute <code>child_process.exec('rm -rf /')</code> or exfiltrate private SSH keys.
+        </p>
+        <div class="note-box alert alert-danger">
+          <strong>Sandbox Isolation Principle:</strong> User scripts must run inside a completely isolated V8 Isolate (using <code>isolated-vm</code> in Node.js or a locked-down Web Worker in browser environments).
+          All Node.js core modules (<code>fs</code>, <code>net</code>, <code>child_process</code>) are completely stripped.
+        </div>
+
+        <pre><code class="language-javascript">// Exposed Sandboxed Context Object (rq / pm)
+const contextBridge = {
+  request: {
+    headers: { ... },
+    addHeader: (k, v) => { ... }
+  },
+  environment: {
+    get: (key) => envMap.get(key),
+    set: (key, val) => envMap.set(key, val)
+  },
+  test: (name, assertionFn) => {
+    try {
+      assertionFn();
+      testResults.push({ name, passed: true });
+    } catch (err) {
+      testResults.push({ name, passed: false, error: err.message });
+    }
+  }
+};</code></pre>
+      </section>
+
+      <section id="large-payload-virtualization">
+        <h2>6. Large Payload Handling &amp; Memory Virtualization</h2>
+        <p>
+          When an API returns a 50 MB response containing 500,000 JSON array items:
+        </p>
+        <ul>
+          <li><strong>Naive DOM Rendering Fails:</strong> Injecting 500,000 DOM nodes instantly crashes the browser with an Out-Of-Memory (OOM) heap limit.</li>
+          <li><strong>String Parsing Bottleneck:</strong> Executing <code>JSON.parse()</code> on the UI thread blocks event handling, freezing mouse clicks and keystrokes.</li>
+        </ul>
+
+        <div class="note-box alert alert-success">
+          <strong>The Virtualized Streaming Solution:</strong>
+          <ol>
+            <li><strong>Worker Parsing:</strong> Raw byte chunks stream from the network socket directly into a Web Worker.</li>
+            <li><strong>Tokenized Indexing:</strong> The worker generates a lightweight token index (line offsets, bracket matching, byte ranges) without building a heavy full-object AST.</li>
+            <li><strong>Window Virtualization:</strong> The UI only renders the 40 lines currently visible in the user's viewport ($y_{\text{scroll}}$ to $y_{\text{scroll}} + \text{height}$). As the user scrolls, DOM nodes are recycled instantly, maintaining a constant 60 FPS refresh rate.</li>
+          </ol>
+        </div>
+      </section>
+
+      <section id="git-native-sync">
+        <h2>7. Git-Native Persistence &amp; Secret Isolation</h2>
+        <p>
+          Modern developer workflows reject proprietary cloud silos in favor of <strong>Git-native workspaces</strong>:
+        </p>
+        <ul>
+          <li>Collections, folders, and requests are serialized as human-readable, deterministic JSON files inside a <code>.requestly/</code> or <code>.api/</code> folder directly within the user's code repository.</li>
+          <li>File system watchers (<code>chokidar</code>) detect external Git pulls or branch switches, hot-reloading the UI state without requiring a client restart.</li>
+          <li><strong>Secret Isolation:</strong> Sensitive variables marked as <code>secret: true</code> (passwords, private API keys) are <em>never</em> written to plain text Git files. They are encrypted using the host operating system's native keychain (via Electron's <code>safeStorage</code> API or macOS Keychain / Windows Credential Vault).</li>
+        </ul>
+      </section>
+
+      <section id="engineering-verdict">
+        <h2>8. First-Principles Summary &amp; Design Lessons</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Architecture Vector</th>
+              <th>Naive Implementation</th>
+              <th>Production API Client Standard</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Process Model</strong></td>
+              <td>Single thread running UI, network, and scripts</td>
+              <td>Multi-process architecture with async IPC event bus</td>
+            </tr>
+            <tr>
+              <td><strong>Script Security</strong></td>
+              <td>Native <code>eval()</code> or Node <code>vm.runInContext</code></td>
+              <td>Locked-down V8 Isolate with zero access to filesystem or OS APIs</td>
+            </tr>
+            <tr>
+              <td><strong>Large Responses</strong></td>
+              <td>Full DOM tree injection</td>
+              <td>Background worker streaming + Viewport DOM virtualization</td>
+            </tr>
+            <tr>
+              <td><strong>Data Storage</strong></td>
+              <td>Proprietary cloud database sync</td>
+              <td>Git-native JSON directory structure with local OS keychain secret encryption</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+    </article>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-brand">
+        <h4>System Design Notes</h4>
+        <p>Production architecture breakdowns and low-level systems engineering dissections.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Explore</h5>
+        <ul>
+          <li><a href="../index.html">All Articles</a></li>
+          <li><a href="stripe-rate-limiter-architecture.html">Stripe Rate Limiter</a></li>
+          <li><a href="github-database-sharding-monolith.html">GitHub Database Sharding</a></li>
+          <li><a href="mysql-midpoint-insertion-buffer-pool.html">MySQL Midpoint Insertion</a></li>
+        </ul>
+      </div>
+    </div>
+  </footer>
+
+  <script src="../theme.js"></script>
+</body>
+</html>

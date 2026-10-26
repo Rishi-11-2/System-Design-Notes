@@ -345,6 +345,42 @@ const ARTICLES_DATA = [
     excerpt: "Architectural breakdown of GitHub's zero-downtime database sharding: scaling mysql1 past 950K QPS, virtual partitioning via Schema Domains, AST query and transaction linters in CI, ProxySQL dynamic cutovers, and 50% primary load reduction.",
     tags: ["GitHub", "MySQL", "Database Sharding", "Schema Domains", "ProxySQL", "Zero Downtime", "High Availability"],
     featured: true
+  },
+  {
+    id: "stripe-rate-limiter-architecture",
+    slug: "stripe-rate-limiter-architecture.html",
+    title: "Inside Stripe's Multi-Tier Rate Limiter Architecture",
+    category: "Infrastructure",
+    categorySlug: "infrastructure",
+    badge: "Architecture Breakdown",
+    pdfSource: "Docs/Stripe_Rate_Limiter_Architecture_Technical_Breakdown.pdf",
+    excerpt: "Technical deep-dive into Stripe's rate limiting and load shedding architecture: token-bucket rate limiters, concurrent request limiters, fleet-level load shedders reserving 20% capacity for critical payments, worker backpressure, and fail-open resilience.",
+    tags: ["Stripe", "Rate Limiting", "Token Bucket", "Load Shedding", "Redis", "Resilience", "High Availability"],
+    featured: true
+  },
+  {
+    id: "requestly-api-client-low-level-design",
+    slug: "requestly-api-client-low-level-design.html",
+    title: "Low-Level Design and Data Schema Modeling of API Clients Like Requestly",
+    category: "System Design",
+    categorySlug: "system-design",
+    badge: "LLD Deep Dive",
+    pdfSource: "Docs/Requestly_API_Client_LLD_Technical_Breakdown.pdf",
+    excerpt: "Low-level design and schema modeling of production API clients like Requestly, Postman, and Hoppscotch: multi-process isolation, Git-native JSON persistence, scoped template variable engines, sandboxed V8 isolates, and viewport memory virtualization.",
+    tags: ["Low Level Design", "Requestly", "Schema Modeling", "V8 Isolate", "Git-Native", "Electron", "API Client"],
+    featured: true
+  },
+  {
+    id: "atlassian-sidecar-pattern-latency-reduction",
+    slug: "atlassian-sidecar-pattern-latency-reduction.html",
+    title: "How Atlassian Reduced Latency by 70% Using the Sidecar Pattern",
+    category: "Distributed Systems",
+    categorySlug: "distributed-systems",
+    badge: "Case Study",
+    pdfSource: "Docs/Atlassian_Sidecar_Pattern_Latency_Technical_Breakdown.pdf",
+    excerpt: "Architectural decomposition of Atlassian's Tenant Contact Service: eliminating polyglot client SDK maintenance, solving connection handshake churn, transparent request multiplexing, in-memory local caching, and achieving a 70% latency reduction via the sidecar pattern.",
+    tags: ["Atlassian", "Sidecar Pattern", "Microservices", "Latency Optimization", "Connection Pooling", "Distributed Systems"],
+    featured: true
   }
 ];
 

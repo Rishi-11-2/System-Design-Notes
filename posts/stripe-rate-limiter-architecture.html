@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Inside Stripe's Multi-Tier Rate Limiter Architecture — System Design Notes</title>
+  <meta name="description" content="Technical deep dive into Stripe's rate limiter and load shedding architecture: token-bucket rate limiters, concurrent request limiters, fleet-level load shedders, worker-level load shedders, and fail-open resilience.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css">
+  <link rel="stylesheet" href="../blog-theme.css">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+  <div id="progress" aria-hidden="true"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">Articles</a></li>
+          <li><a href="../index.html#system-eval">Architecture Index</a></li>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="nav-gh">GitHub</a></li>
+        </ul>
+        <div class="swatches" role="group" aria-label="Colour theme">
+          <button class="swatch" data-set-theme="light"  style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+          <button class="swatch" data-set-theme="dark"   style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+          <button class="swatch" data-set-theme="sepia"  style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+        </div>
+        <button id="theme-toggle" class="theme-toggle" aria-label="Toggle Theme">
+          <span class="theme-icon">☀️</span>
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <header class="article-header">
+    <div class="article-header-inner">
+      <div class="post-category-badge">Infrastructure Engineering</div>
+      <h1 class="article-title">Inside Stripe's Multi-Tier Rate Limiter Architecture</h1>
+      <div class="article-meta">
+        <span>By Arpit Bhayani Dissection &amp; Stripe Infrastructure</span>
+        <span>•</span>
+        <span>October 2026</span>
+        <span>•</span>
+        <span>15 min read</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="article-body">
+    <aside class="toc-sidebar">
+      <div class="toc-title">Table of Contents</div>
+      <ul class="toc-list">
+        <li><a href="#scaling-challenge">1. The Rate Limiting Challenge at Financial Scale</a></li>
+        <li><a href="#four-tier-overview">2. Overview: The Four Tiers of Defense</a></li>
+        <li><a href="#request-rate-limiter">3. Tier 1: Request Rate Limiter (Token Bucket)</a></li>
+        <li><a href="#concurrent-limiter">4. Tier 2: Concurrent Request Limiter</a></li>
+        <li><a href="#fleet-load-shedder">5. Tier 3: Fleet-Level Load Shedder</a></li>
+        <li><a href="#worker-load-shedder">6. Tier 4: Worker-Level Load Shedder</a></li>
+        <li><a href="#fail-open-philosophy">7. The Fail-Open Principle &amp; Business Priority</a></li>
+        <li><a href="#engineering-verdict">8. First-Principles Summary &amp; Design Lessons</a></li>
+      </ul>
+      <div class="download-box" style="margin-top: 2rem; padding: 1rem; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-surface);">
+        <div style="font-weight: 600; font-size: 0.85rem; margin-bottom: 0.5rem;">Companion Artifact</div>
+        <a href="../Docs/Stripe_Rate_Limiter_Architecture_Technical_Breakdown.pdf" target="_blank" download class="btn-primary" style="display: block; text-align: center; font-size: 0.8rem; padding: 0.5rem;">
+          📥 Download 3-Page PDF
+        </a>
+      </div>
+    </aside>
+
+    <article class="article-content">
+      <section id="scaling-challenge">
+        <h2>1. The Rate Limiting Challenge at Financial Scale</h2>
+        <p>
+          At Stripe, the API infrastructure processes billions of dollars in daily payment volume across millions of global merchants. In financial infrastructure, availability is paramount: dropping a merchant's payment call during Black Friday or a flash sale means irreversible revenue loss.
+        </p>
+        <p>
+          However, public APIs are constantly vulnerable to:
+        </p>
+        <ul>
+          <li><strong>Accidental Misconfigurations:</strong> A merchant deploys a buggy script with an infinite loop issuing thousands of calls per second.</li>
+          <li><strong>Malicious Credential Stuffing &amp; Card Testing:</strong> Attackers brute-forcing credit card authorization numbers across Stripe endpoints.</li>
+          <li><strong>Resource Starvation:</strong> Heavy analytical reporting queries consuming thread pools and database connections, starving lightweight transactional payment requests.</li>
+          <li><strong>Cascading Infrastructure Saturation:</strong> Network hiccups causing client retries that overwhelm backend clusters.</li>
+        </ul>
+        <p>
+          Most standard rate limiters use a single algorithm (e.g. 100 requests per minute). Stripe realized that a single limiter is fundamentally inadequate. Protecting infrastructure while guaranteeing merchant business continuity requires a <strong>multi-tiered defense-in-depth architecture</strong>.
+        </p>
+      </section>
+
+      <section id="four-tier-overview">
+        <h2>2. Overview: The Four Tiers of Defense</h2>
+        <p>
+          Stripe categorizes its defensive perimeter into two distinct <strong>Rate Limiters</strong> (which enforce per-tenant quotas) and two <strong>Load Shedders</strong> (which protect infrastructure health based on critical priority):
+        </p>
+
+        <div class="mermaid-box">
+          <pre class="mermaid">
+flowchart TD
+    REQ[Incoming Client API Request] --> T1[Tier 1: Request Rate Limiter]
+    
+    subgraph "Rate Limiters (Per-Tenant / Fairness)"
+        T1 -->|Under Token Bucket Quota| T2[Tier 2: Concurrent Request Limiter]
+        T1 -->|Exceeded Tokens| DROP1[HTTP 429 Too Many Requests]
+        
+        T2 -->|Under Concurrency Cap| T3[Tier 3: Fleet-Level Load Shedder]
+        T2 -->|Exceeded Concurrency| DROP2[HTTP 429 Too Many Requests]
+    end
+    
+    subgraph "Load Shedders (System Health / Criticality)"
+        T3 -->|Fleet CPU < 80% OR Critical Path| T4[Tier 4: Worker-Level Load Shedder]
+        T3 -->|Fleet Saturated & Non-Critical| DROP3[HTTP 503 Service Unavailable / Dropped]
+        
+        T4 -->|Worker Healthy| APP[API Business Logic & Primary DB]
+        T4 -->|Worker Overloaded & Non-Critical| DROP4[HTTP 503 Service Unavailable]
+    end
+          </pre>
+        </div>
+
+        <p>
+          This decomposition ensures that a user can never monopolize resources, and an infrastructure outage degrades low-priority background reporting before a single live checkout payment is impacted.
+        </p>
+      </section>
+
+      <section id="request-rate-limiter">
+        <h2>3. Tier 1: Request Rate Limiter (Token Bucket)</h2>
+        <p>
+          The <strong>Request Rate Limiter</strong> limits the volume of requests a specific tenant (identified by API Key, User ID, or IP address) can make within a given time interval (e.g., 100 requests per second).
+        </p>
+        <p>
+          Stripe uses the <strong>Token Bucket Algorithm</strong> backed by Redis:
+        </p>
+        <ul>
+          <li>Each tenant has a virtual bucket that holds a maximum capacity of $B$ tokens.</li>
+          <li>Tokens refill continuously at a sustained fill rate of $R$ tokens per second.</li>
+          <li>Every incoming request consumes 1 token. If the bucket has tokens ($T \ge 1$), the request proceeds. If $T < 1$, the request is throttled immediately with HTTP 429.</li>
+        </ul>
+
+        <div class="note-box alert alert-info">
+          <strong>Mathematical Formalization:</strong>
+          Upon request arrival at time $t_{\text{now}}$:
+          $$\text{Tokens}_{\text{refilled}} = \min(B, T_{\text{last}} + (t_{\text{now}} - t_{\text{last}}) \times R)$$
+          This allows short bursts of traffic (up to bucket capacity $B$) while strictly capping the long-term sustained rate at $R$.
+        </div>
+      </section>
+
+      <section id="concurrent-limiter">
+        <h2>4. Tier 2: Concurrent Request Limiter</h2>
+        <p>
+          Rate limiting by requests-per-second is blind to resource intensity. A tenant executing 10 lightweight <code>GET /v1/charges/ch_123</code> requests consumes virtually no CPU. However, a tenant executing 10 concurrent <code>GET /v1/charges?created[gte]=...&amp;limit=100</code> requests can tie up 10 database connection threads for seconds, starving all other merchants sharing the database shard.
+        </p>
+        <p>
+          The <strong>Concurrent Request Limiter</strong> caps the number of <em>in-flight, active operations</em> a tenant can run simultaneously:
+        </p>
+        <ul>
+          <li>When a request begins, an atomic counter is incremented in Redis (or local worker memory).</li>
+          <li>If the active concurrency exceeds the threshold (e.g., max 25 concurrent requests), subsequent requests are rejected immediately.</li>
+          <li>When the request completes (or times out), the counter is decremented.</li>
+        </ul>
+        <p>
+          This provides strong isolation against denial-of-service from resource-heavy reporting queries.
+        </p>
+      </section>
+
+      <section id="fleet-load-shedder">
+        <h2>5. Tier 3: Fleet-Level Load Shedder</h2>
+        <p>
+          Even if every individual tenant stays within their allocated token and concurrency quotas, the aggregate sum of all traffic across millions of merchants can occasionally exceed the global capacity of Stripe's compute clusters.
+        </p>
+        <p>
+          The <strong>Fleet-Level Load Shedder</strong> evaluates the health of the entire infrastructure. It categorizes all incoming traffic by <strong>Business Criticality</strong>:
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>Priority Level</th>
+              <th>Endpoint Examples</th>
+              <th>Shedding Policy</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Critical (High Priority)</strong></td>
+              <td><code>POST /v1/charges</code>, <code>POST /v1/payment_intents</code></td>
+              <td><strong>Never shed</strong> until fleet capacity hits 100% hard limit. Reserved 20%+ capacity buffer.</td>
+            </tr>
+            <tr>
+              <td><strong>Transactional Reads</strong></td>
+              <td><code>GET /v1/charges/ch_...</code></td>
+              <td>Processed if fleet capacity is within safe operating range.</td>
+            </tr>
+            <tr>
+              <td><strong>Background / Non-Critical</strong></td>
+              <td>Dashboard analytics, CSV report exports, webhook retries</td>
+              <td><strong>Shed first</strong> when aggregate CPU/utilization crosses 80%.</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="note-box alert alert-warning">
+          <strong>The 20% Reservation Rule:</strong> Stripe dynamically reserves at least <strong>20% of total cluster capacity strictly for critical checkout payments</strong>. If total cluster utilization reaches 80%, the fleet load shedder immediately starts dropping non-critical background traffic, preserving full throughput for live user checkouts.
+        </div>
+      </section>
+
+      <section id="worker-load-shedder">
+        <h2>6. Tier 4: Worker-Level Load Shedder</h2>
+        <p>
+          The final line of defense operates locally on individual application worker nodes. Due to routing imbalances, garbage collection pauses, or localized slow queries, an individual server instance can become overwhelmed even if the overall fleet metric looks healthy.
+        </p>
+        <p>
+          The <strong>Worker-Level Load Shedder</strong> inspects local node telemetry:
+        </p>
+        <ul>
+          <li>Local CPU saturation and load average.</li>
+          <li>Local Puma/Puma thread pool queue depth.</li>
+          <li>Local memory usage and event loop latency.</li>
+        </ul>
+        <p>
+          If a worker node detects its local thread queue is backed up, it immediately rejects incoming non-critical requests with fast HTTP 503 responses, preventing worker crashes and process termination.
+        </p>
+      </section>
+
+      <section id="fail-open-philosophy">
+        <h2>7. The Fail-Open Principle &amp; Business Priority</h2>
+        <p>
+          One of Stripe's most profound architectural principles is the <strong>Fail-Open Design</strong>:
+        </p>
+
+        <div class="note-box alert alert-success">
+          <strong>The Fail-Open Axiom:</strong>
+          If the Redis cluster backing the rate limiter crashes, encounters a network partition, or experiences timeout errors, the rate limiter <strong>must fail open</strong>.
+          It must allow requests through to the application rather than blocking valid customer payments due to an internal monitoring failure.
+        </div>
+
+        <p>
+          In payment systems, an unserved rate-limited request is indistinguishable from downtime to a customer. Allowing an occasional spike in traffic is far better than a total platform blackout caused by an overzealous defensive filter.
+        </p>
+      </section>
+
+      <section id="engineering-verdict">
+        <h2>8. First-Principles Summary &amp; Design Lessons</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Architecture Principle</th>
+              <th>Naive Anti-Pattern</th>
+              <th>Stripe Production Architecture</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Limiter Granularity</strong></td>
+              <td>Single global requests-per-minute threshold</td>
+              <td>Four-tier defense: Token bucket, Concurrency limit, Fleet shedder, Worker shedder</td>
+            </tr>
+            <tr>
+              <td><strong>Resource Protection</strong></td>
+              <td>Throttling based solely on call count</td>
+              <td>Throttling based on active parallel concurrency and query cost</td>
+            </tr>
+            <tr>
+              <td><strong>Degraded State Priority</strong></td>
+              <td>Drop all requests uniformly during overload</td>
+              <td>Categorize by business criticality; reserve 20% headroom exclusively for critical payments</td>
+            </tr>
+            <tr>
+              <td><strong>Limiter Fault Tolerance</strong></td>
+              <td>Fail-closed (block traffic if cache fails)</td>
+              <td>Fail-open (permit traffic if rate-limiter infrastructure is degraded)</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+    </article>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-brand">
+        <h4>System Design Notes</h4>
+        <p>Production architecture breakdowns and low-level systems engineering dissections.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Explore</h5>
+        <ul>
+          <li><a href="../index.html">All Articles</a></li>
+          <li><a href="github-database-sharding-monolith.html">GitHub Database Sharding</a></li>
+          <li><a href="paypal-thundering-herd-cache-stampede.html">PayPal Thundering Herd</a></li>
+          <li><a href="mysql-midpoint-insertion-buffer-pool.html">MySQL Midpoint Insertion</a></li>
+        </ul>
+      </div>
+    </div>
+  </footer>
+
+  <script src="../theme.js"></script>
+</body>
+</html>
