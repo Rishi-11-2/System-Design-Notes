@@ -381,6 +381,42 @@ const ARTICLES_DATA = [
     excerpt: "Architectural decomposition of Atlassian's Tenant Contact Service: eliminating polyglot client SDK maintenance, solving connection handshake churn, transparent request multiplexing, in-memory local caching, and achieving a 70% latency reduction via the sidecar pattern.",
     tags: ["Atlassian", "Sidecar Pattern", "Microservices", "Latency Optimization", "Connection Pooling", "Distributed Systems"],
     featured: true
+  },
+  {
+    id: "bitbucket-read-your-write-consistency",
+    slug: "bitbucket-read-your-write-consistency.html",
+    title: "How Bitbucket Solved Read-Your-Writes Consistency & Cut Master DB Load by 50%",
+    category: "Database Engineering",
+    categorySlug: "database-engineering",
+    badge: "Architecture Breakdown",
+    pdfSource: "Docs/Bitbucket_Read_Your_Write_Consistency_Technical_Breakdown.pdf",
+    excerpt: "Architectural decomposition of Bitbucket's database scaling: solving Read-Your-Writes consistency across PostgreSQL read replicas using Write-Ahead Log (WAL) Log Sequence Numbers (LSNs), eliminating causal anomalies, and cutting primary database query load by 50%.",
+    tags: ["Bitbucket", "PostgreSQL", "Replication Lag", "WAL", "LSN", "Read-Your-Writes", "Causal Consistency"],
+    featured: true
+  },
+  {
+    id: "jira-json-to-protobuf-migration",
+    slug: "jira-json-to-protobuf-migration.html",
+    title: "Why and How Jira Migrated from JSON to Protobuf: 55% Cost & 75% CPU Reduction",
+    category: "Performance Engineering",
+    categorySlug: "performance-engineering",
+    badge: "Case Study",
+    pdfSource: "Docs/Jira_JSON_to_Protobuf_Migration_Technical_Breakdown.pdf",
+    excerpt: "Technical deep-dive into Atlassian Jira's serialization migration from JSON to Protocol Buffers: achieving 55% infrastructure cost reduction, 75% caching tier CPU drop, 33x deserialization speedup, 80% smaller payloads, and a zero-downtime 3-state shadow verification rollout.",
+    tags: ["Jira", "Protobuf", "JSON", "Serialization", "Performance", "Cost Optimization", "Caching"],
+    featured: true
+  },
+  {
+    id: "trello-rabbitmq-to-kafka-migration",
+    slug: "trello-rabbitmq-to-kafka-migration.html",
+    title: "Why and How Trello Moved from RabbitMQ to Kafka for WebSocket Real-Time Updates",
+    category: "Real-Time Messaging",
+    categorySlug: "real-time-messaging",
+    badge: "Architecture Breakdown",
+    pdfSource: "Docs/Trello_RabbitMQ_to_Kafka_Migration_Technical_Breakdown.pdf",
+    excerpt: "Architectural decomposition of Trello's real-time messaging evolution: migrating from a 15-node RabbitMQ mesh to Apache Kafka and Socket Masters, cutting infrastructure costs 5x, eliminating split-brain outages, and doubling CPU efficiency.",
+    tags: ["Trello", "Apache Kafka", "RabbitMQ", "WebSockets", "Real-Time", "Event Streaming", "Distributed Systems"],
+    featured: true
   }
 ];
 

@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Why and How Trello Moved from RabbitMQ to Kafka for WebSocket Real-Time Updates — System Design Notes</title>
+  <meta name="description" content="Technical deep dive into Trello's real-time messaging architecture: why Trello migrated from a 15-node RabbitMQ cluster to Apache Kafka for WebSocket updates, cutting costs 5x, eliminating split-brain outages, and doubling CPU efficiency.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css">
+  <link rel="stylesheet" href="../blog-theme.css">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+  <div id="progress" aria-hidden="true"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">Articles</a></li>
+          <li><a href="../index.html#system-eval">Architecture Index</a></li>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="nav-gh">GitHub</a></li>
+        </ul>
+        <div class="swatches" role="group" aria-label="Colour theme">
+          <button class="swatch" data-set-theme="light"  style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+          <button class="swatch" data-set-theme="dark"   style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+          <button class="swatch" data-set-theme="sepia"  style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+        </div>
+        <button id="theme-toggle" class="theme-toggle" aria-label="Toggle Theme">
+          <span class="theme-icon">☀️</span>
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <header class="article-header">
+    <div class="article-header-inner">
+      <div class="post-category-badge">Real-Time Messaging</div>
+      <h1 class="article-title">Why and How Trello Moved from RabbitMQ to Kafka for WebSocket Real-Time Updates</h1>
+      <div class="article-meta">
+        <span>By Arpit Bhayani Dissection &amp; Trello Infrastructure</span>
+        <span>•</span>
+        <span>October 2026</span>
+        <span>•</span>
+        <span>15 min read</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="article-body">
+    <aside class="toc-sidebar">
+      <div class="toc-title">Table of Contents</div>
+      <ul class="toc-list">
+        <li><a href="#trello-realtime-scale">1. Context: Real-Time Collaboration at Trello Scale</a></li>
+        <li><a href="#rabbitmq-architecture">2. The Legacy RabbitMQ Mesh Architecture</a></li>
+        <li><a href="#rabbitmq-pain-points">3. The Three Pain Points: Split-Brain, Queues &amp; GC</a></li>
+        <li><a href="#kafka-architecture">4. The Kafka Paradigm: The Socket Master Topology</a></li>
+        <li><a href="#queue-vs-log">5. Message Queues vs. Distributed Logs: Structural Analysis</a></li>
+        <li><a href="#production-impact">6. Production Impact: 5x Cost Reduction &amp; 2x CPU Gain</a></li>
+        <li><a href="#engineering-verdict">7. First-Principles Summary &amp; Design Lessons</a></li>
+      </ul>
+      <div class="download-box" style="margin-top: 2rem; padding: 1rem; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-surface);">
+        <div style="font-weight: 600; font-size: 0.85rem; margin-bottom: 0.5rem;">Companion Artifact</div>
+        <a href="../Docs/Trello_RabbitMQ_to_Kafka_Migration_Technical_Breakdown.pdf" target="_blank" download class="btn-primary" style="display: block; text-align: center; font-size: 0.8rem; padding: 0.5rem;">
+          📥 Download 3-Page PDF
+        </a>
+      </div>
+    </aside>
+
+    <article class="article-content">
+      <section id="trello-realtime-scale">
+        <h2>1. Context: Real-Time Collaboration at Trello Scale</h2>
+        <p>
+          Trello is one of the world's most popular visual project management platforms. At the core of Trello's user experience is <strong>instantaneous multiplayer synchronization</strong>: when a teammate drags a card across columns, attaches a label, or checks off a task, every other user viewing that board must see the UI update instantly without refreshing the browser.
+        </p>
+        <p>
+          To maintain real-time bidirectional communication, Trello manages millions of concurrent persistent <strong>WebSocket connections</strong> distributed across dozens of frontend socket servers.
+        </p>
+        <p>
+          The underlying messaging backbone has evolved over three distinct architectural eras:
+        </p>
+        <ol>
+          <li><strong>Era 1 (Redis Pub/Sub):</strong> Simple in-memory pub/sub; quickly hit memory limits and lacked persistence.</li>
+          <li><strong>Era 2 (RabbitMQ Clusters):</strong> Enterprise AMQP message broker cluster utilizing transient queues and exchange routing.</li>
+          <li><strong>Era 3 (Apache Kafka):</strong> Distributed, immutable partitioned commit log feeding dedicated Socket Master consumers.</li>
+        </ol>
+      </section>
+
+      <section id="rabbitmq-architecture">
+        <h2>2. The Legacy RabbitMQ Mesh Architecture</h2>
+        <p>
+          During Era 2, Trello deployed a complex <strong>15-node RabbitMQ cluster</strong> divided into two tiers:
+        </p>
+        <ul>
+          <li><strong>Inbound Cluster:</strong> Ingested user action events from web servers and API endpoints.</li>
+          <li><strong>The Shovel Plugin:</strong> Mirrored and forwarded messages between the inbound and outbound clusters.</li>
+          <li><strong>Outbound Cluster:</strong> Fanned out events to transient, ephemeral queues bound to specific WebSocket worker instances.</li>
+        </ul>
+
+        <div class="mermaid-box">
+          <pre class="mermaid">
+flowchart TD
+    subgraph "Legacy RabbitMQ Mesh (15 Nodes)"
+        direction TB
+        IN[Inbound RabbitMQ Cluster] -->|RabbitMQ Shovel Plugin| OUT[Outbound RabbitMQ Cluster]
+        
+        OUT --> EX[Topic Exchange]
+        EX --> Q1[Transient Queue 1]
+        EX --> Q2[Transient Queue 2]
+        EX --> QN[Transient Queue N...]
+    end
+
+    Q1 --> WS1[WebSocket Server Node 1]
+    Q2 --> WS2[WebSocket Server Node 2]
+    QN --> WSN[WebSocket Server Node N]
+
+    WS1 --> CL1[User WebSockets]
+    WS2 --> CL2[User WebSockets]
+    WSN --> CLN[User WebSockets]
+          </pre>
+        </div>
+      </section>
+
+      <section id="rabbitmq-pain-points">
+        <h2>3. The Three Pain Points: Split-Brain, Queues &amp; GC</h2>
+        <p>
+          While RabbitMQ worked well at moderate scale, operating it under millions of active WebSocket sessions exposed three catastrophic failure modes:
+        </p>
+
+        <h3>1. The Split-Brain Catastrophe</h3>
+        <p>
+          RabbitMQ relies on Erlang Mnesia distributed clustering. During transient cloud network partitions, the 15-node cluster would partition into separate sub-clusters. In a split-brain state, queues diverged, metadata became inconsistent, and the cluster could not automatically reconcile. Recovering required <strong>full manual cluster restarts</strong>, dropping all real-time events and degrading board synchronization across millions of users.
+        </p>
+
+        <h3>2. Ephemeral Queue Churn &amp; Erlang GC Pressure</h3>
+        <p>
+          Because WebSocket clients constantly connect, disconnect, and roam across Wi-Fi/mobile networks, Trello's architecture continually created and destroyed thousands of transient queues per minute:
+        </p>
+        <div class="note-box alert alert-warning">
+          <strong>The Erlang Process Table Bottleneck:</strong> In RabbitMQ, each queue is an Erlang process backed by internal Mnesia table entries. Constantly spinning up and tearing down thousands of ephemeral queues created massive garbage collection churn, memory fragmentation, and periodic CPU latency freezes.
+        </div>
+
+        <h3>3. Fan-out Binding Explosion</h3>
+        <p>
+          When a card update occurred on a board with 50 active collaborators, RabbitMQ's exchange had to evaluate routing keys and copy the message into 50 distinct queue buffers in memory, ballooning memory usage and broker load.
+        </p>
+      </section>
+
+      <section id="kafka-architecture">
+        <h2>4. The Kafka Paradigm: The Socket Master Topology</h2>
+        <p>
+          To eliminate transient queues and split-brain failures, Trello migrated its entire messaging core to <strong>Apache Kafka</strong>.
+        </p>
+
+        <div class="mermaid-box">
+          <pre class="mermaid">
+flowchart TD
+    subgraph "Event Ingestion"
+        API[Trello API / Card Mutations] -->|Produce JSON Events| KAFKA[(Apache Kafka Partitioned Topic)]
+    end
+
+    subgraph "Routing Tier"
+        KAFKA -->|High-Throughput Consumer Group| SM[Socket Master Pool]
+        SM --> REG[(Active User Connection Registry)]
+    end
+
+    subgraph "WebSocket Delivery Fleet"
+        SM -->|Targeted TCP / HTTP Push| WS1[WebSocket Server 1]
+        SM -->|Targeted TCP / HTTP Push| WS2[WebSocket Server 2]
+        SM -->|Targeted TCP / HTTP Push| WSN[WebSocket Server N]
+    end
+
+    WS1 --> U1[Connected User 1]
+    WS2 --> U2[Connected User 2]
+    WSN --> UN[Connected User N]
+          </pre>
+        </div>
+
+        <h3>The Socket Master Mechanics:</h3>
+        <ul>
+          <li><strong>Decoupled Ingestion:</strong> Board mutations are published into a persistent, partitioned Kafka topic (<code>board-updates</code>). Kafka doesn't know or care about individual WebSocket connections.</li>
+          <li><strong>The Socket Master Pool:</strong> A lean pool of stateless workers consumes from Kafka in parallel batches.</li>
+          <li><strong>Direct Targeted Forwarding:</strong> The Socket Master inspects an in-memory routing table mapping active user IDs to specific WebSocket server hosts. Instead of broadcasting to all nodes, it forwards the event directly over a persistent TCP/HTTP loop to the exact server holding the user's socket.</li>
+        </ul>
+      </section>
+
+      <section id="queue-vs-log">
+        <h2>5. Message Queues vs. Distributed Logs: Structural Analysis</h2>
+        <p>
+          Trello's journey illustrates the fundamental architectural difference between traditional message brokers and log-centric streaming engines:
+        </p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Architecture Dimension</th>
+              <th>RabbitMQ (AMQP Message Broker)</th>
+              <th>Apache Kafka (Distributed Commit Log)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Core Data Structure</strong></td>
+              <td>Discrete message queues in Erlang memory; messages deleted upon consumption.</td>
+              <td>Sequential, append-only disk segments; immutable log with offset pointers.</td>
+            </tr>
+            <tr>
+              <td><strong>Consumer Tracking</strong></td>
+              <td>Broker tracks delivery state for every message and consumer; heavy stateful broker.</td>
+              <td>Consumers track their own read offsets; broker remains stateless and ultra-lean.</td>
+            </tr>
+            <tr>
+              <td><strong>Ephemeral Client Handling</strong></td>
+              <td>Creates transient queues per client; severe GC and process allocation tax.</td>
+              <td>Zero queue creation; decoupled consumers read from static partitions.</td>
+            </tr>
+            <tr>
+              <td><strong>Cluster Consensus</strong></td>
+              <td>Erlang Mnesia; vulnerable to split-brain network partitions.</td>
+              <td>Raft / KRaft (formerly ZooKeeper); strict quorum consensus, split-brain immune.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="production-impact">
+        <h2>6. Production Impact: 5x Cost Reduction &amp; 2x CPU Gain</h2>
+        <p>
+          The migration from RabbitMQ to Kafka delivered transformative operational improvements across Trello's production systems:
+        </p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Metric / Dimension</th>
+              <th>Legacy RabbitMQ Architecture</th>
+              <th>Modern Kafka Architecture</th>
+              <th>System Improvement</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Infrastructure Operational Cost</strong></td>
+              <td>15-node heavy broker cluster footprint</td>
+              <td>Lean Kafka cluster + lightweight Socket Masters</td>
+              <td><strong>5x direct cost reduction (~80% savings)</strong></td>
+            </tr>
+            <tr>
+              <td><strong>CPU Utilization Efficiency</strong></td>
+              <td>High CPU churn from Erlang GC and queue lifecycle</td>
+              <td>High-throughput batch sequential I/O</td>
+              <td><strong>2x improvement in CPU efficiency</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Memory Footprint</strong></td>
+              <td>Millions of message copies across transient queues</td>
+              <td>Zero-copy page cache OS buffers</td>
+              <td><strong>33% reduction in memory usage</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Major Outage Frequency</strong></td>
+              <td>Recurring split-brain manual cluster resets</td>
+              <td>Zero split-brain cluster crashes</td>
+              <td><strong>Near-zero major real-time outages</strong></td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="engineering-verdict">
+        <h2>7. First-Principles Summary &amp; Design Lessons</h2>
+        <ul>
+          <li><strong>Do Not Map Ephemeral Client State to Broker Infrastructure:</strong> Creating a queue in a message broker for every short-lived client connection causes resource exhaustion. Use immutable partition streams and handle connection dispatch in an application proxy tier.</li>
+          <li><strong>Append-Only Logs Outscale Stateful Queues:</strong> Brokers that maintain state per message (RabbitMQ) hit scaling ceilings under massive fan-out. Append-only logs that offload offset tracking to consumers (Kafka) scale linearly with zero broker memory bloat.</li>
+          <li><strong>Targeted Routing Beats Indiscriminate Broadcast:</strong> Pushing events through a Socket Master with connection location awareness reduces internal network bandwidth by orders of magnitude compared to blindly flooding every socket server.</li>
+        </ul>
+      </section>
+    </article>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-brand">
+        <h4>System Design Notes</h4>
+        <p>Production architecture breakdowns and low-level systems engineering dissections.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Explore</h5>
+        <ul>
+          <li><a href="../index.html">All Articles</a></li>
+          <li><a href="jira-json-to-protobuf-migration.html">Jira JSON to Protobuf</a></li>
+          <li><a href="bitbucket-read-your-write-consistency.html">Bitbucket RYW Consistency</a></li>
+          <li><a href="atlassian-sidecar-pattern-latency-reduction.html">Atlassian Sidecar Pattern</a></li>
+        </ul>
+      </div>
+    </div>
+  </footer>
+
+  <script src="../theme.js"></script>
+</body>
+</html>

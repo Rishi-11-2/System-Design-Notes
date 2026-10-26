@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Why and How Jira Migrated from JSON to Protobuf — System Design Notes</title>
+  <meta name="description" content="Technical deep dive into Atlassian Jira's serialization migration from JSON to Protocol Buffers: achieving 55% cost reduction, 75% CPU reduction, 33x deserialization speed, 80% smaller payloads, and zero-downtime shadow verification.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css">
+  <link rel="stylesheet" href="../blog-theme.css">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+  <div id="progress" aria-hidden="true"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">Articles</a></li>
+          <li><a href="../index.html#system-eval">Architecture Index</a></li>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="nav-gh">GitHub</a></li>
+        </ul>
+        <div class="swatches" role="group" aria-label="Colour theme">
+          <button class="swatch" data-set-theme="light"  style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+          <button class="swatch" data-set-theme="dark"   style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+          <button class="swatch" data-set-theme="sepia"  style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+        </div>
+        <button id="theme-toggle" class="theme-toggle" aria-label="Toggle Theme">
+          <span class="theme-icon">☀️</span>
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <header class="article-header">
+    <div class="article-header-inner">
+      <div class="post-category-badge">Performance Engineering</div>
+      <h1 class="article-title">Why and How Jira Migrated from JSON to Protobuf: 55% Cost &amp; 75% CPU Reduction</h1>
+      <div class="article-meta">
+        <span>By Arpit Bhayani Dissection &amp; Atlassian Performance Engineering</span>
+        <span>•</span>
+        <span>October 2026</span>
+        <span>•</span>
+        <span>15 min read</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="article-body">
+    <aside class="toc-sidebar">
+      <div class="toc-title">Table of Contents</div>
+      <ul class="toc-list">
+        <li><a href="#jira-cache-context">1. Context: Jira's Heavy Caching Tier</a></li>
+        <li><a href="#json-overhead-tax">2. The Hidden Tax of JSON at Scale</a></li>
+        <li><a href="#protobuf-mechanics">3. Anatomy of Protocol Buffers (Protobuf)</a></li>
+        <li><a href="#binary-encoding-internals">4. Binary Internals: Varints &amp; Tag-Length-Value</a></li>
+        <li><a href="#migration-strategy">5. Zero-Downtime Rollout: The 3-State Shadow Pattern</a></li>
+        <li><a href="#performance-impact">6. Quantitative Impact: 33x Speed &amp; 80% Compression</a></li>
+        <li><a href="#schema-evolution">7. Schema Evolution &amp; Backward Compatibility</a></li>
+        <li><a href="#engineering-verdict">8. First-Principles Summary &amp; Design Lessons</a></li>
+      </ul>
+      <div class="download-box" style="margin-top: 2rem; padding: 1rem; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-surface);">
+        <div style="font-weight: 600; font-size: 0.85rem; margin-bottom: 0.5rem;">Companion Artifact</div>
+        <a href="../Docs/Jira_JSON_to_Protobuf_Migration_Technical_Breakdown.pdf" target="_blank" download class="btn-primary" style="display: block; text-align: center; font-size: 0.8rem; padding: 0.5rem;">
+          📥 Download 3-Page PDF
+        </a>
+      </div>
+    </aside>
+
+    <article class="article-content">
+      <section id="jira-cache-context">
+        <h2>1. Context: Jira's Heavy Caching Tier</h2>
+        <p>
+          Atlassian Jira is the world's most widely adopted enterprise project tracking platform. Inside Jira, an "Issue" is a deeply rich, highly flexible domain entity containing dozens of standard fields (summary, description, status, reporter, assignee, timestamps) and potentially hundreds of custom fields configured by enterprise customers.
+        </p>
+        <p>
+          To serve millions of concurrent developers viewing boards, filtering backlogs, and triggering automation rules with low latency, Jira relies on a colossal distributed caching tier (primarily <strong>Memcached</strong> and <strong>Redis</strong>). Rather than querying relational databases on every page view, full issue documents are pre-serialized and cached in memory.
+        </p>
+        <p>
+          Historically, Jira serialized all cached entities as <strong>JSON (JavaScript Object Notation)</strong> strings. As Jira scaled into tens of millions of active cloud users, the serialization format itself became the primary system bottleneck.
+        </p>
+      </section>
+
+      <section id="json-overhead-tax">
+        <h2>2. The Hidden Tax of JSON at Scale</h2>
+        <p>
+          JSON is human-readable, flexible, and ubiquitous in web development. However, for internal high-throughput caching and inter-service RPCs, JSON imposes a severe infrastructural tax:
+        </p>
+
+        <div class="mermaid-box">
+          <pre class="mermaid">
+flowchart TD
+    subgraph "The Four Taxes of JSON at Scale"
+        T1["1. String Footprint Tax: Repeated keys ('issue_id', 'created_at') duplicated in every row"]
+        T2["2. Parsing CPU Tax: Scanning every character, escaping quotes, ASCII-to-integer conversion"]
+        T3["3. Memory Allocation Tax: Spawning millions of transient String objects, triggering JVM GC churn"]
+        T4["4. Cache Eviction Tax: Bloated payload sizes exhaust Memcached RAM, driving cache miss rates"]
+    end
+          </pre>
+        </div>
+
+        <div class="note-box alert alert-warning">
+          <strong>The Repetition Inefficiency:</strong>
+          In JSON, field names are repeated verbatim in every cached record:
+          <pre><code class="language-json">{
+  "issue_id": 1098234,
+  "project_key": "PROJ",
+  "issue_type_id": 3,
+  "status_category": "IN_PROGRESS",
+  "created_at": "2026-10-25T14:30:00Z"
+}</code></pre>
+          In a 100-field Jira issue, <strong>over 60% of the byte payload consists solely of repetitive JSON key strings and punctuation</strong> (<code>""</code>, <code>:</code>, <code>,</code>, <code>{}</code>), rather than the actual business values!
+        </div>
+      </section>
+
+      <section id="protobuf-mechanics">
+        <h2>3. Anatomy of Protocol Buffers (Protobuf)</h2>
+        <p>
+          Google's <strong>Protocol Buffers (Protobuf)</strong> is a language-neutral, platform-neutral binary serialization format designed specifically for compact storage and ultra-fast serialization.
+        </p>
+        <p>
+          Unlike JSON, Protobuf relies on a strictly typed, ahead-of-time compiled schema:
+        </p>
+        <pre><code class="language-protobuf">syntax = "proto3";
+
+package atlassian.jira;
+
+message JiraIssueDocument {
+  int64 issue_id = 1;
+  string project_key = 2;
+  int32 issue_type_id = 3;
+  string status_category = 4;
+  int64 created_at_epoch_ms = 5;
+  repeated CustomFieldEntry custom_fields = 6;
+}
+
+message CustomFieldEntry {
+  int32 field_id = 1;
+  string string_value = 2;
+  int64 numeric_value = 3;
+}</code></pre>
+        <p>
+          Notice the integer field numbers (<code>= 1;</code>, <code>= 2;</code>). During serialization, Protobuf completely discards the field name strings (<code>"issue_id"</code>, <code>"project_key"</code>) and replaces them with compact 1-byte integer tags!
+        </p>
+      </section>
+
+      <section id="binary-encoding-internals">
+        <h2>4. Binary Internals: Varints &amp; Tag-Length-Value</h2>
+        <p>
+          How does Protobuf achieve such extreme compactness and speed?
+        </p>
+
+        <h3>1. Variable-Length Quantities (Varints)</h3>
+        <p>
+          Standard 64-bit integers in Java or JSON always consume 8 bytes (or up to 19 ASCII characters in JSON, e.g. <code>"1098234"</code> = 7 bytes + quotes). Protobuf uses <strong>Varints</strong>:
+        </p>
+        <ul>
+          <li>Integers are broken into 7-bit chunks.</li>
+          <li>The 8th bit (Most Significant Bit, MSB) is a continuation flag ($1 =$ more bytes follow, $0 =$ last byte).</li>
+          <li>Small integers (e.g. status ID $= 3$) consume <strong>exactly 1 single byte</strong> instead of 4 or 8 bytes.</li>
+        </ul>
+
+        <h3>2. Tag-Length-Value (TLV) Wire Format</h3>
+        <p>
+          Every field in a Protobuf binary stream is packed as:
+          $$\text{Tag} = (\text{Field Number} \ll 3) \mid \text{Wire Type}$$
+          For example, field number $1$ with wire type $0$ (Varint) is represented by the byte <code>0x08</code>. The parser reads the tag, knows the exact byte length, and deserializes the value directly into native memory structures without scanning characters or allocating temporary strings.
+        </p>
+
+        <div class="mermaid-box">
+          <pre class="mermaid">
+graph LR
+    subgraph "JSON Serialization: 135 Bytes"
+        J_RAW["{\"issue_id\":1098234,\"status\":3,\"project\":\"PROJ\"}"]
+    end
+
+    subgraph "Protobuf Binary Stream: 18 Bytes (87% Smaller!)"
+        P1["Tag: 0x08 | Varint: 0xBA 0x8F 0x43"]
+        P2["Tag: 0x10 | Varint: 0x03"]
+        P3["Tag: 0x1A | Len: 0x04 | ASCII: 'PROJ'"]
+        P1 --> P2 --> P3
+    end
+          </pre>
+        </div>
+      </section>
+
+      <section id="migration-strategy">
+        <h2>5. Zero-Downtime Rollout: The 3-State Shadow Pattern</h2>
+        <p>
+          Jira's caching tier processes hundreds of thousands of operations per second across enterprise customers. A single corrupted field during deserialization would render issue boards blank. Atlassian designed a rigorous <strong>Three-State Feature Flag Rollout</strong>:
+        </p>
+
+        <div class="mermaid-box">
+          <pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant App as Jira Application Worker
+    participant Cache as Memcached / Redis Tier
+    participant Shadow as Async Shadow Comparator
+
+    Note over App,Cache: Phase 1: JSON_ONLY (Baseline State)
+    App->>Cache: Read/Write JSON strings only
+
+    Note over App,Cache: Phase 2: DUAL_WRITE_CHECK (Shadow Verification)
+    App->>Cache: Write BOTH JSON and Protobuf binaries to cache
+    App->>Cache: Read JSON (Primary active response)
+    App->>Shadow: Async dispatch: Deserialize Protobuf binary
+    Shadow->>Shadow: Deep compare Protobuf object vs JSON object
+    Note over Shadow: Assert: (checksum(JSON) == checksum(Protobuf))
+    Shadow-->>App: Emit metrics (Log discrepancies; 0 user impact)
+
+    Note over App,Cache: Phase 3: PROTOBUF_ONLY (Target Production State)
+    App->>Cache: Read/Write Protobuf binaries exclusively
+    Note over App,Cache: Deprecate and evict legacy JSON strings
+          </pre>
+        </div>
+
+        <p>
+          During <strong>Phase 2 (DUAL_WRITE_CHECK)</strong>, the shadow verification pipeline ran millions of comparisons over several weeks. Any subtle serialization bug (e.g., timezone precision differences in ISO timestamps or floating-point rounding) was caught and fixed with zero customer impact.
+        </p>
+      </section>
+
+      <section id="performance-impact">
+        <h2>6. Quantitative Impact: 33x Speed &amp; 80% Compression</h2>
+        <p>
+          When the feature flag was switched to <code>PROTOBUF_ONLY</code> in production, the engineering and financial metrics improved dramatically:
+        </p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Performance / Cost Vector</th>
+              <th>Legacy JSON Baseline</th>
+              <th>New Protobuf Architecture</th>
+              <th>Empirical Gain</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Payload Size</strong></td>
+              <td>Average $45\text{ KB}$ per issue document</td>
+              <td>Average $9\text{ KB}$ per issue document</td>
+              <td><strong>80% reduction in data size</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Deserialization Speed</strong></td>
+              <td>$\approx 1.2\text{ ms}$ per issue parse</td>
+              <td>$\approx 0.036\text{ ms}$ ($36\text{ }\mu\text{s}$)</td>
+              <td><strong>33x faster deserialization</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Caching Tier CPU Usage</strong></td>
+              <td>High CPU utilization on Memcached nodes</td>
+              <td>Drastic drop in serialization CPU overhead</td>
+              <td><strong>75% reduction in CPU consumption</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Infrastructure &amp; Cache Costs</strong></td>
+              <td>$100\%$ baseline cloud expenditure</td>
+              <td>$45\%$ expenditure (fewer nodes required)</td>
+              <td><strong>55% direct cloud cost reduction</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Cache Eviction Rate</strong></td>
+              <td>Frequent evictions due to memory pressure</td>
+              <td>$5\times$ more issues fit into same RAM pool</td>
+              <td>Cache hit ratio increased from 91% to 98.5%</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="schema-evolution">
+        <h2>7. Schema Evolution &amp; Backward Compatibility</h2>
+        <p>
+          One of the biggest risks of binary serialization is breaking existing consumers when schemas change. Protobuf handles schema evolution with strict mathematical rules:
+        </p>
+        <ul>
+          <li><strong>Never Change Field Numbers:</strong> Field tags ($1, 2, 3$) are permanent identities. You can rename a field in code, but the field number must never change.</li>
+          <li><strong>Additive Changes Only:</strong> New fields must be added as optional or proto3 default fields. Older software reading new payloads simply ignores unrecognized tags without failing.</li>
+          <li><strong>Deprecation via <code>reserved</code>:</strong> When a field is retired, its tag and name are declared <code>reserved</code> to prevent accidental future reuse:
+            <pre><code class="language-protobuf">message JiraIssueDocument {
+  reserved 4, 12;
+  reserved "legacy_status_code", "deprecated_priority";
+}</code></pre>
+          </li>
+        </ul>
+      </section>
+
+      <section id="engineering-verdict">
+        <h2>8. First-Principles Summary &amp; Design Lessons</h2>
+        <ul>
+          <li><strong>Serialization Format is an Architectural Choice:</strong> JSON is optimal for external public APIs and human debugging, but internal microservices and high-throughput caches should almost never use text formats at scale.</li>
+          <li><strong>Binary Encoding Yields Compound Gains:</strong> An 80% payload reduction doesn't just save network bandwidth—it packs $5\times$ more data into caching RAM, improves CPU cache locality, drops garbage collection pauses, and slashes cloud spend.</li>
+          <li><strong>Shadow Verification Eliminates Migration Fear:</strong> Dual-writing with asynchronous shadow comparison is the gold standard for executing zero-downtime, zero-defect data format migrations.</li>
+        </ul>
+      </section>
+    </article>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-brand">
+        <h4>System Design Notes</h4>
+        <p>Production architecture breakdowns and low-level systems engineering dissections.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Explore</h5>
+        <ul>
+          <li><a href="../index.html">All Articles</a></li>
+          <li><a href="bitbucket-read-your-write-consistency.html">Bitbucket RYW Consistency</a></li>
+          <li><a href="atlassian-sidecar-pattern-latency-reduction.html">Atlassian Sidecar Pattern</a></li>
+          <li><a href="stripe-rate-limiter-architecture.html">Stripe Rate Limiter</a></li>
+        </ul>
+      </div>
+    </div>
+  </footer>
+
+  <script src="../theme.js"></script>
+</body>
+</html>

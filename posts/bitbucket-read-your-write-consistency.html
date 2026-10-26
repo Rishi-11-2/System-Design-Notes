@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>How Bitbucket Solved Read-Your-Writes Consistency & Cut Master DB Load by 50% — System Design Notes</title>
+  <meta name="description" content="Technical deep dive into Bitbucket's database architecture: solving Read-Your-Writes consistency across PostgreSQL read replicas using Write-Ahead Log (WAL) Log Sequence Numbers (LSNs) and cutting primary database load by 50%.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css">
+  <link rel="stylesheet" href="../blog-theme.css">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+  <div id="progress" aria-hidden="true"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">Articles</a></li>
+          <li><a href="../index.html#system-eval">Architecture Index</a></li>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="nav-gh">GitHub</a></li>
+        </ul>
+        <div class="swatches" role="group" aria-label="Colour theme">
+          <button class="swatch" data-set-theme="light"  style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+          <button class="swatch" data-set-theme="dark"   style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+          <button class="swatch" data-set-theme="sepia"  style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+        </div>
+        <button id="theme-toggle" class="theme-toggle" aria-label="Toggle Theme">
+          <span class="theme-icon">☀️</span>
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <header class="article-header">
+    <div class="article-header-inner">
+      <div class="post-category-badge">Database Engineering</div>
+      <h1 class="article-title">How Bitbucket Solved Read-Your-Writes Consistency &amp; Cut Master DB Load by 50%</h1>
+      <div class="article-meta">
+        <span>By Arpit Bhayani Dissection &amp; Bitbucket Database Engineering</span>
+        <span>•</span>
+        <span>October 2026</span>
+        <span>•</span>
+        <span>15 min read</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="article-body">
+    <aside class="toc-sidebar">
+      <div class="toc-title">Table of Contents</div>
+      <ul class="toc-list">
+        <li><a href="#master-overload">1. The Master Bottleneck &amp; Replication Lag</a></li>
+        <li><a href="#read-your-writes-anomaly">2. The Read-Your-Writes Consistency Anomaly</a></li>
+        <li><a href="#naive-solutions-fail">3. Why Naive Fixes (Sticky Routing &amp; Sleeps) Fail</a></li>
+        <li><a href="#lsn-mechanics">4. The LSN Solution: PostgreSQL WAL Mechanics</a></li>
+        <li><a href="#routing-architecture">5. End-to-End Dynamic Replica Routing Architecture</a></li>
+        <li><a href="#edge-cases-fallbacks">6. Handling Edge Cases, Lag Spikes &amp; Fallbacks</a></li>
+        <li><a href="#production-impact">7. Production Impact: 50% Master Load Reduction</a></li>
+        <li><a href="#engineering-verdict">8. First-Principles Summary &amp; Design Lessons</a></li>
+      </ul>
+      <div class="download-box" style="margin-top: 2rem; padding: 1rem; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-surface);">
+        <div style="font-weight: 600; font-size: 0.85rem; margin-bottom: 0.5rem;">Companion Artifact</div>
+        <a href="../Docs/Bitbucket_Read_Your_Write_Consistency_Technical_Breakdown.pdf" target="_blank" download class="btn-primary" style="display: block; text-align: center; font-size: 0.8rem; padding: 0.5rem;">
+          📥 Download 3-Page PDF
+        </a>
+      </div>
+    </aside>
+
+    <article class="article-content">
+      <section id="master-overload">
+        <h2>1. The Master Bottleneck &amp; Replication Lag</h2>
+        <p>
+          At Bitbucket—Atlassian's source code management and CI/CD platform—the database tier is the foundational source of truth for millions of repositories, pull requests, code reviews, and permissions. Like most relational systems, Bitbucket is backed by a <strong>Primary-Replica (Master-Follower) PostgreSQL cluster</strong>.
+        </p>
+        <p>
+          In theory, read replicas provide horizontal scalability:
+        </p>
+        <ul>
+          <li>All state mutations (<code>INSERT</code>, <code>UPDATE</code>, <code>DELETE</code>) are handled exclusively by the single Primary (Master) node.</li>
+          <li>The Primary streams Write-Ahead Log (WAL) records asynchronously to multiple Read Replicas.</li>
+          <li>All read queries (<code>SELECT</code>) are routed to the replica fleet, offloading work from the primary.</li>
+        </ul>
+        <p>
+          However, in production reality, <strong>asynchronous replication lag</strong> (even just 50 to 200 milliseconds) causes devastating user experience bugs. To avoid these bugs, engineers often route all "critical" read queries back to the Primary database. Over time, the Primary becomes saturated with reads, causing CPU spikes, connection pool starvation, and database-wide slowdowns.
+        </p>
+      </section>
+
+      <section id="read-your-writes-anomaly">
+        <h2>2. The Read-Your-Writes Consistency Anomaly</h2>
+        <p>
+          The core user-facing bug that prevented Bitbucket from using read replicas is known as the <strong>Read-Your-Writes Consistency Anomaly</strong> (or <em>Read-After-Write Inconsistency</em>):
+        </p>
+
+        <div class="mermaid-box">
+          <pre class="mermaid">
+sequenceDiagram
+    autonumber
+    actor Dev as Developer
+    participant Web as Bitbucket App Server
+    participant Primary as PostgreSQL Primary
+    participant Replica as PostgreSQL Read Replica (Lag = 150ms)
+
+    Dev->>Web: 1. Submit Pull Request Comment ("LGTM, merging now")
+    Web->>Primary: 2. INSERT INTO pr_comments (id, text, ...)
+    Primary-->>Web: 3. Commit Successful (t = 0ms)
+    Web-->>Dev: 4. HTTP 200 OK
+    Note over Primary,Replica: WAL Streaming in flight... (150ms lag)
+    Dev->>Web: 5. Page Auto-Refreshes / Fetches Comment List (t = 20ms)
+    Web->>Replica: 6. SELECT * FROM pr_comments WHERE pr_id = 42
+    Note over Replica: Replica has NOT replayed the comment yet!
+    Replica-->>Web: 7. Returns empty list / missing comment
+    Web-->>Dev: 8. Renders page without the comment!
+    Note over Dev: Developer panics: "Did my comment post fail?!"
+          </pre>
+        </div>
+
+        <p>
+          This anomaly completely undermines user trust. If a user merges a pull request, updates branch protection rules, or comments on an issue, and the UI immediately renders stale data, users resubmit forms, duplicate comments, or assume the platform dropped their data.
+        </p>
+      </section>
+
+      <section id="naive-solutions-fail">
+        <h2>3. Why Naive Fixes (Sticky Routing &amp; Sleeps) Fail</h2>
+        <p>
+          Before finding the optimal solution, teams frequently experiment with naive heuristics that break down at scale:
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>Heuristic Strategy</th>
+              <th>How It Works</th>
+              <th>Why It Fails in Production</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Artificial Client Sleep</strong></td>
+              <td>Frontend waits 500ms before refreshing the view.</td>
+              <td>Terrible user UX; fragile. During large batch writes, replication lag can spike to 2 seconds, still returning stale data.</td>
+            </tr>
+            <tr>
+              <td><strong>Time-Based Sticky Routing</strong></td>
+              <td>After any write, force all reads from that user to hit Primary for $N$ seconds (e.g. 10s).</td>
+              <td>Overloads the Primary! Active developers who commit code frequently end up having 100% of their reads pinned to the Primary, defeating replication offload.</td>
+            </tr>
+            <tr>
+              <td><strong>Route Everything to Primary</strong></td>
+              <td>Primary handles all writes and all sensitive reads.</td>
+              <td>Primary CPU hits 100% saturation; catastrophic database failure during peak traffic.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="lsn-mechanics">
+        <h2>4. The LSN Solution: PostgreSQL WAL Mechanics</h2>
+        <p>
+          Bitbucket solved this elegantly by grounding routing in the physical mechanics of the PostgreSQL engine: <strong>Log Sequence Numbers (LSNs)</strong>.
+        </p>
+        <p>
+          In PostgreSQL, every database modification appends a record to the <strong>Write-Ahead Log (WAL)</strong>. The position in the WAL is represented as a monotonically increasing 64-bit integer called the <strong>Log Sequence Number (LSN)</strong> (e.g. <code>16/B374D848</code>).
+        </p>
+
+        <div class="note-box alert alert-success">
+          <strong>The Mathematical Invariant:</strong>
+          Let $\text{LSN}_{\text{write}}$ be the WAL position generated when User $U$ commits a write on the Primary.
+          Let $\text{LSN}_{\text{replay}}^{(R)}$ be the current WAL position successfully replayed by Read Replica $R$.
+          $$\text{If } \text{LSN}_{\text{replay}}^{(R)} \ge \text{LSN}_{\text{write}} \implies \text{Replica } R \text{ is GUARANTEED to have User } U\text{'s write!}$$
+        </div>
+
+        <p>
+          If $\text{LSN}_{\text{replay}}^{(R)} \ge \text{LSN}_{\text{write}}$, the query can safely execute against Replica $R$ with <strong>100% mathematical guarantee of read-your-writes consistency</strong>, without touching the Primary!
+        </p>
+      </section>
+
+      <section id="routing-architecture">
+        <h2>5. End-to-End Dynamic Replica Routing Architecture</h2>
+        <p>
+          Bitbucket implemented an intelligent proxy and session tracking middleware:
+        </p>
+
+        <div class="mermaid-box">
+          <pre class="mermaid">
+flowchart TD
+    subgraph "Client Layer"
+        USER[User Browser / Git Client]
+    end
+
+    subgraph "Application & Routing Layer"
+        ROUTER[Smart Database Router]
+        COOKIE[(Client Cookie / Token: last_written_lsn)]
+    end
+
+    subgraph "Database Cluster"
+        PRI[(PostgreSQL Primary)]
+        R1[(Read Replica 1)]
+        R2[(Read Replica 2)]
+        R3[(Read Replica 3)]
+    end
+
+    USER -->|1. Write Mutation| ROUTER
+    ROUTER -->|2. Execute Write| PRI
+    PRI -->|3. Return LSN: 16/B374D848| ROUTER
+    ROUTER -->|4. Return Response + Set LSN Cookie| USER
+
+    USER -->|5. Subsequent Read + Pass LSN Cookie| ROUTER
+    ROUTER -->|6. Poll pg_last_wal_replay_lsn| R1 & R2 & R3
+    ROUTER -->|7. Replica 2 has replayed >= LSN!| R2
+    R2 -->|8. Fresh Data Returned| USER
+          </pre>
+        </div>
+
+        <h3>PostgreSQL Queries Used Under the Hood:</h3>
+        <p>
+          1. On the Primary after committing a write transaction:
+        </p>
+        <pre><code class="language-sql">SELECT pg_current_wal_lsn();
+-- Returns e.g.: '0/15E8438'</code></pre>
+
+        <p>
+          2. On each Read Replica during connection health check / telemetry:
+        </p>
+        <pre><code class="language-sql">SELECT pg_last_wal_replay_lsn();
+-- Returns e.g.: '0/15E8500' (Replay position)</code></pre>
+
+        <p>
+          3. Fast comparison using PostgreSQL native diff:
+        </p>
+        <pre><code class="language-sql">SELECT pg_wal_lsn_diff(pg_last_wal_replay_lsn(), '0/15E8438'::pg_lsn);
+-- If result >= 0, replica is strictly synchronized with the user's write!</code></pre>
+      </section>
+
+      <section id="edge-cases-fallbacks">
+        <h2>6. Handling Edge Cases, Lag Spikes &amp; Fallbacks</h2>
+        <p>
+          What happens when a large bulk write stalls replication across all replicas?
+        </p>
+        <ul>
+          <li><strong>Replica Selection:</strong> The router maintains real-time telemetry on the replay LSN of all replicas. It immediately selects a replica whose $\text{LSN}_{\text{replay}} \ge \text{LSN}_{\text{user}}$.</li>
+          <li><strong>Micro-Wait / Catch-up:</strong> If all replicas lag by a few milliseconds, the router can optionally wait up to a configurable threshold (e.g. 50 ms) for the closest replica to catch up before falling back.</li>
+          <li><strong>Graceful Fallback to Primary:</strong> If no replica catches up within the safety window (due to a network partition or heavy DDL lock), the router routes the query to the Primary database as a safe fallback.</li>
+          <li><strong>Token Expiration:</strong> The user's LSN token is given a short TTL (e.g. 10 to 30 seconds). Once replication has undeniably surpassed that LSN everywhere, the token is discarded and the user resumes normal round-robin read balancing.</li>
+        </ul>
+      </section>
+
+      <section id="production-impact">
+        <h2>7. Production Impact: 50% Master Load Reduction</h2>
+        <p>
+          By implementing LSN-based read-your-writes routing, Bitbucket transformed its database capacity:
+        </p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Architecture Metric</th>
+              <th>Before (Heuristic / Primary Reads)</th>
+              <th>After (LSN Replica Routing)</th>
+              <th>System Impact</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Primary DB Query Load</strong></td>
+              <td>100% saturation during peak hours</td>
+              <td><strong>50% reduction in query QPS</strong></td>
+              <td>Freed massive CPU headroom for write throughput</td>
+            </tr>
+            <tr>
+              <td><strong>Read-Your-Writes Inconsistencies</strong></td>
+              <td>Frequent customer reports of "missing data"</td>
+              <td><strong>Zero reported consistency anomalies</strong></td>
+              <td>Mathematically guaranteed causal consistency</td>
+            </tr>
+            <tr>
+              <td><strong>Replica Utilization</strong></td>
+              <td>Underutilized; rejected for sensitive reads</td>
+              <td><strong>Evenly loaded across read fleet</strong></td>
+              <td>Full return on investment for replica infrastructure</td>
+            </tr>
+            <tr>
+              <td><strong>Database P99 Latency</strong></td>
+              <td>Spiked on primary connection contention</td>
+              <td>Smooth, predictable sub-10ms response times</td>
+              <td>Improved end-to-end user experience</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="engineering-verdict">
+        <h2>8. First-Principles Summary &amp; Design Lessons</h2>
+        <ul>
+          <li><strong>Ground Routing in Storage Engine Primitives:</strong> Never guess replication state with arbitrary timers or thread sleeps. Databases already track write order with physical precision (Postgres LSNs, MySQL GTIDs, MongoDB cluster times).</li>
+          <li><strong>Causal Consistency at Low Cost:</strong> Full serializability across distributed replicas is expensive, but <em>Read-Your-Writes (Causal) consistency</em> can be achieved almost for free by passing transaction progress tokens to clients.</li>
+          <li><strong>Session-Scoped Tokens Preserve Scalability:</strong> Storing the user's latest write LSN in a lightweight client cookie or header prevents global state coordination, letting stateless routers make instant local decisions.</li>
+        </ul>
+      </section>
+    </article>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-brand">
+        <h4>System Design Notes</h4>
+        <p>Production architecture breakdowns and low-level systems engineering dissections.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Explore</h5>
+        <ul>
+          <li><a href="../index.html">All Articles</a></li>
+          <li><a href="atlassian-sidecar-pattern-latency-reduction.html">Atlassian Sidecar Pattern</a></li>
+          <li><a href="stripe-rate-limiter-architecture.html">Stripe Rate Limiter</a></li>
+          <li><a href="github-database-sharding-monolith.html">GitHub Database Sharding</a></li>
+        </ul>
+      </div>
+    </div>
+  </footer>
+
+  <script src="../theme.js"></script>
+</body>
+</html>
