@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Distributed Multi-Key Transactions in DragonflyDB's Shared-Nothing Architecture — System Design Notes</title>
+  <meta name="description" content="Technical deep dive into DragonflyDB's shared-nothing transactional architecture: how Roman Gershman adapted Very Lightweight Locking (VLL) and cooperative fibers to achieve atomic multi-key transactions across CPU cores without global locks.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css">
+  <link rel="stylesheet" href="../blog-theme.css">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+  <div id="progress" aria-hidden="true"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">Articles</a></li>
+          <li><a href="../index.html#system-eval">Architecture Index</a></li>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="nav-gh">GitHub</a></li>
+        </ul>
+        <div class="swatches" role="group" aria-label="Colour theme">
+          <button class="swatch" data-set-theme="light"  style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+          <button class="swatch" data-set-theme="dark"   style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+          <button class="swatch" data-set-theme="sepia"  style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+        </div>
+        <button id="theme-toggle" class="theme-toggle" aria-label="Toggle Theme">
+          <span class="theme-icon">☀️</span>
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <header class="article-header">
+    <div class="article-header-inner">
+      <div class="post-category-badge">Database Internals</div>
+      <h1 class="article-title">Distributed Multi-Key Transactions in DragonflyDB's Shared-Nothing Architecture</h1>
+      <div class="article-meta">
+        <span>By Arpit Bhayani Dissection &amp; Roman Gershman Systems Design</span>
+        <span>•</span>
+        <span>October 2026</span>
+        <span>•</span>
+        <span>17 min read</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="article-body">
+    <aside class="toc-sidebar">
+      <div class="toc-title">Table of Contents</div>
+      <ul class="toc-list">
+        <li><a href="#shared-nothing-paradox">1. The Shared-Nothing Paradox: Parallelism vs Multi-Key Atomicity</a></li>
+        <li><a href="#redis-vs-cluster">2. The Redis Trade-off: Single-Thread Simplicity vs Cluster Hash Tags</a></li>
+        <li><a href="#vll-adaptation">3. Very Lightweight Locking (VLL) on Cooperative Fibers</a></li>
+        <li><a href="#coordinator-flow">4. The Transaction Lifecycle: From Ingress to Shard Scheduling</a></li>
+        <li><a href="#lock-queuing-fibers">5. Shard-Local Lock Queues &amp; Non-Blocking Fiber Yielding</a></li>
+        <li><a href="#deadlock-prevention">6. Global Serializability &amp; Monotonic TxId Ordering</a></li>
+        <li><a href="#architectural-comparison">7. Comparison: Redis vs Redis Cluster vs DragonflyDB</a></li>
+        <li><a href="#engineering-verdict">8. First-Principles Summary &amp; Design Lessons</a></li>
+      </ul>
+      <div class="download-box" style="margin-top: 2rem; padding: 1rem; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-surface);">
+        <div style="font-weight: 600; font-size: 0.85rem; margin-bottom: 0.5rem;">Companion Artifact</div>
+        <a href="../Docs/DragonflyDB_Shared_Nothing_Transactions_Technical_Breakdown.pdf" target="_blank" download class="btn-primary" style="display: block; text-align: center; font-size: 0.8rem; padding: 0.5rem;">
+          📥 Download 3-Page PDF
+        </a>
+      </div>
+    </aside>
+
+    <article class="article-content">
+      <section id="shared-nothing-paradox">
+        <h2>1. The Shared-Nothing Paradox: Parallelism vs Multi-Key Atomicity</h2>
+        <p>
+          In modern database architecture, the <strong>shared-nothing, thread-per-core model</strong> is widely regarded as the ultimate engine for vertical scalability. Instead of sharing a monolithic hash table protected by fine-grained mutexes or spinlocks, the keyspace is strictly partitioned into independent <strong>shards</strong>. Each shard is exclusively bound to a dedicated CPU thread.
+        </p>
+        <p>
+          Because thread $T_i$ only ever reads and mutates data residing in shard $S_i$, <strong>all locks, memory barriers, and CPU cache-coherency ping-pong traffic are eliminated</strong> on the single-key data path.
+        </p>
+        <p>
+          However, this design encounters an architectural brick wall the moment an application executes a <strong>multi-key operation</strong>:
+        </p>
+        <pre><code class="language-bash"># Multi-key atomic batching
+MSET user:100:balance 450 user:200:balance 820
+# Transaction block
+MULTI
+SADD group:engineers user:100
+INCR counter:engineers_total
+EXEC</code></pre>
+        <p>
+          If <code>user:100:balance</code> maps to Shard 1 (Thread 1) and <code>user:200:balance</code> maps to Shard 4 (Thread 4), how can a shared-nothing system execute the command atomically, with strict serializability, without locking the entire database or introducing cross-thread deadlocks?
+        </p>
+      </section>
+
+      <section id="redis-vs-cluster">
+        <h2>2. The Redis Trade-off: Single-Thread Simplicity vs Cluster Hash Tags</h2>
+        <p>
+          To understand DragonflyDB's innovation, we must analyze how Redis handles multi-key commands:
+        </p>
+        <ul>
+          <li><strong>Standalone Redis:</strong> Salvatore Sanfilippo chose a single-threaded event loop specifically to sidestep concurrency control. Because all commands execute sequentially on one CPU core, multi-key commands and <code>MULTI/EXEC</code> transactions are trivially atomic. However, this caps throughput to a single CPU core (typically $100\text{k} - 150\text{k}\text{ QPS}$).</li>
+          <li><strong>Redis Cluster:</strong> Redis Cluster partitions the keyspace across 16,384 hash slots. Crucially, Redis Cluster <strong>strictly forbids multi-key commands spanning multiple slots</strong>. If keys map to different slots, Redis returns a <code>CROSSSLOT Keys in request don't hash to the same slot</code> error! Developers are forced to artificially cluster keys using Hash Tags (e.g. <code>{tenant_42}:user</code> and <code>{tenant_42}:account</code>), which creates devastating hot-slot skews under uneven tenant loads.</li>
+        </ul>
+
+        <div class="note-box alert alert-warning">
+          <strong>The DragonflyDB Challenge:</strong> DragonflyDB eliminates the single-thread throughput ceiling by scaling across 64+ CPU cores, while simultaneously supporting true multi-key atomic transactions across arbitrary shards without requiring Hash Tags!
+        </div>
+      </section>
+
+      <section id="vll-adaptation">
+        <h2>3. Very Lightweight Locking (VLL) on Cooperative Fibers</h2>
+        <p>
+          To solve cross-shard atomicity within a shared-nothing architecture, Roman Gershman adapted the <strong>Very Lightweight Locking (VLL)</strong> algorithm (originally proposed by Ren, Thomson, and Abadi in VLDB 2012) and merged it natively with <strong>user-space cooperative fibers</strong>.
+        </p>
+
+        <div class="mermaid">
+sequenceDiagram
+    autonumber
+    actor Client
+    participant Coord as Coordinator Fiber (Client Thread)
+    participant S1 as Shard Thread 1 (Key A)
+    participant S2 as Shard Thread 2 (Key B)
+
+    Client->>Coord: MSET KeyA ValA KeyB ValB
+    Coord->>Coord: Compute Shards: S1 owns KeyA, S2 owns KeyB
+    Coord->>Coord: Assign Global Monotonic TxId
+    
+    par Async Schedule Phase
+        Coord->>S1: ScheduleInShard(TxId, LockType::WRITE, KeyA)
+        Coord->>S2: ScheduleInShard(TxId, LockType::WRITE, KeyB)
+    end
+
+    Note over Coord: Fiber yields CPU while waiting for lock ACKs
+    
+    S1-->>Coord: Lock Acquired on KeyA
+    S2-->>Coord: Lock Acquired on KeyB
+    Note over Coord: All Locks Granted -> Resume Fiber
+
+    par Parallel Execution Phase
+        Coord->>S1: ExecuteOperation(KeyA, ValA)
+        Coord->>S2: ExecuteOperation(KeyB, ValB)
+    end
+
+    S1-->>Coord: Executed OK
+    S2-->>Coord: Executed OK
+
+    par Release Phase
+        Coord->>S1: ReleaseLock(TxId, KeyA)
+        Coord->>S2: ReleaseLock(TxId, KeyB)
+    end
+
+    Coord-->>Client: OK
+        </div>
+      </section>
+
+      <section id="coordinator-flow">
+        <h2>4. The Transaction Lifecycle: From Ingress to Shard Scheduling</h2>
+        <p>
+          Every client connection in Dragonfly is handled by a lightweight <strong>cooperative fiber</strong> running on an assigned thread. When a multi-key command arrives, that fiber assumes the role of <strong>Transaction Coordinator</strong>:
+        </p>
+        <ol>
+          <li><strong>Key Extraction &amp; Shard Mapping:</strong> The coordinator parses the command keys, hashes each key to its corresponding shard, and groups the keys by target shard ID.</li>
+          <li><strong>Monotonic Transaction ID Allocation:</strong> A globally unique, monotonically increasing <code>TxId</code> is generated. This establishes a strict, deterministic ordering across all participating threads.</li>
+          <li><strong>Lock Type Classification:</strong> Commands are classified into Intent Read or Intent Write locks. For example, <code>MGET</code> requires shared read locks; <code>MSET</code> requires exclusive write locks.</li>
+        </ol>
+      </section>
+
+      <section id="lock-queuing-fibers">
+        <h2>5. Shard-Local Lock Queues &amp; Non-Blocking Fiber Yielding</h2>
+        <p>
+          Traditional distributed transactions lock resources using blocking mutexes or RPCs, stalling the execution thread. In DragonflyDB, <strong>a shard thread never blocks an OS thread</strong>:
+        </p>
+        <ul>
+          <li><strong>Shard-Local Lock Table:</strong> Each shard thread maintains a lightweight local lock table. When the coordinator sends a <code>ScheduleInShard</code> message, the shard thread checks if the key is currently locked.</li>
+          <li><strong>Instant Lock Acquisition:</strong> If no conflicting transaction holds the key, the lock is acquired immediately, and an acknowledgment is signaled to the coordinator.</li>
+          <li><strong>Wait Queue Insertion:</strong> If a conflicting transaction is currently holding the key, the new transaction is appended to that key's FIFO wait list inside the shard.</li>
+          <li><strong>Cooperative Fiber Yielding:</strong> While the coordinator fiber waits for lock confirmations across all involved shards, it <strong>yields execution</strong> to the Helio runtime scheduler. The underlying CPU core immediately runs other independent client fibers! There is zero kernel context switching or idle CPU time.</li>
+        </ul>
+      </section>
+
+      <section id="deadlock-prevention">
+        <h2>6. Global Serializability &amp; Monotonic TxId Ordering</h2>
+        <p>
+          In multi-threaded distributed locking, acquiring locks across multiple partitions introduces the classic Dining Philosophers deadlock scenario: Transaction 1 locks Key A on Shard 1 and waits for Key B on Shard 2, while Transaction 2 locks Key B on Shard 2 and waits for Key A on Shard 1.
+        </p>
+        <div class="note-box alert alert-success">
+          <strong>Deadlock Freedom via Deterministic TxId Ordering:</strong> DragonflyDB guarantees deadlock-free execution by sorting and queuing transactions in strict monotonic <code>TxId</code> order across all shard lock tables.
+        </div>
+        <p>
+          Because every shard enforces the exact same total order based on <code>TxId</code>, circular wait conditions are mathematically impossible. Transactions execute in serializable order without requiring a heavyweight deadlock detection cycle or rollback/abort mechanisms!
+        </p>
+      </section>
+
+      <section id="architectural-comparison">
+        <h2>7. Comparison: Redis vs Redis Cluster vs DragonflyDB</h2>
+        <table class="comparison-table">
+          <thead>
+            <tr>
+              <th>Dimension</th>
+              <th>Redis Standalone</th>
+              <th>Redis Cluster</th>
+              <th>DragonflyDB</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Execution Model</strong></td>
+              <td>Single-threaded event loop</td>
+              <td>Sharded cluster across independent processes</td>
+              <td>Multi-threaded shared-nothing (fibers per core)</td>
+            </tr>
+            <tr>
+              <td><strong>Multi-Key Operations</strong></td>
+              <td>Supported (limited to 1 CPU core)</td>
+              <td><strong>Forbidden across slots</strong> (CROSSSLOT error)</td>
+              <td><strong>Fully supported across arbitrary shards</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Data Distribution</strong></td>
+              <td>Monolithic memory space</td>
+              <td>16,384 slots across nodes</td>
+              <td>Hash partitioned across internal CPU shards</td>
+            </tr>
+            <tr>
+              <td><strong>Concurrency Control</strong></td>
+              <td>None (sequential execution)</td>
+              <td>None (restricted by slot boundaries)</td>
+              <td>Fiber-based Very Lightweight Locking (VLL)</td>
+            </tr>
+            <tr>
+              <td><strong>Throughput Ceiling</strong></td>
+              <td>$\approx 150\text{k QPS}$</td>
+              <td>Horizontal node scaling ($N \times 100\text{k}$)</td>
+              <td><strong>$4\text{M} - 6.4\text{M+ QPS}$ on a single server</strong></td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="engineering-verdict">
+        <h2>8. First-Principles Summary &amp; Design Lessons</h2>
+        <ul>
+          <li><strong>Shared-Nothing Does Not Mean Single-Key Only:</strong> By adapting lightweight intent locking (VLL) to inter-thread message passing, modern architectures can offer full multi-key atomicity without sacrificing thread isolation.</li>
+          <li><strong>Fibers Eliminate Lock Stalls:</strong> The true power of cooperative user-space fibers is decoupling concurrency from kernel threads. When a transaction waits for cross-shard locks, yielding allows the CPU to process thousands of ready queries without latency penalties.</li>
+          <li><strong>Deterministic Ordering Prevents Deadlocks:</strong> Monotonically increasing transaction identifiers eliminate the need for distributed deadlock detection algorithms and costly transaction rollbacks.</li>
+        </ul>
+      </section>
+    </article>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-brand">
+        <h4>System Design Notes</h4>
+        <p>Production architecture breakdowns and low-level systems engineering dissections.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Explore</h5>
+        <ul>
+          <li><a href="../index.html">All Articles</a></li>
+          <li><a href="dragonflydb-dashtable-internals.html">DragonflyDB DashTable Internals</a></li>
+          <li><a href="dragonflydb-bplus-tree-sorted-set.html">DragonflyDB B+ Tree Sorted Sets</a></li>
+          <li><a href="bitbucket-read-your-write-consistency.html">Bitbucket Read-Your-Write Consistency</a></li>
+        </ul>
+      </div>
+    </div>
+  </footer>
+
+  <script src="../theme.js"></script>
+</body>
+</html>

@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DragonflyDB Architecture Overview: Hitting 6.43M QPS with Fibers, Shared-Nothing Sharding &amp; Forkless Snapshots — System Design Notes</title>
+  <meta name="description" content="Technical deep dive into DragonflyDB's core architecture: how Roman Gershman achieved 6.43 million ops/sec using Helio fibers, shared-nothing thread-per-core sharding, DashTables, B+ Trees, and forkless point-in-time snapshotting.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css">
+  <link rel="stylesheet" href="../blog-theme.css">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+  <div id="progress" aria-hidden="true"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">Articles</a></li>
+          <li><a href="../index.html#system-eval">Architecture Index</a></li>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="nav-gh">GitHub</a></li>
+        </ul>
+        <div class="swatches" role="group" aria-label="Colour theme">
+          <button class="swatch" data-set-theme="light"  style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+          <button class="swatch" data-set-theme="dark"   style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+          <button class="swatch" data-set-theme="sepia"  style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+        </div>
+        <button id="theme-toggle" class="theme-toggle" aria-label="Toggle Theme">
+          <span class="theme-icon">☀️</span>
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <header class="article-header">
+    <div class="article-header-inner">
+      <div class="post-category-badge">Database Architecture</div>
+      <h1 class="article-title">DragonflyDB Architecture Overview: Hitting 6.43M QPS with Fibers, Shared-Nothing Sharding &amp; Forkless Snapshots</h1>
+      <div class="article-meta">
+        <span>By Arpit Bhayani Dissection &amp; Roman Gershman Systems Design</span>
+        <span>•</span>
+        <span>October 2026</span>
+        <span>•</span>
+        <span>18 min read</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="article-body">
+    <aside class="toc-sidebar">
+      <div class="toc-title">Table of Contents</div>
+      <ul class="toc-list">
+        <li><a href="#the-6m-benchmark">1. The 6.43 Million QPS Milestone &amp; Hardware Baseline</a></li>
+        <li><a href="#redis-limits">2. Why Redis Hits a Wall on Modern Multicore Hardware</a></li>
+        <li><a href="#helio-fiber-engine">3. Helio Engine: Cooperative Fibers &amp; Kernel Bypass</a></li>
+        <li><a href="#shared-nothing-sharding">4. Shared-Nothing Thread-per-Core Sharding</a></li>
+        <li><a href="#data-structures">5. Data Structures: DashTables &amp; B+ Trees vs Skiplists</a></li>
+        <li><a href="#forkless-snapshotting">6. Forkless Snapshotting: Ending the Copy-on-Write Tax</a></li>
+        <li><a href="#architectural-comparison">7. Engine Comparison: Redis vs KeyDB vs DragonflyDB</a></li>
+        <li><a href="#production-tradeoffs">8. Production Trade-Offs &amp; Architectural Verdict</a></li>
+      </ul>
+      <div class="download-box" style="margin-top: 2rem; padding: 1rem; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-surface);">
+        <div style="font-weight: 600; font-size: 0.85rem; margin-bottom: 0.5rem;">Companion Artifact</div>
+        <a href="../Docs/DragonflyDB_Architecture_Overview_6M_QPS_Technical_Breakdown.pdf" target="_blank" download class="btn-primary" style="display: block; text-align: center; font-size: 0.8rem; padding: 0.5rem;">
+          📥 Download 3-Page PDF
+        </a>
+      </div>
+    </aside>
+
+    <article class="article-content">
+      <section id="the-6m-benchmark">
+        <h2>1. The 6.43 Million QPS Milestone &amp; Hardware Baseline</h2>
+        <p>
+          In modern database engineering, the scaling debate has historically favored horizontal clustering over vertical scaling. However, modern cloud instances now feature 64 to 128 physical CPU cores, gigabytes of CPU cache, and terabytes of physical memory on a single motherboard.
+        </p>
+        <p>
+          <strong>DragonflyDB</strong>, co-founded by Roman Gershman, shattered conventional in-memory throughput records by clocking <strong>6.43 million operations per second (QPS)</strong> on a single AWS <code>c7gn.16xlarge</code> instance equipped with 64 AWS Graviton3 ARM Neoverse-V1 cores, while maintaining sub-millisecond P99 tail latency.
+        </p>
+        <div class="note-box alert alert-success">
+          <strong>The Scale Factor:</strong> A single DragonflyDB process delivers up to <strong>25x the throughput of standalone Redis</strong> and <strong>4x the throughput of multi-threaded KeyDB</strong>, while using $30\% - 40\%$ less physical memory and completely eliminating Copy-On-Write memory spikes.
+        </div>
+      </section>
+
+      <section id="redis-limits">
+        <h2>2. Why Redis Hits a Wall on Modern Multicore Hardware</h2>
+        <p>
+          Redis was architected in 2009 around a fundamental assumption: in-memory data access is so fast that network I/O and locking overhead would dominate CPU time. Salvatore Sanfilippo chose a single-threaded event loop utilizing <code>epoll</code> or <code>kqueue</code>.
+        </p>
+        <p>
+          On modern 64-core systems, this design reveals severe architectural ceilings:
+        </p>
+        <ul>
+          <li><strong>CPU Core Starvation:</strong> 63 out of 64 CPU cores sit completely idle while a single core maxes out at $100\%$ utilization around $120\text{k} - 150\text{k}\text{ QPS}$.</li>
+          <li><strong>Operational Cluster Complexity:</strong> To utilize 64 cores with Redis, infrastructure teams must deploy and manage a 64-node Redis Cluster, introducing cluster bus gossiping, slot migration headaches, client routing indirection, and <code>CROSSSLOT</code> command failures.</li>
+          <li><strong>Copy-on-Write (COW) Memory Doubling:</strong> When persisting data via RDB snapshots, Redis invokes the Linux <code>fork()</code> system call. Under heavy write traffic, page fault overhead and Copy-on-Write can double memory consumption ($100\text{ GB} \to 200\text{ GB}$), frequently triggering the Linux Out-Of-Memory (OOM) killer.</li>
+        </ul>
+      </section>
+
+      <section id="helio-fiber-engine">
+        <h2>3. Helio Engine: Cooperative Fibers &amp; Kernel Bypass</h2>
+        <p>
+          Rather than relying on OS threads (such as <code>pthread</code>), DragonflyDB is built on top of <strong>Helio</strong>, Roman Gershman's custom open-source C++ asynchronous runtime library.
+        </p>
+        <div class="mermaid">
+graph TD
+    ClientConn["100,000+ Concurrent Client TCP Sockets"] --> Ingress["Kernel Ingress (io_uring / epoll)"]
+    Ingress --> ThreadPool["Thread Pool (1 OS Thread Per Physical Core)"]
+    
+    subgraph CoreDomain["Thread-per-Core Domain (Thread i)"]
+        ThreadPool --> HelioSched["Helio Fiber Scheduler"]
+        HelioSched --> F1["Fiber 1 (Client A Session)"]
+        HelioSched --> F2["Fiber 2 (Client B Session)"]
+        HelioSched --> FN["Fiber N (Background Maintenance)"]
+        HelioSched --> ShardStorage["Shard i: DashTable + B+ Tree Storage Engine"]
+    end
+        </div>
+
+        <h3>Cooperative Green Threads vs OS Threads</h3>
+        <p>
+          Helio introduces <strong>fibers</strong> (user-space green threads) with tiny, segmented stacks ($\approx 16\text{ KB}$ vs. Linux thread defaults of $2\text{ MB} - 8\text{ MB}$).
+        </p>
+        <ul>
+          <li><strong>Microsecond Context Switches:</strong> Switching between fibers occurs entirely in user space by swapping CPU registers ($&lt; 50\text{ nanoseconds}$), bypassing the Linux kernel context switcher entirely.</li>
+          <li><strong>Non-Blocking Cooperative Scheduling:</strong> When a fiber waits for socket I/O, lock confirmation, or cross-shard messaging, it yields control back to the Helio scheduler. The underlying CPU core remains $100\%$ saturated servicing other ready client fibers.</li>
+          <li><strong>Advanced Asynchronous I/O:</strong> Helio natively leverages Linux <code>io_uring</code> (or <code>epoll</code> on older kernels) to batch socket reads and writes, minimizing kernel system call transitions.</li>
+        </ul>
+      </section>
+
+      <section id="shared-nothing-sharding">
+        <h2>4. Shared-Nothing Thread-per-Core Sharding</h2>
+        <p>
+          Multi-threaded databases often suffer from lock contention on a shared global dictionary. KeyDB, for example, adopted multi-threading by placing spinlocks around Redis's global hash table, which causes severe CPU cache-line bouncing and lock convoying under heavy concurrent mutations.
+        </p>
+        <p>
+          DragonflyDB avoids this entirely via <strong>shared-nothing, thread-per-core partitioning</strong>:
+        </p>
+        <ul>
+          <li><strong>Shard Isolation:</strong> The total keyspace is divided into $N$ shards, where $N$ matches the number of CPU cores. Thread $T_i$ exclusively owns Shard $S_i$.</li>
+          <li><strong>Zero Data Path Locks:</strong> Single-key queries (representing $\gt 95\%$ of production traffic) execute on the owning shard thread with zero locks, zero atomic instructions, and zero cache contention.</li>
+          <li><strong>Lock-Free Inter-Thread Message Passing:</strong> When threads need to coordinate, they communicate through lock-free ring buffers (SPSC queues) rather than mutating shared memory structures.</li>
+        </ul>
+      </section>
+
+      <section id="data-structures">
+        <h2>5. Data Structures: DashTables &amp; B+ Trees vs Skiplists</h2>
+        <p>
+          DragonflyDB completely modernizes the core in-memory data structures:
+        </p>
+
+        <h3>1. DashTable for Key-Value Dictionaries</h3>
+        <p>
+          As detailed in our DashTable deep dive, Dragonfly replaces Redis's linked-list separate chaining (<code>dictEntry</code>) with segmented open-addressing buckets aligned to 64-byte cache lines. Using 1-byte fingerprints, SIMD probing, dual-bucket routing, and stash overflow, DashTable cuts memory overhead by $30\% - 40\%$ and eliminates global rehashing stalls.
+        </p>
+
+        <h3>2. B+ Trees for Sorted Sets</h3>
+        <p>
+          Redis implements Sorted Sets (<code>ZSET</code>) using a combination of a hash table and a SkipList. While SkipLists are simple to implement, they suffer from terrible cache locality: every node is an individually allocated heap struct connected by probabilistic forward pointers.
+        </p>
+        <p>
+          DragonflyDB implements Sorted Sets using compact, cache-friendly <strong>B+ Trees</strong>. Each B+ Tree node packs multiple keys and scores into contiguous memory blocks, reducing pointer overhead by $60\%$ and maximizing L1/L2 cache prefetching during range scans (<code>ZRANGEBYSCORE</code>).
+        </p>
+      </section>
+
+      <section id="forkless-snapshotting">
+        <h2>6. Forkless Snapshotting: Ending the Copy-on-Write Tax</h2>
+        <p>
+          Point-in-time snapshotting (RDB backups) in Redis has long been an operational nightmare:
+        </p>
+        <div class="note-box alert alert-warning">
+          <strong>The Redis fork() Trap:</strong> Redis calls <code>fork()</code>, spawning a child process that shares memory via Copy-On-Write (COW). If an application mutates keys during the backup, the Linux kernel duplicates the modified $4\text{ KB}$ physical pages. Under heavy write traffic, this can double RAM consumption, spike disk page-fault latencies, and cause fatal OOM crashes.
+        </div>
+
+        <p>
+          DragonflyDB introduces a revolutionary <strong>Forkless Snapshotting Engine</strong>:
+        </p>
+
+        <div class="mermaid">
+sequenceDiagram
+    autonumber
+    actor Admin as Backup Trigger (BGSAVE)
+    participant Coord as Snapshot Coordinator
+    participant S1 as Shard 1 Fiber
+    participant S2 as Shard 2 Fiber
+    participant Disk as Streaming Disk Writer (O_DIRECT)
+
+    Admin->>Coord: Trigger Forkless Snapshot
+    Coord->>S1: Register Bucket-Level Snapshot State
+    Coord->>S2: Register Bucket-Level Snapshot State
+
+    par Shard-Local Serialization
+        S1->>S1: Serialize Buckets Incrementally
+        S2->>S2: Serialize Buckets Incrementally
+    end
+
+    Note over S1,S2: Writes during snapshot serialize target bucket BEFORE mutating (Bucket COW in user space)
+
+    S1->>Disk: Stream serialized blocks (via O_DIRECT)
+    S2->>Disk: Stream serialized blocks (via O_DIRECT)
+    Disk-->>Admin: Point-in-time Snapshot Completed (0% Memory Duplication)
+        </div>
+
+        <ul>
+          <li><strong>Bucket-Level User-Space Isolation:</strong> Rather than relying on coarse $4\text{ KB}$ OS page duplication, Dragonfly tracks snapshot state at the fine-grained <strong>bucket level</strong>.</li>
+          <li><strong>On-the-Fly User-Space Serialization:</strong> When a write modifies a bucket that has not yet been snapshotted, the shard thread serializes the bucket's pre-mutation state into a temporary memory sink, writes the update, and continues without blocking.</li>
+          <li><strong>Direct I/O Streaming (<code>O_DIRECT</code>):</strong> A dedicated background <code>SaveBody</code> fiber streams serialized chunks directly to disk using <code>O_DIRECT</code>, completely bypassing the Linux page cache and preventing OS memory buffer bloat.</li>
+        </ul>
+      </section>
+
+      <section id="architectural-comparison">
+        <h2>7. Engine Comparison: Redis vs KeyDB vs DragonflyDB</h2>
+        <table class="comparison-table">
+          <thead>
+            <tr>
+              <th>Feature / Metric</th>
+              <th>Redis 7.x (Standalone)</th>
+              <th>KeyDB (Multi-Threaded)</th>
+              <th>DragonflyDB</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Threading Architecture</strong></td>
+              <td>Single-threaded event loop</td>
+              <td>Multi-threaded with global spinlocks</td>
+              <td>Shared-nothing thread-per-core (Helio fibers)</td>
+            </tr>
+            <tr>
+              <td><strong>64-Core Throughput</strong></td>
+              <td>$\approx 150\text{k QPS}$ (1 core used)</td>
+              <td>$\approx 1.5\text{M QPS}$ (lock convoy bottleneck)</td>
+              <td><strong>6.43 Million QPS</strong> (linear multicore scaling)</td>
+            </tr>
+            <tr>
+              <td><strong>Primary Dictionary</strong></td>
+              <td>Separate chaining (<code>dictEntry</code>)</td>
+              <td>Separate chaining (shared locks)</td>
+              <td><strong>DashTable (Segmented, 64B cacheline aligned)</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Sorted Set Engine</strong></td>
+              <td>SkipList + Hash Table</td>
+              <td>SkipList + Hash Table</td>
+              <td><strong>Cache-packed B+ Trees</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Snapshotting Mechanism</strong></td>
+              <td>Kernel <code>fork()</code> (COW memory spikes)</td>
+              <td>Kernel <code>fork()</code> (COW memory spikes)</td>
+              <td><strong>Forkless bucket streaming (Zero COW spikes)</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Memory Efficiency</strong></td>
+              <td>Baseline ($24\text{B}+ $ metadata tax)</td>
+              <td>Baseline + lock memory overhead</td>
+              <td><strong>$30\% - 40\%$ RAM reduction</strong></td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="production-tradeoffs">
+        <h2>8. Production Trade-Offs &amp; Architectural Verdict</h2>
+        <ul>
+          <li><strong>Vertical Scaling vs Horizontal Blast Radius:</strong> Scaling to 6.43M QPS on a single instance simplifies infrastructure by replacing dozens of clustered nodes with one box. However, teams must evaluate physical server failure domains; high availability still requires cross-instance replication.</li>
+          <li><strong>Hardware Co-Design:</strong> DragonflyDB's extreme performance stems from tailoring software directly to CPU cache lines, SIMD instruction sets, and non-blocking fiber scheduling. Modern software efficiency requires understanding hardware boundaries.</li>
+          <li><strong>The Death of Copy-On-Write:</strong> By replacing coarse OS kernel primitives (<code>fork()</code>) with fine-grained application-level bucket serialization, in-memory databases can maintain stable memory footprints even under grueling write churn.</li>
+        </ul>
+      </section>
+    </article>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-brand">
+        <h4>System Design Notes</h4>
+        <p>Production architecture breakdowns and low-level systems engineering dissections.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Explore</h5>
+        <ul>
+          <li><a href="../index.html">All Articles</a></li>
+          <li><a href="dragonflydb-dashtable-internals.html">DragonflyDB DashTable Internals</a></li>
+          <li><a href="dragonflydb-shared-nothing-transactions.html">DragonflyDB Shared-Nothing Transactions</a></li>
+          <li><a href="dragonflydb-bplus-tree-sorted-set.html">DragonflyDB B+ Tree Sorted Sets</a></li>
+        </ul>
+      </div>
+    </div>
+  </footer>
+
+  <script src="../theme.js"></script>
+</body>
+</html>

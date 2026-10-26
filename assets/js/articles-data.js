@@ -453,6 +453,42 @@ const ARTICLES_DATA = [
     excerpt: "Technical breakdown of the classic distributed systems bug in GitHub's Redis-based rate limiter: diagnosing the wobbling X-RateLimit-Reset header, dynamic TTL arithmetic flaws, clock drift, and atomic Lua script persistence.",
     tags: ["GitHub", "Redis", "Rate Limiting", "Distributed Systems", "Debugging", "Lua Scripts", "Clock Drift"],
     featured: true
+  },
+  {
+    id: "dragonflydb-dashtable-internals",
+    slug: "dragonflydb-dashtable-internals.html",
+    title: "DragonflyDB DashTable Internals: Segmented Hashing, Cache Locality, and O(1) Eviction",
+    category: "Database Internals",
+    categorySlug: "in-memory-redis",
+    badge: "Architecture Breakdown",
+    pdfSource: "Docs/DragonflyDB_DashTable_Internals_Technical_Breakdown.pdf",
+    excerpt: "Technical deep dive into DragonflyDB DashTable architecture: how Roman Gershman replaced Redis dictEntry separate chaining with segmented bucket hashing, 64-byte cache line alignment, 1-byte fingerprints, and O(1) segment evictions.",
+    tags: ["DragonflyDB", "DashTable", "Redis", "Hash Tables", "Database Internals", "Cache Locality", "Hardware Efficiency"],
+    featured: true
+  },
+  {
+    id: "dragonflydb-shared-nothing-transactions",
+    slug: "dragonflydb-shared-nothing-transactions.html",
+    title: "Distributed Multi-Key Transactions in DragonflyDB's Shared-Nothing Architecture",
+    category: "Database Internals",
+    categorySlug: "in-memory-redis",
+    badge: "Architecture Breakdown",
+    pdfSource: "Docs/DragonflyDB_Shared_Nothing_Transactions_Technical_Breakdown.pdf",
+    excerpt: "Technical deep dive into DragonflyDB's shared-nothing transactional architecture: how Roman Gershman adapted Very Lightweight Locking (VLL) and cooperative fibers to achieve atomic multi-key transactions across CPU cores without global locks.",
+    tags: ["DragonflyDB", "Shared-Nothing", "VLL", "Transactions", "Concurrency", "Fibers", "Multi-Key"],
+    featured: true
+  },
+  {
+    id: "dragonflydb-architecture-overview-6m-qps",
+    slug: "dragonflydb-architecture-overview-6m-qps.html",
+    title: "DragonflyDB Architecture Overview: Hitting 6.43M QPS with Fibers, Shared-Nothing Sharding & Forkless Snapshots",
+    category: "Database Architecture",
+    categorySlug: "in-memory-redis",
+    badge: "Architecture Deep Dive",
+    pdfSource: "Docs/DragonflyDB_Architecture_Overview_6M_QPS_Technical_Breakdown.pdf",
+    excerpt: "Technical deep dive into DragonflyDB's core architecture: how Roman Gershman achieved 6.43 million ops/sec using Helio fibers, shared-nothing thread-per-core sharding, DashTables, B+ Trees, and forkless point-in-time snapshotting.",
+    tags: ["DragonflyDB", "Helio", "Fibers", "High Throughput", "Shared-Nothing", "Forkless Snapshots", "AWS Graviton3"],
+    featured: true
   }
 ];
 

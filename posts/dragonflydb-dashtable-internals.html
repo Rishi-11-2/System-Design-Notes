@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DragonflyDB DashTable Internals: Segmented Hashing, Cache Locality, and O(1) Eviction — System Design Notes</title>
+  <meta name="description" content="Technical deep dive into DragonflyDB DashTable architecture: how Roman Gershman replaced Redis dictEntry separate chaining with segmented bucket hashing, 64-byte cache line alignment, 1-byte fingerprints, and O(1) segment evictions.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css">
+  <link rel="stylesheet" href="../blog-theme.css">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+  <div id="progress" aria-hidden="true"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">Articles</a></li>
+          <li><a href="../index.html#system-eval">Architecture Index</a></li>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="nav-gh">GitHub</a></li>
+        </ul>
+        <div class="swatches" role="group" aria-label="Colour theme">
+          <button class="swatch" data-set-theme="light"  style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+          <button class="swatch" data-set-theme="dark"   style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+          <button class="swatch" data-set-theme="sepia"  style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+        </div>
+        <button id="theme-toggle" class="theme-toggle" aria-label="Toggle Theme">
+          <span class="theme-icon">☀️</span>
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <header class="article-header">
+    <div class="article-header-inner">
+      <div class="post-category-badge">Database Internals</div>
+      <h1 class="article-title">DragonflyDB DashTable Internals: Segmented Hashing, Cache Locality, and O(1) Eviction</h1>
+      <div class="article-meta">
+        <span>By Arpit Bhayani Dissection &amp; Roman Gershman Systems Design</span>
+        <span>•</span>
+        <span>October 2026</span>
+        <span>•</span>
+        <span>16 min read</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="article-body">
+    <aside class="toc-sidebar">
+      <div class="toc-title">Table of Contents</div>
+      <ul class="toc-list">
+        <li><a href="#redis-hash-bottleneck">1. The Redis Baseline: Separate Chaining &amp; dictEntry Overhead</a></li>
+        <li><a href="#dashtable-thesis">2. The DashTable Architecture: Hardware-Conscious Hashing</a></li>
+        <li><a href="#segment-anatomy">3. Anatomical Breakdown of a Segment</a></li>
+        <li><a href="#dual-bucket-routing">4. Dual-Bucket Routing &amp; Stash Overflow Mechanism</a></li>
+        <li><a href="#segment-splitting">5. Dynamic Segment Splitting vs. Global Rehashing</a></li>
+        <li><a href="#eviction-framework">6. Segment-Anchored O(1) Eviction (2Q &amp; LFRU)</a></li>
+        <li><a href="#production-comparison">7. Benchmark Evaluation: Redis vs. DashTable</a></li>
+        <li><a href="#architectural-verdict">8. First-Principles Summary &amp; Design Lessons</a></li>
+      </ul>
+      <div class="download-box" style="margin-top: 2rem; padding: 1rem; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-surface);">
+        <div style="font-weight: 600; font-size: 0.85rem; margin-bottom: 0.5rem;">Companion Artifact</div>
+        <a href="../Docs/DragonflyDB_DashTable_Internals_Technical_Breakdown.pdf" target="_blank" download class="btn-primary" style="display: block; text-align: center; font-size: 0.8rem; padding: 0.5rem;">
+          📥 Download 3-Page PDF
+        </a>
+      </div>
+    </aside>
+
+    <article class="article-content">
+      <section id="redis-hash-bottleneck">
+        <h2>1. The Redis Baseline: Separate Chaining &amp; dictEntry Overhead</h2>
+        <p>
+          For over a decade, Redis has reigned as the standard in-memory key-value store. Its core dictionary is implemented using standard separate chaining: an array of bucket pointers where hash collisions are linked together via singly linked lists.
+        </p>
+        <p>
+          In Redis, every single key-value pair is wrapped inside a heap-allocated C struct called <code>dictEntry</code>:
+        </p>
+        <pre><code class="language-c">typedef struct dictEntry {
+    void *key;
+    union {
+        void *val;
+        uint64_t u64;
+        int64_t s64;
+        double d;
+    } v;
+    struct dictEntry *next; /* 8-byte pointer for chaining */
+} dictEntry;</code></pre>
+        <p>
+          On a 64-bit architecture, <code>dictEntry</code> consumes 24 bytes ($8\text{ bytes key} + 8\text{ bytes val} + 8\text{ bytes next}$). In practice, due to memory allocators (like Jemalloc) allocating in quantized size classes, each <code>dictEntry</code> allocation incurs at least 24 to 32 bytes of heap metadata overhead, completely separate from the actual string data!
+        </p>
+
+        <div class="note-box alert alert-warning">
+          <strong>The Pointer Tax:</strong> If your dataset contains 100 million keys, Redis spends $2.4\text{ GB} - 3.2\text{ GB}$ of physical RAM solely on <code>dictEntry</code> pointers and allocator headers before a single byte of application data is stored.
+        </div>
+
+        <p>
+          Furthermore, separate chaining exhibits disastrous CPU cache behavior:
+        </p>
+        <ul>
+          <li><strong>Pointer Chasing:</strong> Traversing linked lists involves dereferencing non-contiguous heap addresses, causing mandatory L1/L2/L3 CPU cache misses on collision lookups.</li>
+          <li><strong>Memory Fragmentation:</strong> Hundreds of millions of tiny allocations strain the OS virtual memory manager and jemalloc arenas.</li>
+          <li><strong>Rehashing Latency Spikes:</strong> When Redis table load factor reaches $\ge 1.0$, it doubles the table size and gradually migrates buckets during read/write cycles. Under heavy mutation loads, this incremental rehash degrades P99 and P999 tail latencies.</li>
+        </ul>
+      </section>
+
+      <section id="dashtable-thesis">
+        <h2>2. The DashTable Architecture: Hardware-Conscious Hashing</h2>
+        <p>
+          When Roman Gershman designed <strong>DragonflyDB</strong>, he abandoned Redis's linked-list dictionary and engineered <strong>DashTable</strong>, heavily inspired by modern hardware-conscious hashing research (specifically <em>Dash: Scalable Hashed Indices on PMem/DRAM</em>).
+        </p>
+        <p>
+          DashTable replaces pointers with <strong>segmented bucket hashing</strong>. Instead of allocating individual nodes on the heap, memory is organized into coarse-grained, fixed-size <strong>Segments</strong>. Within each segment, records are stored in cache-line-aligned <strong>Buckets</strong> containing fixed-size slots and 1-byte hash fingerprints.
+        </p>
+
+        <div class="mermaid">
+graph TD
+    Key["Input Key: user:1001"] --> Murmur["MurmurHash3 / xxHash64"]
+    Murmur --> Split["Hash Decomposition: [Segment Index | Home Buckets h1, h2 | 1-Byte Fingerprint]"]
+    Split --> Seg["Segment Directory"]
+    Seg --> S0["Segment 0"]
+    Seg --> SI["Segment i (Target Segment)"]
+    Seg --> SN["Segment N"]
+    
+    subgraph InsideSegment["Segment Internals"]
+        SI --> Regular["56 Regular Buckets (64B Cache Line Aligned)"]
+        SI --> Stash["4 Stash Buckets (Spillover Buffer)"]
+        Regular --> B1["Home Bucket h1 (Slots + 1B Fingerprints)"]
+        Regular --> B2["Home Bucket h2 (Displacement Target)"]
+        Stash --> StashB["Stash Overflow (When h1 & h2 are full)"]
+    end
+        </div>
+      </section>
+
+      <section id="segment-anatomy">
+        <h2>3. Anatomical Breakdown of a Segment</h2>
+        <p>
+          A DashTable segment is a self-contained hashing unit. Each segment consists of:
+        </p>
+        <ul>
+          <li><strong>56 Regular Buckets:</strong> The primary storage area for hashed entries.</li>
+          <li><strong>4 Stash Buckets:</strong> A dedicated spillover overflow buffer to absorb collisions without requiring segment resizing.</li>
+          <li><strong>Segment Metadata:</strong> Bitmaps tracking slot occupancy, displacement flags, and local depth for dynamic splitting.</li>
+        </ul>
+
+        <h3>Cache-Line Alignment &amp; 1-Byte Fingerprints</h3>
+        <p>
+          Modern CPU architectures fetch memory into L1/L2 caches in <strong>64-byte lines</strong>. DashTable aligns its bucket structures precisely to CPU cache lines.
+        </p>
+        <p>
+          Each bucket contains an array of 1-byte cryptographic <strong>fingerprints</strong> (the least significant byte of the key hash) followed by slot payloads (pointers or packed inline values). When searching for a key, DashTable executes SIMD/vectorized instructions across all 1-byte fingerprints in the 64-byte bucket simultaneously.
+        </p>
+        <pre><code class="language-cpp">// Conceptual Bucket Representation
+struct alignas(64) Bucket {
+    uint8_t fingerprints[SLOTS_PER_BUCKET]; // 1-byte hash signatures
+    uint8_t control_bits;                  // Occupancy & displacement mask
+    EntryPayload slots[SLOTS_PER_BUCKET];  // Embedded payload pointers
+};</code></pre>
+        <p>
+          If no fingerprint in the bucket matches the key's fingerprint, the lookup finishes with <strong>zero pointer dereferences</strong> and <strong>exactly one cache line load</strong>!
+        </p>
+      </section>
+
+      <section id="dual-bucket-routing">
+        <h2>4. Dual-Bucket Routing &amp; Stash Overflow Mechanism</h2>
+        <p>
+          Traditional open-addressing hash tables suffer from primary clustering or high displacement chains under high load factors. DashTable solves this with <strong>Dual-Bucket Routing with Stash Overflow</strong>:
+        </p>
+        <ol>
+          <li><strong>Candidate Home Buckets ($h_1$ and $h_2$):</strong> For any key, the hash function computes two candidate bucket indices within the segment:
+            $$h_1 = \text{hash}(key) \pmod{56}$$
+            $$h_2 = (\text{hash}(key) \oplus \text{hash\_stride}) \pmod{56}$$
+          </li>
+          <li><strong>Balanced Insertion:</strong> DashTable examines both $h_1$ and $h_2$. If either bucket has an empty slot, the item is inserted into the least-loaded bucket.</li>
+          <li><strong>Cuckoo Displacement:</strong> If both $h_1$ and $h_2$ are fully occupied, DashTable attempts to displace an existing entry in $h_1$ to its alternate home bucket ($h_{1,\text{alt}}$).</li>
+          <li><strong>Stash Overflow:</strong> If displacement fails, the item is placed into one of the segment's 4 <strong>Stash Buckets</strong>. The stash acts as an elastic safety valve, allowing segments to achieve $\gt 90\%$ load factor before triggering any segment split.</li>
+        </ol>
+      </section>
+
+      <section id="segment-splitting">
+        <h2>5. Dynamic Segment Splitting vs. Global Rehashing</h2>
+        <p>
+          In Redis, when the dictionary exceeds its capacity, the entire table begins an incremental rehash. Two global hash tables (<code>ht[0]</code> and <code>ht[1]</code>) exist simultaneously, doubling pointer overhead and introducing latency jitter on every command execution.
+        </p>
+        <p>
+          DashTable eliminates global rehashing through <strong>Dynamic Segment Splitting</strong> (similar to extendible hashing):
+        </p>
+        <ul>
+          <li><strong>Segment-Local Saturation:</strong> A segment only splits when both its 56 regular buckets and its 4 stash buckets are 100% full.</li>
+          <li><strong>Localized Splitting:</strong> DragonflyDB allocates a single new segment and increases the local depth bit. Only the keys within that single saturated segment are rehashed and partitioned between the old segment and the newly created segment.</li>
+          <li><strong>Zero Global Latency Impact:</strong> Other segments remain completely untouched. Read and write operations on unaffected segments proceed at full speed without lock contention or rehash checks.</li>
+        </ul>
+
+        <div class="mermaid">
+flowchart TD
+    FullSeg["Full Segment S_k (56 Buckets + 4 Stash Buckets Full)"] --> SplitTrigger["Split Triggered (Local Depth d -> d + 1)"]
+    SplitTrigger --> Alloc["Allocate New Segment S_k_new"]
+    Alloc --> Partition["Partition Entries by (d+1)-th Hash Bit"]
+    Partition --> Keep["50% Keys Retained in S_k"]
+    Partition --> Move["50% Keys Migrated to S_k_new"]
+    Move --> UpdateDir["Update Global Directory Pointer (O(1))"]
+        </div>
+      </section>
+
+      <section id="eviction-framework">
+        <h2>6. Segment-Anchored O(1) Eviction (2Q &amp; LFRU)</h2>
+        <p>
+          When an in-memory database runs out of RAM, it must evict keys according to an eviction policy (e.g., LRU, LFU).
+        </p>
+        <p>
+          Redis performs sampling-based eviction: it picks $N$ random keys (typically $N=5$), checks their idle time or frequency counter, and evicts the best candidate. This sampling requires random memory accesses across the global keyspace and degrades under high churn.
+        </p>
+        <p>
+          DragonflyDB integrates its <strong>2Q / LFRU eviction framework directly into the DashTable segment structure</strong>:
+        </p>
+        <ul>
+          <li><strong>Segment-Bound Eviction:</strong> When memory is exhausted and a write targets a saturated segment, Dragonfly does not scan the global database. Instead, it evicts an eligible key directly from the target segment in strict $O(1)$ time!</li>
+          <li><strong>2Q Algorithm:</strong> Segments maintain lightweight circular queues categorizing keys into cold FIFO buffers and hot LRU pools. New keys enter the probationary FIFO buffer; only keys accessed multiple times graduate to the hot pool.</li>
+          <li><strong>Zero Metadata Pointer Overhead:</strong> Unlike Redis which stores a 24-bit LRU clock per object, Dragonfly encodes eviction state inside the bucket slot control bits, saving tens of megabytes of memory.</li>
+        </ul>
+      </section>
+
+      <section id="production-comparison">
+        <h2>7. Benchmark Evaluation: Redis vs. DashTable</h2>
+        <table class="comparison-table">
+          <thead>
+            <tr>
+              <th>Architectural Property</th>
+              <th>Redis Standard Dictionary</th>
+              <th>DragonflyDB DashTable</th>
+              <th>Engineering Impact</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Memory Layout</strong></td>
+              <td>Separate chaining (linked lists)</td>
+              <td>Segmented open addressing</td>
+              <td>No pointer indirection overhead</td>
+            </tr>
+            <tr>
+              <td><strong>Per-Key Metadata</strong></td>
+              <td>$24\text{ to }32\text{ bytes}$ (<code>dictEntry</code> + malloc)</td>
+              <td>$2\text{ to }4\text{ bytes}$ (amortized slot metadata)</td>
+              <td><strong>30% - 40% memory reduction</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Cache Locality</strong></td>
+              <td>Poor (random heap pointer dereference)</td>
+              <td>Excellent (64-byte aligned buckets)</td>
+              <td>Sub-microsecond L1/L2 hits</td>
+            </tr>
+            <tr>
+              <td><strong>Rehashing Mechanics</strong></td>
+              <td>Global incremental rehashing</td>
+              <td>Localized segment-by-segment split</td>
+              <td>Zero P99 tail latency spikes</td>
+            </tr>
+            <tr>
+              <td><strong>Eviction Complexity</strong></td>
+              <td>Random key sampling ($O(N)$ random reads)</td>
+              <td>Segment-anchored 2Q policy ($O(1)$)</td>
+              <td>Deterministic eviction speed</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="architectural-verdict">
+        <h2>8. First-Principles Summary &amp; Design Lessons</h2>
+        <ul>
+          <li><strong>Pointers Are Expensive:</strong> At cloud scale, pointer-heavy data structures waste gigabytes of physical memory on addresses rather than data. Contiguous flat arrays and bucketed memory layouts maximize density.</li>
+          <li><strong>Design for CPU Cache Lines:</strong> Modern performance bottlenecks are memory-bus bound, not CPU-bound. Aligning data structures to 64-byte cache lines and utilizing 1-byte fingerprints allows SIMD filtering with single-cycle cache access.</li>
+          <li><strong>Isolate Rehashing Blast Radius:</strong> Global table rehashing creates unpredictable latency spikes. Segmented, extendible hashing bounds the operational blast radius to a single segment, guaranteeing rock-solid P99 SLAs.</li>
+        </ul>
+      </section>
+    </article>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-brand">
+        <h4>System Design Notes</h4>
+        <p>Production architecture breakdowns and low-level systems engineering dissections.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Explore</h5>
+        <ul>
+          <li><a href="../index.html">All Articles</a></li>
+          <li><a href="dragonflydb-bplus-tree-sorted-set.html">DragonflyDB B+ Tree Sorted Sets</a></li>
+          <li><a href="storage-compute-separation-aurora.html">Storage-Compute Separation in Aurora</a></li>
+          <li><a href="kafka-exactly-once-semantics.html">Kafka Exactly-Once Semantics</a></li>
+        </ul>
+      </div>
+    </div>
+  </footer>
+
+  <script src="../theme.js"></script>
+</body>
+</html>
