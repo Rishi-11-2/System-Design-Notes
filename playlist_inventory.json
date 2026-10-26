@@ -1,0 +1,250 @@
+[
+  {
+    "id": "iRhDCIzhm4A",
+    "title": "How Kafka Actually Achieves Exactly-Once Semantics"
+  },
+  {
+    "id": "Jvimt56KPnk",
+    "title": "Consistent Hashing and Its Implementation From the First Principles"
+  },
+  {
+    "id": "l6oPw2prTXE",
+    "title": "How Google Manages 2 Billion Lines of Code in a Single Repository"
+  },
+  {
+    "id": "GeXJ0GxzVZM",
+    "title": "Low Level Design and Data Schema Modeling of API Clients Like Requestly"
+  },
+  {
+    "id": "FtJPvgMsn-Q",
+    "title": "How Stripe Migrates Millions of Records and Schema with Zero Downtime and No Data Inconsistency"
+  },
+  {
+    "id": "9XJtEzmzG3g",
+    "title": "Stripe's Smarter Approach to Structured Logging - Canonical Log Lines"
+  },
+  {
+    "id": "i6WAAWclARU",
+    "title": "How Stripe Scales MongoDB to 5 million Queries Per Second"
+  },
+  {
+    "id": "ubpUjovBMAM",
+    "title": "How OpenAI Handles 800 Million ChatGPT Users on a Single PostgreSQL Primary"
+  },
+  {
+    "id": "DMfr9jMLnz0",
+    "title": "How MySQL's Midpoint Insertion Strategy Prevents Cache Pollution"
+  },
+  {
+    "id": "pFBCgFzS2W8",
+    "title": "How PayPal Beat the Thundering Herd Problem and Fixed Their Architecture"
+  },
+  {
+    "id": "Tq1fif3rcnQ",
+    "title": "How GitHub Sharded Their Databases Without Downtime and Broke Their Monolith"
+  },
+  {
+    "id": "Oxy-6MAiYPw",
+    "title": "Inside Stripe's Rate Limiter Architecture"
+  },
+  {
+    "id": "DA5W8tO_7Nw",
+    "title": "What the heck is Storage-Compute Separation? | Aurora Paper Deep Dive - Section 1"
+  },
+  {
+    "id": "gZIVHSFgkvk",
+    "title": "Synonymic Query Expansion to handle Prashant in Search - Lexical vs Phonetic vs Semantic Search"
+  },
+  {
+    "id": "IsM4bnJ-8Gw",
+    "title": "How Atlassian reduced latency by 70% by using Sidecar pattern and when should you use it"
+  },
+  {
+    "id": "sbDVs71wIVk",
+    "title": "How BitBucket reduced master database load by 50% and also solved Read your Write consistency"
+  },
+  {
+    "id": "roNgG4QVjTU",
+    "title": "Saved 55% cost, 75% CPU, at 33x speed - Why and how Jira moved from JSON to Protobuf"
+  },
+  {
+    "id": "LJzS6dUV-GE",
+    "title": "Why and how Trello moved away from RabbitMQ to Kafka for their WebSocket-based real-time updates"
+  },
+  {
+    "id": "fJNyTNP71MM",
+    "title": "Cache Invalidation using SNS + SQS at Atlassian and then they moved away!"
+  },
+  {
+    "id": "KwGyA6B7qrI",
+    "title": "Load Balancers are not Magic - Dissecting Atlassian Outage"
+  },
+  {
+    "id": "wrURmYwqYb4",
+    "title": "Everything about HTTP Streaming and how Airbnb leverages it in production"
+  },
+  {
+    "id": "LAdUhenKDJ8",
+    "title": "A bug in the GitHub's Rate Limiter"
+  },
+  {
+    "id": "MOLG4-IovOQ",
+    "title": "DragonflyDB does not use HashTables but DashTables to hold the data - a deep dive"
+  },
+  {
+    "id": "z-yC2o4GZvg",
+    "title": "Why DragonflyDB uses B+ Trees to implement Sorted Set instead of Skiplist like Redis?"
+  },
+  {
+    "id": "GsuxpMTnDRM",
+    "title": "How DragonflyDB implements \"distributed\" transactions in a shared-nothing setup"
+  },
+  {
+    "id": "XbV1LoVsbME",
+    "title": "DragonflyDB Architecture Overview, Internals, and Trade-offs - hitting 6.43 million ops/sec"
+  },
+  {
+    "id": "q_2nkMBuLQQ",
+    "title": "Internals, architecture, and interesting trade-offs of Blacksmith that runs GitHub Actions 2x faster"
+  },
+  {
+    "id": "DgNncAnhkIY",
+    "title": "How LinkedIn improved their latency by 60%"
+  },
+  {
+    "id": "UerkzwZ_zSY",
+    "title": "Designing a Realtime Gaming Leaderboard - Horizontally Scalable and Highly Available"
+  },
+  {
+    "id": "DF8BbwtEa7k",
+    "title": "How Rockset achieves zero data latency and workload isolation at scale"
+  },
+  {
+    "id": "HWeTVy5i9vE",
+    "title": "How Rockset executes query and scales the query compute horizontally on demand | Rockset Internals"
+  },
+  {
+    "id": "xGaUJTHuehQ",
+    "title": "How Converged Indexes makes Rockset super-efficient in all kinds of queries | Rockset Internals"
+  },
+  {
+    "id": "I4eEEAgoCig",
+    "title": "Architecture deep-dive of a Real-time Analytics Database | Rockset Internals"
+  },
+  {
+    "id": "b9zh0SFbkqM",
+    "title": "How Reddit designed their metadata store to serve 100k req/sec at p99 of 17ms"
+  },
+  {
+    "id": "Zqw4KjhWxEc",
+    "title": "Disabling Garbage Collection helped Instagram save money and get better performance"
+  },
+  {
+    "id": "-YxWRxOFgRY",
+    "title": "How JunoDB is designed to be a highly secure database"
+  },
+  {
+    "id": "2V_oP5xCbO4",
+    "title": "How JunoDB is designed to achieve six 9's of availability"
+  },
+  {
+    "id": "6ljQaZAm8Rk",
+    "title": "How JunoDB is designed to scale horizontally"
+  },
+  {
+    "id": "2Bwzh-881PU",
+    "title": "High level architecture and System Design of JunoDB"
+  },
+  {
+    "id": "Jddce8sPFsc",
+    "title": "Overview of JunoDB - an open source KV store by PayPal"
+  },
+  {
+    "id": "J2IcD9FZvZU",
+    "title": "Designing Idempotent API Endpoints for Payments at Stripe"
+  },
+  {
+    "id": "BwxU9EnCFXA",
+    "title": "How Slack efficiently classifies emails at scale with an eventually consistent system"
+  },
+  {
+    "id": "7v-wrJjcg4k",
+    "title": "How @Shopify Engineering avoids hot shards by moving data across databases without any downtime"
+  },
+  {
+    "id": "KeV4erIm47o",
+    "title": "How Grab configured their data layer to handle multi-million database transactions a day!"
+  },
+  {
+    "id": "dOyCq_mMtdI",
+    "title": "How Twitter keeps its Search systems up and stable at scale"
+  },
+  {
+    "id": "JL9x9N6YSUc",
+    "title": "How @Zomato improved its search by identifying intent using NLP"
+  },
+  {
+    "id": "gpzGpPiRoCo",
+    "title": "Designing Uber's highly available Emergency SOS Service"
+  },
+  {
+    "id": "BFyWl9MNDjY",
+    "title": "How Booking com designed and scaled their highly available and performant User Review System"
+  },
+  {
+    "id": "yGpEzO32lU4",
+    "title": "Overview of Discord's data platform that daily processes petabytes of data and trillion points"
+  },
+  {
+    "id": "5FIPtC3xJSQ",
+    "title": "How Airbnb designed and scaled its central authorization system - Himeji"
+  },
+  {
+    "id": "nEEaSZZ8R4I",
+    "title": "How Gojek masks and keeps users' phone numbers secure at scale?"
+  },
+  {
+    "id": "i8MweKYoG1U",
+    "title": "The architecture of Yelp's in-house Search Engine - nrtSearch"
+  },
+  {
+    "id": "-bo7oVejgRM",
+    "title": "How Giphy uses CDN to serve 10 billion GIFs every day"
+  },
+  {
+    "id": "FczWm6kx0Kg",
+    "title": "How Dropbox efficiently serves and renders a large number of thumbnails"
+  },
+  {
+    "id": "VNvTEin2liY",
+    "title": "Aggregating DynamoDB data in realtime to list restaurants at Deliveroo"
+  },
+  {
+    "id": "DQwlmTvs6xA",
+    "title": "How Razorpay Designed and Scaled their Notification System"
+  },
+  {
+    "id": "NcNCty7_3kc",
+    "title": "How Flipkart made their type ahead search hyper personalized"
+  },
+  {
+    "id": "tZPTpa3JcKA",
+    "title": "The Architecture of Pinterest's Time Series Database - Goku"
+  },
+  {
+    "id": "7xKgQmqkfD0",
+    "title": "The Architecture of Airbnb's Knowledge Graph"
+  },
+  {
+    "id": "W8LDyEOPaPY",
+    "title": "How Swiggy designed and scaled its chatbot"
+  },
+  {
+    "id": "CA2_0ZhVW2g",
+    "title": "How Instagram efficiently serves HashTags ordered by count"
+  },
+  {
+    "id": "xa-hMF8gku0",
+    "title": "An Engineering Deep-dive Into Atlassian's Mega Outage of April 2022"
+  }
+]

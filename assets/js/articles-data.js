@@ -489,6 +489,48 @@ const ARTICLES_DATA = [
     excerpt: "Technical deep dive into DragonflyDB's core architecture: how Roman Gershman achieved 6.43 million ops/sec using Helio fibers, shared-nothing thread-per-core sharding, DashTables, B+ Trees, and forkless point-in-time snapshotting.",
     tags: ["DragonflyDB", "Helio", "Fibers", "High Throughput", "Shared-Nothing", "Forkless Snapshots", "AWS Graviton3"],
     featured: true
+  },
+  {
+    id: "synonymic-query-expansion-search",
+    slug: "synonymic-query-expansion-search.html",
+    title: "Synonymic Query Expansion: Lexical vs. Phonetic vs. Semantic Search",
+    category: "Search Systems & NLP",
+    categorySlug: "case-studies",
+    readTime: "18 min read",
+    date: "Jan 14, 2026",
+    badge: "Architecture Breakdown",
+    pdfSource: "Docs/Synonymic_Query_Expansion_Search_Technical_Breakdown.pdf",
+    excerpt: "Why BM25 lexical tokenization, Soundex phonetic hashes, and BERT dense embeddings fail on viral colloquialisms like 'Prashant' for 'Croissant', and how production search engines implement synonymic query expansion with dynamic score re-ranking.",
+    tags: ["Search", "Elasticsearch", "Lucene", "BM25", "Soundex", "NLP", "Query Expansion", "Zomato", "Swiggy"],
+    featured: true
+  },
+  {
+    id: "blacksmith-github-actions-acceleration",
+    slug: "blacksmith-github-actions-acceleration.html",
+    title: "Blacksmith Architecture: High-Clock Silicon, Firecracker MicroVMs, and CI Acceleration",
+    category: "Cloud Infrastructure",
+    categorySlug: "foundations-scaling",
+    readTime: "20 min read",
+    date: "Jan 14, 2026",
+    badge: "Deep Dive",
+    pdfSource: "Docs/Blacksmith_GitHub_Actions_Technical_Breakdown.pdf",
+    excerpt: "How Blacksmith runs GitHub Actions 2x faster using high-clock gaming silicon (5.7 GHz), ephemeral Firecracker microVMs booted in under 150ms, PCIe 5.0 NVMe copy-on-write snapshotting, and colocated caching proxies.",
+    tags: ["CI/CD", "GitHub Actions", "Firecracker", "MicroVMs", "Virtualization", "Performance", "Bare Metal"],
+    featured: true
+  },
+  {
+    id: "linkedin-latency-optimization-60-percent",
+    slug: "linkedin-latency-optimization-60-percent.html",
+    title: "How LinkedIn Reduced Microservice Latency by 60%: Protocol Buffers and Rest.li",
+    category: "Distributed Networking",
+    categorySlug: "microservices",
+    readTime: "19 min read",
+    date: "Jan 14, 2026",
+    badge: "Architecture Breakdown",
+    pdfSource: "Docs/LinkedIn_Latency_Optimization_Technical_Breakdown.pdf",
+    excerpt: "Technical analysis of LinkedIn's microservice migration from JSON to Google Protocol Buffers across 50,000 Rest.li endpoints, varint wire encoding, Netty off-heap buffer pooling, and achieving a 60% latency reduction.",
+    tags: ["LinkedIn", "Protocol Buffers", "Rest.li", "RPC", "Latency Optimization", "Netty", "Microservices"],
+    featured: true
   }
 ];
 
