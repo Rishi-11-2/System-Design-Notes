@@ -309,6 +309,42 @@ const ARTICLES_DATA = [
     excerpt: "Technical deep-dive into OpenAI's PostgreSQL architecture: scaling a single primary database to 800M+ ChatGPT users, 50 read replicas, PgBouncer transaction pooling, cache stampede mitigation, and write offloading.",
     tags: ["OpenAI", "PostgreSQL", "ChatGPT", "Database Engineering", "PgBouncer", "Read Replicas", "High Availability"],
     featured: true
+  },
+  {
+    id: "mysql-midpoint-insertion-buffer-pool",
+    slug: "mysql-midpoint-insertion-buffer-pool.html",
+    title: "How MySQL's Midpoint Insertion Strategy Prevents Cache Pollution",
+    category: "Database Internals",
+    categorySlug: "database-internals",
+    badge: "Deep Dive",
+    pdfSource: "Docs/MySQL_Midpoint_Insertion_Buffer_Pool_Technical_Breakdown.pdf",
+    excerpt: "Technical deep-dive into MySQL InnoDB's Buffer Pool architecture: scan resistance, LRU sublist partitioning (New vs. Old sublist), midpoint insertion mechanics, and innodb_old_blocks_pct / innodb_old_blocks_time tuning.",
+    tags: ["MySQL", "InnoDB", "Buffer Pool", "LRU Cache", "Cache Pollution", "Database Internals", "Storage Engines"],
+    featured: true
+  },
+  {
+    id: "paypal-thundering-herd-cache-stampede",
+    slug: "paypal-thundering-herd-cache-stampede.html",
+    title: "How PayPal Beat the Thundering Herd Problem and Fixed Their Architecture",
+    category: "Resilience Engineering",
+    categorySlug: "resilience-engineering",
+    badge: "Case Study",
+    pdfSource: "Docs/PayPal_Thundering_Herd_Cache_Stampede_Technical_Breakdown.pdf",
+    excerpt: "Architectural decomposition of PayPal/Braintree's thundering herd solution: breaking synchronized retry storms with Full Jitter exponential backoff, collapsing unnecessary microservices into queue workers, and implementing Singleflight and XFetch stampede defenses.",
+    tags: ["PayPal", "Braintree", "Thundering Herd", "Retry Storms", "Full Jitter", "Microservices", "Resilience"],
+    featured: true
+  },
+  {
+    id: "github-database-sharding-monolith",
+    slug: "github-database-sharding-monolith.html",
+    title: "How GitHub Sharded Their Databases Without Downtime and Broke Their Monolith",
+    category: "Database Architecture",
+    categorySlug: "database-architecture",
+    badge: "Case Study",
+    pdfSource: "Docs/GitHub_Database_Sharding_Technical_Breakdown.pdf",
+    excerpt: "Architectural breakdown of GitHub's zero-downtime database sharding: scaling mysql1 past 950K QPS, virtual partitioning via Schema Domains, AST query and transaction linters in CI, ProxySQL dynamic cutovers, and 50% primary load reduction.",
+    tags: ["GitHub", "MySQL", "Database Sharding", "Schema Domains", "ProxySQL", "Zero Downtime", "High Availability"],
+    featured: true
   }
 ];
 

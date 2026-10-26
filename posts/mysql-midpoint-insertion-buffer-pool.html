@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>How MySQL's Midpoint Insertion Strategy Prevents Cache Pollution — System Design Notes</title>
+  <meta name="description" content="Technical deep dive into MySQL InnoDB's Buffer Pool architecture: LRU list sublists, midpoint insertion strategy, scan-resistance, innodb_old_blocks_pct, and innodb_old_blocks_time tuning.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css">
+  <link rel="stylesheet" href="../blog-theme.css">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+  <div id="progress" aria-hidden="true"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">Articles</a></li>
+          <li><a href="../index.html#system-eval">Architecture Index</a></li>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="nav-gh">GitHub</a></li>
+        </ul>
+        <div class="swatches" role="group" aria-label="Colour theme">
+          <button class="swatch" data-set-theme="light"  style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+          <button class="swatch" data-set-theme="dark"   style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+          <button class="swatch" data-set-theme="sepia"  style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+        </div>
+        <button id="theme-toggle" class="theme-toggle" aria-label="Toggle Theme">
+          <span class="theme-icon">☀️</span>
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <header class="article-header">
+    <div class="article-header-inner">
+      <div class="post-category-badge">Database Internals</div>
+      <h1 class="article-title">How MySQL's Midpoint Insertion Strategy Prevents Cache Pollution</h1>
+      <div class="article-meta">
+        <span>By Arpit Bhayani Dissection &amp; MySQL InnoDB Team</span>
+        <span>•</span>
+        <span>October 2026</span>
+        <span>•</span>
+        <span>14 min read</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="article-body">
+    <aside class="toc-sidebar">
+      <div class="toc-title">Table of Contents</div>
+      <ul class="toc-list">
+        <li><a href="#cache-pollution-problem">1. The Naive LRU &amp; The Cache Pollution Hazard</a></li>
+        <li><a href="#innodb-buffer-pool">2. InnoDB Buffer Pool Memory Anatomy</a></li>
+        <li><a href="#midpoint-strategy">3. The Midpoint Insertion Algorithm</a></li>
+        <li><a href="#sublist-mechanics">4. New Sublist vs. Old Sublist Dynamics</a></li>
+        <li><a href="#making-young">5. The "Making Young" Heuristic &amp; Time Window</a></li>
+        <li><a href="#read-ahead-heuristics">6. Read-Ahead Engines: Linear vs. Random</a></li>
+        <li><a href="#tuning-parameters">7. Production Tuning: `innodb_old_blocks_pct` &amp; `time`</a></li>
+        <li><a href="#engineering-verdict">8. First-Principles Summary &amp; Design Lessons</a></li>
+      </ul>
+      <div class="download-box" style="margin-top: 2rem; padding: 1rem; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-surface);">
+        <div style="font-weight: 600; font-size: 0.85rem; margin-bottom: 0.5rem;">Companion Artifact</div>
+        <a href="../Docs/MySQL_Midpoint_Insertion_Buffer_Pool_Technical_Breakdown.pdf" target="_blank" download class="btn-primary" style="display: block; text-align: center; font-size: 0.8rem; padding: 0.5rem;">
+          📥 Download 3-Page PDF
+        </a>
+      </div>
+    </aside>
+
+    <article class="article-content">
+      <section id="cache-pollution-problem">
+        <h2>1. The Naive LRU &amp; The Cache Pollution Hazard</h2>
+        <p>
+          In relational database engines, memory is the primary defense against latency. Modern disk subsystems (even NVMe SSDs) exhibit latencies measured in microseconds, whereas DRAM access operates in nanoseconds (roughly a $100\times$ to $1000\times$ difference). Consequently, MySQL's InnoDB storage engine allocates the vast majority of its RAM to the <strong>Buffer Pool</strong>—an in-memory cache holding pages (typically 16 KB each) of data tables, indexes, and undo logs.
+        </p>
+        <p>
+          The canonical data structure for an eviction cache is the <strong>Least Recently Used (LRU) list</strong>. In a textbook LRU implementation:
+        </p>
+        <ul>
+          <li>When a page is read from disk, it is inserted directly at the <strong>head</strong> of the doubly linked list.</li>
+          <li>When an existing cached page is read or updated, it is promoted to the <strong>head</strong>.</li>
+          <li>When memory is full and a new page arrives, the victim page sitting at the <strong>tail</strong> is evicted.</li>
+        </ul>
+
+        <div class="note-box alert alert-warning">
+          <strong>The Catastrophe of Naive LRU (Cache Pollution):</strong>
+          Consider a primary production database handling $50,000$ transactional point-lookups per second ($QPS$). Suddenly, an analytical query, a batch report, or a daily <code>mysqldump</code> backup executes:
+          <pre><code class="language-sql">SELECT * FROM orders WHERE created_at >= '2023-01-01';</code></pre>
+          This query performs a <em>full table scan</em>, reading millions of pages sequentially from disk. In a naive LRU, each one of these scanned pages is placed at the head of the list. Within seconds, hundreds of thousands of one-off, scan-only pages displace the genuinely hot transactional pages (user accounts, session records, active orders) from memory. Cache hit ratio plummets from $99.8\%$ to below $60\%$, disk I/O saturates at $100\%$, and transactional p99 latency spikes uncontrollably. This is known as <strong>Cache Pollution</strong> or <strong>Cache Thrashing</strong>.
+        </div>
+      </section>
+
+      <section id="innodb-buffer-pool">
+        <h2>2. InnoDB Buffer Pool Memory Anatomy</h2>
+        <p>
+          To understand how InnoDB defeats cache pollution, we must inspect the internal memory structures of the Buffer Pool. The Buffer Pool consists of three concurrent doubly-linked lists operating across the same pool of page descriptors (<code>buf_page_t</code>):
+        </p>
+        <ol>
+          <li><strong>Free List:</strong> Contains completely empty, unallocated page frames ready to store incoming disk data.</li>
+          <li><strong>Flush List (Dirty Pages):</strong> Tracks modified pages in order of their oldest unwritten LSN (Log Sequence Number) that must eventually be checkpointed to disk.</li>
+          <li><strong>LRU List:</strong> Contains all allocated pages currently mapped to table spaces, ordered by recency of access.</li>
+        </ol>
+
+        <div class="mermaid-box">
+          <pre class="mermaid">
+graph LR
+    subgraph "InnoDB Buffer Pool (DRAM)"
+        direction TB
+        FL[Free List: Unused Frames]
+        DPL[Flush List: Dirty Pages for Checkpointing]
+        
+        subgraph "Scan-Resistant LRU List"
+            direction LR
+            HEAD[Head: Most Young] --> NEW[New Sublist: Hot Pages ~63%]
+            NEW --> MIDPOINT((Midpoint))
+            MIDPOINT --> OLD[Old Sublist: Cold Pages ~37%]
+            OLD --> TAIL[Tail: Eviction Victims]
+        end
+    end
+    
+    DISK[(Disk Subsystem NVMe)] -->|Page Read| MIDPOINT
+    TAIL -->|Eviction| DISK
+          </pre>
+        </div>
+      </section>
+
+      <section id="midpoint-strategy">
+        <h2>3. The Midpoint Insertion Algorithm</h2>
+        <p>
+          InnoDB rejects the naive textbook LRU. Instead, it employs a <strong>Midpoint Insertion Strategy</strong> (originally introduced in MySQL 5.1 and refined in MySQL 5.5+).
+        </p>
+        <p>
+          The Buffer Pool LRU list is conceptually bisected into two dynamic partitions:
+        </p>
+        <ul>
+          <li><strong>New Sublist (Young Sublist):</strong> The top portion of the list, holding hot, frequently referenced pages. By default, this occupies roughly $63\%$ (or $5/8$) of the LRU list.</li>
+          <li><strong>Old Sublist:</strong> The bottom portion of the list, holding colder pages that are candidates for eviction. By default, this occupies roughly $37\%$ (or $3/8$) of the list.</li>
+        </ul>
+        <p>
+          The boundary between the two sublists is known as the <strong>Midpoint</strong>. Crucially:
+        </p>
+        <div class="note-box alert alert-success">
+          <strong>The Core Invariant:</strong> When a page is read from disk because of a query miss, InnoDB <em>does not</em> insert it at the head of the LRU list. It inserts the page at the <strong>head of the Old Sublist (the Midpoint)</strong>!
+        </div>
+
+        <p>
+          Because newly read pages land at the midpoint, they enter the cold partition immediately. If a table scan reads 1,000,000 pages that are never accessed again, those pages enter at the midpoint, travel down the short Old Sublist ($37\%$ of the cache), and drop off the tail. <strong>The hot pages residing in the New Sublist ($63\%$ of the cache) remain completely untouched and never get evicted!</strong>
+        </p>
+      </section>
+
+      <section id="sublist-mechanics">
+        <h2>4. New Sublist vs. Old Sublist Dynamics</h2>
+        <p>
+          Let us trace the exact state transitions of a page through the LRU list:
+        </p>
+
+        <div class="mermaid-box">
+          <pre class="mermaid">
+stateDiagram-v2
+    [*] --> DiskMiss: Query requests uncached page
+    DiskMiss --> OldSublistHead: Insert at Midpoint (old_blocks_pct)
+    
+    state OldSublist {
+        OldSublistHead --> DriftingDown: Not accessed again
+        DriftingDown --> Evicted: Reaches Tail of LRU
+        
+        OldSublistHead --> AccessedInOld: Query re-references page
+    }
+    
+    AccessedInOld --> Evaluated: Check innodb_old_blocks_time
+    
+    state Evaluated {
+        [*] --> CheckTime
+        CheckTime --> Ignored: Age < innodb_old_blocks_time
+        CheckTime --> Promoted: Age >= innodb_old_blocks_time
+    }
+    
+    Ignored --> DriftingDown: Burst read during same scan
+    Promoted --> NewSublistHead: "Made Young" (Moved to LRU Head)
+    
+    state NewSublist {
+        NewSublistHead --> GradualAge: Newer hot queries arrive
+        GradualAge --> CrossMidpoint: Pushed past 63% boundary
+    }
+    
+    CrossMidpoint --> OldSublistHead: Becomes part of Old Sublist
+    Evicted --> [*]
+          </pre>
+        </div>
+
+        <p>
+          Notice how the Old Sublist acts as a <em>quarantine isolation zone</em>. Pages must earn their place in the New Sublist through sustained, multi-turn utility rather than one-off table scan operations.
+        </p>
+      </section>
+
+      <section id="making-young">
+        <h2>5. The "Making Young" Heuristic &amp; Time Window</h2>
+        <p>
+          A critical flaw still existed in the initial midpoint implementation: <strong>nested-loop joins and multi-row scans of the same page</strong>.
+        </p>
+        <p>
+          A single 16 KB InnoDB page typically stores between 50 and 500 rows. When a query scans a table:
+        </p>
+        <ol>
+          <li>Row 1 on Page $P$ is read. Page $P$ is fetched from disk and placed at the midpoint.</li>
+          <li>Microseconds later, the query engine scans Row 2 on Page $P$. This is an in-memory hit!</li>
+          <li>Under a simple "promote on hit" rule, Row 2 would trigger an immediate promotion, moving Page $P$ straight to the head of the New Sublist!</li>
+        </ol>
+        <p>
+          Thus, even with a midpoint insertion, a sequential scan touching multiple rows per page would instantly defeat the quarantine and pollute the hot cache.
+        </p>
+
+        <h3>The Solution: <code>innodb_old_blocks_time</code></h3>
+        <p>
+          To neutralize this loop, InnoDB tracks the timestamp of when a page was inserted into the Old Sublist. MySQL exposes a parameter:
+        </p>
+        <div class="note-box alert alert-info">
+          <code>innodb_old_blocks_time = 1000</code> (Default: 1000 milliseconds / 1 second)
+        </div>
+        <p>
+          When an access occurs on a page sitting in the Old Sublist, InnoDB calculates:
+          $$\Delta t = t_{\text{current}} - t_{\text{first\_access}}$$
+          <ul>
+            <li>If $\Delta t < \text{innodb\_old\_blocks\_time}$: The access is classified as part of the <strong>same sequential operation</strong>. The page is read, but it is <em>not</em> promoted to the New Sublist. Its position remains in the Old Sublist.</li>
+            <li>If $\Delta t \ge \text{innodb\_old\_blocks\_time}$: The page was accessed across distinct user queries separated by real time. The page is declared genuinely useful and is <strong>"Made Young"</strong>, jumping to the head of the New Sublist.</li>
+          </ul>
+        </p>
+      </section>
+
+      <section id="read-ahead-heuristics">
+        <h2>6. Read-Ahead Engines: Linear vs. Random</h2>
+        <p>
+          InnoDB also features asynchronous <strong>Read-Ahead</strong> engines that predict future page requests and prefetch them into memory before the application query blocks on I/O.
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>Read-Ahead Type</th>
+              <th>Trigger Condition</th>
+              <th>Behavior</th>
+              <th>Configuration</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Linear Read-Ahead</strong></td>
+              <td>InnoDB detects that <code>innodb_read_ahead_threshold</code> pages in an extent (64 pages = 1 MB) were read sequentially.</td>
+              <td>Asynchronously issues a read request for the <em>entire subsequent extent</em> into the buffer pool.</td>
+              <td><code>innodb_read_ahead_threshold = 56</code> (default)</td>
+            </tr>
+            <tr>
+              <td><strong>Random Read-Ahead</strong></td>
+              <td>InnoDB detects that 13 contiguous pages inside the same extent happen to be in the buffer pool.</td>
+              <td>Prefetches the remaining pages of that extent into memory regardless of access order.</td>
+              <td><code>innodb_random_read_ahead = OFF</code> (disabled by default)</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          Because all read-ahead pages enter at the <strong>midpoint (Old Sublist)</strong>, prefetching errors are harmless: if the precalculated pages are never actually requested, they evaporate silently at the LRU tail without displacing a single byte of hot application state.
+        </p>
+      </section>
+
+      <section id="tuning-parameters">
+        <h2>7. Production Tuning: <code>innodb_old_blocks_pct</code> &amp; <code>time</code></h2>
+        <p>
+          How should database administrators and system architects tune these parameters in real-world high-throughput environments?
+        </p>
+
+        <h3>1. <code>innodb_old_blocks_pct</code></h3>
+        <p>
+          Specifies the percentage of the Buffer Pool assigned to the Old Sublist. Allowed range: $5$ to $95$. Default: $37$.
+        </p>
+        <ul>
+          <li><strong>Pure OLTP (Transactional Web Services):</strong> If the database is exclusively handling point lookups (e.g., Redis-like primary key lookups with zero analytics), reduce <code>innodb_old_blocks_pct</code> to <strong>20</strong>. This gives $80\%$ of RAM to the New Sublist, packing more hot data into memory.</li>
+          <li><strong>Mixed Workloads (OLTP + Reporting/ETL):</strong> Keep at <strong>37</strong> or increase to <strong>50</strong>. This provides a wider absorption buffer for scans, ensuring heavy reporting jobs cannot touch the hot transactional core.</li>
+        </ul>
+
+        <h3>2. <code>innodb_old_blocks_time</code></h3>
+        <p>
+          Specifies the retention quarantine window in milliseconds before promotion. Default: $1000$ ms.
+        </p>
+        <ul>
+          <li>Increasing this value (e.g., to $2000$ ms) strengthens protection against very slow, high-latency analytical table scans that spend more than 1 second iterating over multiple pages.</li>
+          <li>Setting this to $0$ disables the time gate, causing any second hit on an old page to immediately promote it to the young list (not recommended on mixed workloads).</li>
+        </ul>
+
+        <h3>Diagnosing Buffer Pool Health with MySQL CLI</h3>
+        <pre><code class="language-sql">SHOW ENGINE INNODB STATUS\G
+----------------------
+BUFFER POOL AND MEMORY
+----------------------
+Total large memory allocated 34359738368
+Dictionary memory allocated 12345678
+Buffer pool size        2097152
+Free buffers            1024
+Database pages          2000000
+Old database pages      740000     -- ~37% in Old Sublist
+Modified db pages       15000      -- Dirty pages in Flush list
+Pending reads           0
+Pending writes: LRU 0, flush list 0, single page 0
+Pages made young        4512938, not young 1293849182
+-- High "not young" vs "made young" indicates table scans are successfully quarantined!
+Pages read 892348, created 128934, written 3948291
+Buffer pool hit rate 998 / 1000</code></pre>
+      </section>
+
+      <section id="engineering-verdict">
+        <h2>8. First-Principles Summary &amp; Design Lessons</h2>
+        <p>
+          The MySQL Midpoint Insertion Strategy is an archetype of systems software design:
+        </p>
+        <ul>
+          <li><strong>Textbook algorithms rarely survive production:</strong> Naive LRU assumes uniform, randomized access distributions. Real production systems exhibit mixed modalities (Zipfian point-lookups interleaved with linear batch scans).</li>
+          <li><strong>Partitioning protects the core:</strong> By dividing an eviction list into young and old partitions, systems isolate distinct access patterns with zero cross-contamination.</li>
+          <li><strong>Time gates prevent algorithmic manipulation:</strong> Spatial hits (multiple rows within one page) must be decoupled from temporal utility using access timestamps ($t_{\text{access}} - t_{\text{insert}} > \text{threshold}$).</li>
+        </ul>
+      </section>
+    </article>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-brand">
+        <h4>System Design Notes</h4>
+        <p>Production architecture breakdowns and low-level systems engineering dissections.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Explore</h5>
+        <ul>
+          <li><a href="../index.html">All Articles</a></li>
+          <li><a href="openai-postgres-scaling-chatgpt.html">OpenAI PostgreSQL Scaling</a></li>
+          <li><a href="stripe-scaling-mongodb-5m-qps.html">Stripe MongoDB 5M QPS</a></li>
+          <li><a href="storage-compute-separation-aurora.html">Storage-Compute Separation</a></li>
+        </ul>
+      </div>
+    </div>
+  </footer>
+
+  <script src="../theme.js"></script>
+</body>
+</html>
