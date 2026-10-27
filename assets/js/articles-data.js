@@ -531,6 +531,76 @@ const ARTICLES_DATA = [
     excerpt: "Technical analysis of LinkedIn's microservice migration from JSON to Google Protocol Buffers across 50,000 Rest.li endpoints, varint wire encoding, Netty off-heap buffer pooling, and achieving a 60% latency reduction.",
     tags: ["LinkedIn", "Protocol Buffers", "Rest.li", "RPC", "Latency Optimization", "Netty", "Microservices"],
     featured: true
+  },
+  {
+    id: "realtime-gaming-leaderboard-system-design",
+    slug: "realtime-gaming-leaderboard-system-design.html",
+    title: "Designing a Real-Time Gaming Leaderboard: Redis Sorted Sets, SkipLists, and Horizontal Sharding",
+    category: "Real-Time Systems",
+    categorySlug: "in-memory-redis",
+    readTime: "21 min read",
+    date: "Jan 15, 2026",
+    badge: "Architecture Breakdown",
+    pdfSource: "Docs/Realtime_Gaming_Leaderboard_Technical_Breakdown.pdf",
+    excerpt: "Technical deep dive into real-time gaming leaderboard system design: why relational SQL ORDER BY fails, Redis Sorted Set (ZSET) SkipList span mechanics, Kafka write batching, and horizontal range-based sharding for millions of concurrent players.",
+    tags: ["Redis", "Leaderboard", "SkipList", "Sorted Sets", "Gaming", "Kafka", "Horizontal Sharding"],
+    featured: true
+  },
+  {
+    id: "rockset-realtime-analytics-database-architecture",
+    slug: "rockset-realtime-analytics-database-architecture.html",
+    title: "Rockset Architecture Deep Dive: Aggregator-Leaf-Tailer (ALT) and RocksDB-Cloud",
+    category: "Real-Time Analytics",
+    categorySlug: "cloud-databases",
+    readTime: "22 min read",
+    date: "Jan 15, 2026",
+    badge: "Architecture Deep Dive",
+    pdfSource: "Docs/Rockset_Realtime_Analytics_Database_Technical_Breakdown.pdf",
+    excerpt: "Technical deep dive into Rockset's real-time analytics database architecture: the Aggregator-Leaf-Tailer (ALT) paradigm, RocksDB-Cloud storage decoupling, remote compactions, and sub-second SQL queries on semi-structured JSON.",
+    tags: ["Rockset", "LSM-Tree", "RocksDB", "ALT Architecture", "Real-Time Analytics", "Storage-Compute Decoupling"],
+    featured: true
+  },
+  {
+    id: "rockset-converged-indexes-architecture",
+    slug: "rockset-converged-indexes-architecture.html",
+    title: "How Converged Indexes Make Rockset Super-Efficient Across All Queries",
+    category: "Database Internals",
+    categorySlug: "cloud-databases",
+    readTime: "20 min read",
+    date: "Jan 15, 2026",
+    badge: "Architecture Breakdown",
+    pdfSource: "Docs/Rockset_Converged_Indexes_Technical_Breakdown.pdf",
+    excerpt: "Technical deep dive into Rockset's Converged Index architecture: unifying Row Store, Column Store, and Inverted Search Index in RocksDB for real-time SQL analytics on semi-structured JSON.",
+    tags: ["Rockset", "Converged Index", "RocksDB", "Inverted Index", "Columnar Store", "SIMD", "Smart Schema"],
+    featured: true
+  },
+  {
+    id: "rockset-distributed-query-execution-engine",
+    slug: "rockset-distributed-query-execution-engine.html",
+    title: "How Rockset Executes Queries and Horizontally Scales Query Compute",
+    category: "Distributed Query Engines",
+    categorySlug: "cloud-databases",
+    readTime: "21 min read",
+    date: "Jan 15, 2026",
+    badge: "Deep Dive",
+    pdfSource: "Docs/Rockset_Distributed_Query_Execution_Technical_Breakdown.pdf",
+    excerpt: "Technical deep dive into Rockset's distributed query execution engine: cost-based optimization, predicate pushdown to Leaf nodes, vectorized SIMD pipelining, and stateless Aggregator autoscaling.",
+    tags: ["Rockset", "Query Engine", "SIMD", "Vectorized Execution", "Distributed Joins", "Aggregator-Leaf", "CBO"],
+    featured: true
+  },
+  {
+    id: "rockset-zero-data-latency-workload-isolation",
+    slug: "rockset-zero-data-latency-workload-isolation.html",
+    title: "How Rockset Achieves Zero Data Latency and Workload Isolation at Scale",
+    category: "Real-Time Databases",
+    categorySlug: "cloud-databases",
+    readTime: "21 min read",
+    date: "Jan 15, 2026",
+    badge: "Architecture Breakdown",
+    pdfSource: "Docs/Rockset_Zero_Data_Latency_Workload_Isolation_Technical_Breakdown.pdf",
+    excerpt: "Technical deep dive into Rockset's real-time isolation architecture: achieving sub-second data freshness and 100% compute isolation between ingestion, production APIs, and BI analytics using Virtual Instances and RocksDB-Cloud.",
+    tags: ["Rockset", "Workload Isolation", "Zero Data Latency", "Virtual Instances", "RocksDB-Cloud", "Data Freshness"],
+    featured: true
   }
 ];
 

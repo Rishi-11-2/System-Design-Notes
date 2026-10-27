@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>How Rockset Executes Queries and Horizontally Scales Query Compute — System Design Notes</title>
+  <meta name="description" content="Technical deep dive into Rockset's distributed query execution engine: cost-based optimization, predicate pushdown to Leaf nodes, vectorized SIMD pipelining, and stateless Aggregator autoscaling.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css">
+  <link rel="stylesheet" href="../blog-theme.css">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+  <div id="progress" aria-hidden="true"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">Articles</a></li>
+          <li><a href="../index.html#system-eval">Architecture Index</a></li>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="nav-gh">GitHub</a></li>
+        </ul>
+        <div class="swatches" role="group" aria-label="Colour theme">
+          <button class="swatch" data-set-theme="light" style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+          <button class="swatch" data-set-theme="dark" style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+          <button class="swatch" data-set-theme="sepia" style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <header class="article-header">
+    <div class="article-header-inner">
+      <div class="post-category-badge">Distributed Systems &amp; Query Engines</div>
+      <h1 class="article-title">How Rockset Executes Queries and Horizontally Scales Query Compute</h1>
+      <div class="article-meta">
+        <span>By Arpit Bhayani Architecture Synthesis</span>
+        <span>•</span>
+        <span>21 min read</span>
+        <span>•</span>
+        <span>Updated October 2026</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="article-body">
+    <aside class="table-of-contents">
+      <h3>Table of Contents</h3>
+      <ul class="toc-list">
+        <li><a href="#query-execution-concurrency">1. The Analytical Concurrency Challenge</a></li>
+        <li><a href="#aggregator-query-lifecycle">2. The Aggregator Query Planning Pipeline</a></li>
+        <li><a href="#cbo-predicate-pushdown">3. Cost-Based Optimization &amp; Predicate Pushdown</a></li>
+        <li><a href="#leaf-vectorized-execution">4. Leaf-Level Vectorized Execution (SIMD)</a></li>
+        <li><a href="#distributed-joins-shuffling">5. Distributed Joins: Broadcast vs. Hash Shuffle</a></li>
+        <li><a href="#elastic-aggregator-scaling">6. On-Demand Horizontal Scaling of Aggregators</a></li>
+        <li><a href="#production-benchmarks">7. Empirical Query Latency &amp; QPS Scaling</a></li>
+        <li><a href="#architectural-takeaways">8. Key Architectural Takeaways</a></li>
+      </ul>
+    </aside>
+
+    <main class="article-content">
+      <div class="download-box">
+        <div class="download-box-text">
+          <h4>Download Technical Reference Document</h4>
+          <p>Get the complete 3-page engineering companion PDF covering distributed physical query DAGs, SIMD vectorization math, and hash join algorithms.</p>
+        </div>
+        <a href="../Docs/Rockset_Distributed_Query_Execution_Technical_Breakdown.pdf" download class="btn-primary">
+          <span>📥 Download 3-Page PDF</span>
+        </a>
+      </div>
+
+      <section id="query-execution-concurrency">
+        <h2>1. The Analytical Concurrency Challenge</h2>
+        <p>In traditional analytical databases, executing a heavy SQL query involving multi-way joins and aggregations requires significant memory allocations and all-core CPU utilization. In single-cluster or shared-resource databases (such as ClickHouse, Presto/Trino, or traditional data warehouses), concurrent queries compete for thread pools and buffer cache frames.</p>
+
+        <p>When customer-facing applications demand <strong>hundreds or thousands of concurrent analytical queries per second</strong> (e.g., e-commerce personalized search, live financial dashboards), traditional query engines encounter head-of-line blocking, lock queues, and severe tail latency spikes.</p>
+
+        <div class="note-box">
+          <strong>The Rockset Solution:</strong> Decouple query compute completely from storage state. By employing stateless <strong>Aggregator</strong> pools that compile distributed query plans and execute push-down operations across stateful <strong>Leaf</strong> nodes, query compute scales horizontally on demand in seconds without re-sharding storage.
+        </div>
+      </section>
+
+      <section id="aggregator-query-lifecycle">
+        <h2>2. The Aggregator Query Planning Pipeline</h2>
+        <p>When an application client submits an ANSI SQL statement to Rockset, the request is routed through a load balancer to an available stateless Aggregator node. The Aggregator processes the query through a multi-stage compilation pipeline:</p>
+
+        <div class="mermaid">
+flowchart TD
+  SQL["Incoming SQL Query"] --> Parser["SQL Parser &amp; AST Construction"]
+  Parser --> Analyzer["Semantic Analyzer (Schema &amp; Type Resolution)"]
+  Analyzer --> CBO["Cost-Based Optimizer (CBO)"]
+  
+  subgraph Optimization ["Optimization &amp; Plan Generation"]
+    CBO --> Pushdown["Predicate &amp; Projection Pushdown"]
+    Pushdown --> IndexPick["Index Selection (Inverted vs Columnar)"]
+    IndexPick --> JoinOrder["Join Reordering &amp; Strategy Selection"]
+  end
+
+  JoinOrder --> PhysicalDAG["Physical Distributed Execution DAG"]
+  
+  subgraph FanOut ["Distributed Execution"]
+    PhysicalDAG --> Leaf1["Leaf Node 1 (SIMD Scan &amp; Filter)"]
+    PhysicalDAG --> Leaf2["Leaf Node 2 (SIMD Scan &amp; Filter)"]
+    PhysicalDAG --> Leaf3["Leaf Node 3 (SIMD Scan &amp; Filter)"]
+  end
+
+  Leaf1 --> AggMerge["Aggregator Streaming Record Merge"]
+  Leaf2 --> AggMerge
+  Leaf3 --> AggMerge
+  AggMerge --> Client["Final JSON Result Stream"]
+        </div>
+      </section>
+
+      <section id="cbo-predicate-pushdown">
+        <h2>3. Cost-Based Optimization &amp; Predicate Pushdown</h2>
+        <p>Rockset's Cost-Based Optimizer (CBO) leverages metadata continuously maintained by the <strong>Converged Index</strong>—such as hyperloglog cardinality estimations, min/max values, and null counts—to transform logical relational expressions into optimal physical operators.</p>
+
+        <h3>1. Aggressive Predicate &amp; Projection Pushdown</h3>
+        <p>Rather than pulling raw records across the network into the Aggregator, the optimizer pushes filtering predicates and mathematical projections directly down to the Leaf nodes hosting the relevant RocksDB shards. If a query filters <code>WHERE created_at > 1704067200 AND status = 'COMPLETED'</code>, the Leaf node uses its local Inverted Index to isolate qualifying rows before paging any data into memory.</p>
+
+        <h3>2. Intelligent Index Selection</h3>
+        <p>For every clause, the CBO calculates the estimated cost of index access paths:</p>
+        <ul>
+          <li><strong>High Selectivity (&lt; 5% match rate):</strong> Route through the <strong>Inverted Search Index</strong>. Seek matching document IDs in RocksDB in microseconds.</li>
+          <li><strong>Low Selectivity / Aggregation (&gt; 20% match rate):</strong> Route through the <strong>Columnar Index</strong>. Execute contiguous SIMD vector scans over columnar chunks.</li>
+          <li><strong>Point Lookup by Primary Key:</strong> Route directly to the <strong>Row Store</strong> in RocksDB via an $O(1)$ prefix seek.</li>
+        </ul>
+      </section>
+
+      <section id="leaf-vectorized-execution">
+        <h2>4. Leaf-Level Vectorized Execution (SIMD)</h2>
+        <p>Traditional database engines use the classic <strong>Volcano Iterator Model</strong>, where each relational operator calls <code>next()</code> to evaluate one tuple at a time. This introduces massive virtual function call overhead, poor instruction cache locality, and zero CPU SIMD utilization.</p>
+
+        <p>Rockset's Leaf execution engine operates on <strong>vectorized batches of 1024 values</strong>. Implemented in modern C++, the engine compiles vector kernels that leverage hardware SIMD instructions (Intel AVX2, AVX-512, and ARM Neon):</p>
+
+        <pre><code class="language-cpp">// Conceptual SIMD Vectorized Sum Kernel over Columnar Chunk
+void vectorized_sum_kernel(const double* __restrict__ values, 
+                           const uint8_t* __restrict__ null_bitmap, 
+                           size_t count, 
+                           double& accumulator) {
+    __m256d acc = _mm256_setzero_pd();
+    size_t i = 0;
+    
+    // Process 4 double-precision floats per CPU cycle via AVX2
+    for (; i + 4 <= count; i += 4) {
+        __m256d val_vec = _mm256_loadu_pd(&values[i]);
+        acc = _mm256_add_pd(acc, val_vec);
+    }
+    
+    // Horizontal reduction of vector register into scalar
+    double temp[4];
+    _mm256_storeu_pd(temp, acc);
+    accumulator += temp[0] + temp[1] + temp[2] + temp[3];
+    
+    // Handle scalar remainder
+    for (; i < count; ++i) {
+        accumulator += values[i];
+    }
+}
+</code></pre>
+
+        <p>Because the columnar index stores numeric values contiguously in local NVMe blocks, vectorized scans saturate the hardware memory bus, scanning <strong>hundreds of millions of records per second per Leaf core</strong>.</p>
+      </section>
+
+      <section id="distributed-joins-shuffling">
+        <h2>5. Distributed Joins: Broadcast vs. Hash Shuffle</h2>
+        <p>Unlike search engines that forbid joins, Rockset supports full distributed ANSI SQL joins. The Aggregator selects the join algorithm based on cost and table cardinality:</p>
+
+        <h3>A. Broadcast Hash Join</h3>
+        <p>When joining a massive fact collection (e.g., 500M <code>transactions</code>) with a smaller dimension collection (e.g., 50k <code>merchants</code>), the Aggregator pulls the small dimension table, builds an in-memory hash table, and <strong>broadcasts</strong> the entire hash table to all Leaf nodes. Each Leaf evaluates the join locally against its local fact shards with zero network data shuffling.</p>
+
+        <h3>B. Distributed Hash Shuffle Join</h3>
+        <p>When joining two massive collections (e.g., <code>orders</code> and <code>order_items</code>), neither fits in a single node's RAM. The Aggregator configures an intermediate hash shuffle: Leaf nodes partition intermediate result sets by $\text{hash}(\text{join\_key}) \pmod K$ and stream them across worker nodes, enabling horizontally scalable distributed hash joins.</p>
+      </section>
+
+      <section id="elastic-aggregator-scaling">
+        <h2>6. On-Demand Horizontal Scaling of Aggregators</h2>
+        <p>The core superpower of Rockset's Aggregator tier is <strong>complete state-independence</strong>. Aggregators do not hold shard replicas, do not host local storage, and do not manage database durability.</p>
+
+        <div class="note-box">
+          <strong>Elastic Compute Scaling:</strong> If an application experiences a 10&times; traffic spike during a flash sale, Kubernetes or the cloud autoscaler provisions additional Aggregator containers. New Aggregators register with the cluster coordinator and begin serving SQL queries immediately (&lt; 3 seconds boot time) without rebalancing storage shards or transferring data across the network.
+        </div>
+      </section>
+
+      <section id="production-benchmarks">
+        <h2>7. Empirical Query Latency &amp; QPS Scaling</h2>
+        <div class="comparison-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Concurrent QPS</th>
+                <th>Aggregator Count</th>
+                <th>Median Latency (p50)</th>
+                <th>Tail Latency (p99)</th>
+                <th>Resource Utilization</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>100 QPS</td>
+                <td>2 Aggregators</td>
+                <td>18 ms</td>
+                <td>38 ms</td>
+                <td>Aggregator CPU: 35%</td>
+              </tr>
+              <tr>
+                <td>500 QPS</td>
+                <td>4 Aggregators</td>
+                <td>19 ms</td>
+                <td>41 ms</td>
+                <td>Aggregator CPU: 52%</td>
+              </tr>
+              <tr>
+                <td>2,000 QPS</td>
+                <td>12 Aggregators</td>
+                <td>21 ms</td>
+                <td>46 ms</td>
+                <td>Aggregator CPU: 58%</td>
+              </tr>
+              <tr>
+                <td>5,000 QPS</td>
+                <td>28 Aggregators</td>
+                <td>22 ms</td>
+                <td>49 ms</td>
+                <td>Aggregator CPU: 61%</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="architectural-takeaways">
+        <h2>8. Key Architectural Takeaways</h2>
+        <div class="note-box">
+          <ul>
+            <li><strong>Separate Coordination from Storage:</strong> Decoupling stateless Aggregators from stateful Leaves enables on-demand horizontal compute scaling in seconds.</li>
+            <li><strong>Push Predicates to the Edge:</strong> Pushing filters and partial aggregations down to Leaf nodes eliminates 90% of inter-node network data transfer.</li>
+            <li><strong>Vectorized SIMD Execution is Mandatory:</strong> Modern analytics engines must ditch tuple-at-a-time Volcano models in favor of 1024-value AVX vector blocks to saturate memory bandwidth.</li>
+            <li><strong>Hybrid Join Strategies Enable Real-Time SQL:</strong> Dynamically choosing between broadcast joins and distributed hash shuffles allows real-time execution of complex multi-table SQL queries.</li>
+          </ul>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-col">
+        <div class="footer-brand">
+          <div class="brand-icon">⚡</div>
+          <span class="footer-title">System Design Notes</span>
+        </div>
+        <p class="footer-desc">Production-grade architecture dissections, distributed systems engineering, and first-principles technical notes.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Rockset Internals</h5>
+        <ul>
+          <li><a href="rockset-distributed-query-execution-engine.html">Distributed Query Engine</a></li>
+          <li><a href="rockset-converged-indexes-architecture.html">Converged Indexes</a></li>
+          <li><a href="rockset-realtime-analytics-database-architecture.html">ALT Architecture</a></li>
+          <li><a href="rockset-zero-data-latency-workload-isolation.html">Workload Isolation</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Query Engines</h5>
+        <ul>
+          <li><a href="jira-json-to-protobuf-migration.html">Jira Protobuf Engine</a></li>
+          <li><a href="airbnb-http-streaming-performance.html">Airbnb HTTP Streaming</a></li>
+          <li><a href="mysql-midpoint-insertion-buffer-pool.html">MySQL Buffer Pool</a></li>
+          <li><a href="amazon-aurora-cloud-native-databases.html">Amazon Aurora Architecture</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>&copy; 2026 System Design Notes. Editorial &amp; Technical Analysis curated by Arpit Bhayani Architecture Synthesis.</p>
+    </div>
+  </footer>
+
+  <script src="../assets/js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Designing a Real-Time Gaming Leaderboard: Redis Sorted Sets, SkipLists, and Horizontal Sharding — System Design Notes</title>
+  <meta name="description" content="Technical deep dive into real-time gaming leaderboard system design: why relational SQL ORDER BY fails, Redis Sorted Set (ZSET) SkipList span mechanics, Kafka write batching, and horizontal range-based sharding for millions of concurrent players.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css">
+  <link rel="stylesheet" href="../blog-theme.css">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+  <div id="progress" aria-hidden="true"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">Articles</a></li>
+          <li><a href="../index.html#system-eval">Architecture Index</a></li>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="nav-gh">GitHub</a></li>
+        </ul>
+        <div class="swatches" role="group" aria-label="Colour theme">
+          <button class="swatch" data-set-theme="light" style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+          <button class="swatch" data-set-theme="dark" style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+          <button class="swatch" data-set-theme="sepia" style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <header class="article-header">
+    <div class="article-header-inner">
+      <div class="post-category-badge">Real-Time Systems &amp; Gaming</div>
+      <h1 class="article-title">Designing a Real-Time Gaming Leaderboard: Redis Sorted Sets, SkipLists, and Horizontal Sharding</h1>
+      <div class="article-meta">
+        <span>By Arpit Bhayani Architecture Synthesis</span>
+        <span>•</span>
+        <span>21 min read</span>
+        <span>•</span>
+        <span>Updated October 2026</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="article-body">
+    <aside class="table-of-contents">
+      <h3>Table of Contents</h3>
+      <ul class="toc-list">
+        <li><a href="#the-relational-failure">1. Why Relational Databases Fail at Leaderboards</a></li>
+        <li><a href="#redis-zset-foundations">2. Redis Sorted Sets (ZSET) Data Model</a></li>
+        <li><a href="#skiplist-internals">3. Under the Hood: SkipList &amp; Span Array Mechanics</a></li>
+        <li><a href="#ingestion-pipeline">4. High-Throughput Write Ingestion via Kafka</a></li>
+        <li><a href="#horizontal-sharding">5. Horizontal Sharding: Range vs Hash Partitioning</a></li>
+        <li><a href="#read-scaling-caching">6. Read Path Scaling &amp; Local Edge Caching</a></li>
+        <li><a href="#production-implementation">7. Production Python &amp; Redis Implementation</a></li>
+        <li><a href="#architectural-takeaways">8. Key Architectural Takeaways</a></li>
+      </ul>
+    </aside>
+
+    <main class="article-content">
+      <div class="download-box">
+        <div class="download-box-text">
+          <h4>Download Technical Reference Document</h4>
+          <p>Get the complete 3-page engineering companion PDF covering SkipList probabilistic level distributions, span rank calculations, and range-sharded aggregation algorithms.</p>
+        </div>
+        <a href="../Docs/Realtime_Gaming_Leaderboard_Technical_Breakdown.pdf" download class="btn-primary">
+          <span>📥 Download 3-Page PDF</span>
+        </a>
+      </div>
+
+      <section id="the-relational-failure">
+        <h2>1. Why Relational Databases Fail at Leaderboards</h2>
+        <p>In online multiplayer games, competitive battle royales, and mobile e-sports, leaderboards are mission-critical engagement engines. Players expect real-time feedback: every kill, quest completion, or match win must immediately reflect in their global rank and top-100 standing.</p>
+
+        <p>A naive implementation in an RDBMS (such as PostgreSQL or MySQL) relies on a simple schema:</p>
+
+        <pre><code class="language-sql">-- Naive relational leaderboard schema
+CREATE TABLE user_scores (
+    user_id BIGINT PRIMARY KEY,
+    score BIGINT NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_user_scores_score ON user_scores(score DESC);
+
+-- Query 1: Fetch Top 100 Players
+SELECT user_id, score FROM user_scores ORDER BY score DESC LIMIT 100;
+
+-- Query 2: Fetch Exact Rank of a Specific Player
+SELECT COUNT(*) + 1 AS rank FROM user_scores WHERE score > (
+    SELECT score FROM user_scores WHERE user_id = 98214
+);
+</code></pre>
+
+        <h3>The Architectural Breakdown</h3>
+        <ul>
+          <li><strong>B-Tree Index Contention &amp; Page Splits:</strong> At 100,000 updates/sec, continuous writes to the <code>score</code> column mutate the B-Tree index concurrently. This triggers heavy write amplification, page splitting, lock contention, and buffer pool churn.</li>
+          <li><strong>$O(N)$ Rank Queries:</strong> Computing a user's exact rank via <code>COUNT(*) WHERE score > X</code> forces the database engine to traverse all preceding index leaf pages or perform index range scans. For a player ranked at position 500,000 in a 10-million player table, the query scans half a million index tuples, causing database CPU spikes and multi-second latencies.</li>
+        </ul>
+      </section>
+
+      <section id="redis-zset-foundations">
+        <h2>2. Redis Sorted Sets (ZSET) Data Model</h2>
+        <p>The standard architectural building block for real-time leaderboards is the <strong>Redis Sorted Set (ZSET)</strong>. A Sorted Set is a dual-data structure mapping unique members (e.g., <code>userId</code>) to floating-point scores, maintaining elements in sorted order continuously.</p>
+
+        <div class="comparison-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Operation</th>
+                <th>Redis Command</th>
+                <th>Time Complexity</th>
+                <th>Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Insert / Update Score</td>
+                <td><code>ZADD leaderboard 4520 "user_102"</code></td>
+                <td>$O(\log N)$</td>
+                <td>Inserts or updates score, dynamically repositioning member.</td>
+              </tr>
+              <tr>
+                <td>Fetch Top $M$ Players</td>
+                <td><code>ZREVRANGE leaderboard 0 99 WITHSCORES</code></td>
+                <td>$O(\log N + M)$</td>
+                <td>Fast sequential traversal from the highest-ranked node.</td>
+              </tr>
+              <tr>
+                <td>Get User's Exact Rank</td>
+                <td><code>ZREVRANK leaderboard "user_102"</code></td>
+                <td>$O(\log N)$</td>
+                <td>Instantaneous rank calculation via SkipList spans.</td>
+              </tr>
+              <tr>
+                <td>Get Player Score</td>
+                <td><code>ZSCORE leaderboard "user_102"</code></td>
+                <td>$O(1)$</td>
+                <td>Instant hash table lookup by member string.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="skiplist-internals">
+        <h2>3. Under the Hood: SkipList &amp; Span Array Mechanics</h2>
+        <p>Redis implements a Sorted Set using a combination of a <strong>dict (Hash Table)</strong> and a custom <strong>zskiplist (Skip List)</strong>. The hash table provides $O(1)$ lookups from member string to score, while the SkipList provides $O(\log N)$ range and ordering operations.</p>
+
+        <h3>Why SkipList Instead of Red-Black / AVL Trees?</h3>
+        <p>William Pugh invented the Skip List in 1989 as a probabilistic alternative to balanced binary search trees. Salvatore Sanfilippo chose SkipLists for Redis because:</p>
+        <ol>
+          <li>SkipLists are memory-efficient and structurally simpler to implement than self-balancing trees.</li>
+          <li>Range queries (e.g., <code>ZRANGEBYSCORE</code>) are trivial: find the start node in $O(\log N)$ and follow the Level 1 forward pointers sequentially.</li>
+          <li>Crucially, SkipLists can be augmented with <strong>node spans</strong> to compute exact ranks in $O(\log N)$ time.</li>
+        </ol>
+
+        <div class="mermaid">
+flowchart LR
+  subgraph L3 ["Level 3: Forward Pointers (Span = 4)"]
+    Head3["Header"] --> |"span=4"| Node4_3["Node 4 (Score 80)"]
+    Node4_3 --> |"span=4"| Node8_3["Node 8 (Score 190)"]
+  end
+
+  subgraph L2 ["Level 2: Forward Pointers (Span = 2)"]
+    Head2["Header"] --> |"span=2"| Node2_2["Node 2 (Score 35)"]
+    Node2_2 --> |"span=2"| Node4_2["Node 4 (Score 80)"]
+    Node4_2 --> |"span=2"| Node6_2["Node 6 (Score 130)"]
+    Node6_2 --> |"span=2"| Node8_2["Node 8 (Score 190)"]
+  end
+
+  subgraph L1 ["Level 1: Base Linked List (Span = 1)"]
+    Head1["Header"] --> Node1["Node 1 (10)"]
+    Node1 --> Node2["Node 2 (35)"]
+    Node2 --> Node3["Node 3 (50)"]
+    Node3 --> Node4["Node 4 (80)"]
+    Node4 --> Node5["Node 5 (105)"]
+    Node5 --> Node6["Node 6 (130)"]
+    Node6 --> Node7["Node 7 (165)"]
+    Node7 --> Node8["Node 8 (190)"]
+  end
+        </div>
+
+        <h3>The Span Array &amp; $O(\log N)$ Rank Calculation</h3>
+        <p>In standard SkipLists, nodes only hold forward pointers. In Redis <code>zskiplistNode</code>, each level pointer contains both a <code>forward</code> pointer and an unsigned integer <code>span</code>, representing the number of Level 1 elements skipped by that pointer:</p>
+
+        <pre><code class="language-c">// Redis zskiplistNode structure definition
+typedef struct zskiplistNode {
+    sds ele;
+    double score;
+    struct zskiplistNode *backward;
+    struct zskiplistLevel {
+        struct zskiplistNode *forward;
+        unsigned long span; // Number of elements spanned across this jump!
+    } level[];
+} zskiplistNode;
+</code></pre>
+
+        <p>To find the exact rank of a user, Redis traverses the SkipList from the top level down. As it follows pointers whose destination score is strictly less than or equal to the target, it <strong>sums the spans</strong> along the search path:</p>
+
+        $$\text{Rank}(x) = \sum_{i \in \text{path}} \text{span}_i$$
+
+        <p>Because the expected path length in a SkipList with geometric factor $p=0.25$ is bounded by $O(\log_{1/p} N)$, rank computation requires at most a few dozen pointer hops, returning the exact rank among 100 million players in <strong>under 15 microseconds</strong>.</p>
+      </section>
+
+      <section id="ingestion-pipeline">
+        <h2>4. High-Throughput Write Ingestion via Kafka</h2>
+        <p>While a single Redis instance can execute 100k+ operations per second, large global games experience massive write spikes during live tournaments (millions of game-over events per second). Hitting Redis directly with individual network round-trips saturates the single-threaded Redis event loop.</p>
+
+        <div class="mermaid">
+flowchart TD
+  Clients["Game Clients (Millions of Players)"] --> API["API Gateway Cluster (Stateless)"]
+  API --> Kafka["Apache Kafka Ingestion Topic: 'game-scores'"]
+  
+  subgraph Consumer ["Ingestion Workers (Go / Rust)"]
+    W1["Worker 1: Micro-Batch Aggregator"]
+    W2["Worker 2: Micro-Batch Aggregator"]
+  end
+  Kafka --> W1
+  Kafka --> W2
+
+  subgraph RedisCluster ["Redis Tier"]
+    R1["Redis Shard 1 (Pipeline Writes)"]
+    R2["Redis Shard 2 (Pipeline Writes)"]
+    Replica1["Read Replica 1"]
+    Replica2["Read Replica 2"]
+    R1 -.-> Replica1
+    R2 -.-> Replica2
+  end
+  W1 -->|Pipeline ZADD| R1
+  W2 -->|Pipeline ZADD| R2
+        </div>
+
+        <p>Stateless ingestion workers consume from Kafka in micro-batches (e.g., 500 events or 10ms window), deduplicate updates for the same player, and flush commands to Redis using <strong>Redis Pipelining</strong>. Pipelining executes hundreds of <code>ZADD</code> commands within a single TCP packet, amortizing system call and context-switching overhead.</p>
+      </section>
+
+      <section id="horizontal-sharding">
+        <h2>5. Horizontal Sharding: Range vs Hash Partitioning</h2>
+        <p>When dataset size exceeds a single node's RAM, or when network interface throughput saturates, the leaderboard must be sharded across multiple nodes. Two sharding strategies exist:</p>
+
+        <h3>A. Hash Partitioning (Redis Cluster)</h3>
+        <p>Members are hashed to shards via $\text{hash}(userId) \pmod M$. While this balances write throughput perfectly, <strong>global ranking is broken</strong>. To find the global top 100, the application must query every single shard and perform an external $k$-way merge sort. Worse, computing a player's global rank requires querying all shards for their relative position ($O(M \log N)$), which is latency-prohibitive.</p>
+
+        <h3>B. Score-Range Partitioning (Hierarchical Bucketing)</h3>
+        <p>Data is partitioned by fixed score ranges across distinct Redis instances:</p>
+        <ul>
+          <li>Shard 1: Scores $3,001 - \infty$ (Grandmaster Tier)</li>
+          <li>Shard 2: Scores $2,001 - 3,000$ (Diamond Tier)</li>
+          <li>Shard 3: Scores $1,001 - 2,000$ (Gold Tier)</li>
+          <li>Shard 4: Scores $0 - 1,000$ (Bronze Tier)</li>
+        </ul>
+
+        <p>Each shard maintains its local ZSET plus a shared atomic counter recording its total member count ($C_k$). A player's global rank in Shard $k$ is computed instantly:</p>
+
+        $$\text{GlobalRank}(u) = 1 + \left( \sum_{j > k} C_j \right) + \text{LocalRank}_k(u)$$
+
+        <p>Fetching the Top 100 players only ever touches Shard 1, isolating query traffic from the vast majority of lower-tier players.</p>
+      </section>
+
+      <section id="read-scaling-caching">
+        <h2>6. Read Path Scaling &amp; Local Edge Caching</h2>
+        <p>Leaderboard access patterns are overwhelmingly read-heavy: for every 1 player score update, hundreds of players refresh the leaderboard. Querying Redis for identical Top-100 lists wastes socket buffers.</p>
+
+        <div class="note-box">
+          <strong>The Top-100 Cache Strategy:</strong> The global Top-100 list does not require millisecond-perfect consistency. A background worker refreshes an in-memory cache at the API Gateway or CDN edge every <strong>2.0 seconds</strong>. 99.8% of leaderboard read requests are served directly from API Gateway RAM in sub-millisecond time.
+        </div>
+      </section>
+
+      <section id="production-implementation">
+        <h2>7. Production Python &amp; Redis Implementation</h2>
+        <p>Below is an enterprise Python client implementing pipelined score updates, relative tier ranking, and cached top-K retrieval:</p>
+
+        <div class="code-wrapper">
+          <div class="code-header">
+            <span>leaderboard_service.py</span>
+            <button class="btn-copy">Copy</button>
+          </div>
+          <pre><code class="language-python">import redis
+import time
+from typing import List, Dict, Tuple
+
+class RealTimeLeaderboard:
+    def __init__(self, redis_client: redis.Redis, leaderboard_name: str = "global_lb"):
+        self.r = redis_client
+        self.key = leaderboard_name
+        self._cache_top100: List[Tuple[str, float]] = []
+        self._last_cache_time = 0.0
+
+    def batch_update_scores(self, updates: Dict[str, float]) -> None:
+        """Pipelined score submission to minimize TCP round-trips."""
+        pipe = self.r.pipeline(transaction=False)
+        for user_id, score in updates.items():
+            pipe.zadd(self.key, {user_id: score})
+        pipe.execute()
+
+    def get_player_standing(self, user_id: str) -> Dict[str, any]:
+        """Fetch exact 1-indexed rank and score for a user."""
+        pipe = self.r.pipeline()
+        pipe.zrevrank(self.key, user_id)
+        pipe.zscore(self.key, user_id)
+        rank, score = pipe.execute()
+
+        if rank is None:
+            return {"user_id": user_id, "rank": None, "score": None}
+
+        return {
+            "user_id": user_id,
+            "rank": rank + 1,  # Convert 0-indexed to 1-indexed
+            "score": score
+        }
+
+    def get_top_k(self, k: int = 100, cache_ttl: float = 2.0) -> List[Tuple[str, float]]:
+        """Fetch top K players with local memory caching."""
+        now = time.time()
+        if now - self._last_cache_time > cache_ttl or len(self._cache_top100) < k:
+            # Query Redis ZREVRANGE: O(log N + K)
+            raw = self.r.zrevrange(self.key, 0, k - 1, withscores=True)
+            self._cache_top100 = [(member.decode('utf-8'), score) for member, score in raw]
+            self._last_cache_time = now
+
+        return self._cache_top100[:k]
+</code></pre>
+        </div>
+      </section>
+
+      <section id="architectural-takeaways">
+        <h2>8. Key Architectural Takeaways</h2>
+        <div class="note-box">
+          <ul>
+            <li><strong>B-Trees Break Under Sort+Write:</strong> Avoid RDBMS <code>ORDER BY score LIMIT K</code>; high-frequency writes cause catastrophic index lock contention and B-tree page splits.</li>
+            <li><strong>SkipLists Enable O(log N) Ranking:</strong> Redis ZSETs leverage span-augmented SkipLists to compute exact user ranks in microseconds, regardless of dataset size.</li>
+            <li><strong>Decouple Ingestion with Kafka:</strong> Buffer raw game-over events in Kafka and write to Redis using pipelined micro-batches to prevent event-loop saturation.</li>
+            <li><strong>Score-Range Sharding Preserves Global Ordering:</strong> For datasets exceeding a single node, partition by score tiers with atomic shard counters rather than hash sharding.</li>
+          </ul>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-col">
+        <div class="footer-brand">
+          <div class="brand-icon">⚡</div>
+          <span class="footer-title">System Design Notes</span>
+        </div>
+        <p class="footer-desc">Production-grade architecture dissections, distributed systems engineering, and first-principles technical notes.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Real-Time &amp; In-Memory Systems</h5>
+        <ul>
+          <li><a href="realtime-gaming-leaderboard-system-design.html">Gaming Leaderboard Design</a></li>
+          <li><a href="dragonflydb-bplus-tree-sorted-set.html">DragonflyDB B+ Tree Sorted Set</a></li>
+          <li><a href="dragonflydb-dashtable-internals.html">DragonflyDB DashTable</a></li>
+          <li><a href="paypal-thundering-herd-cache-stampede.html">PayPal Thundering Herd</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Distributed Databases</h5>
+        <ul>
+          <li><a href="amazon-aurora-cloud-native-databases.html">Amazon Aurora Architecture</a></li>
+          <li><a href="stripe-scaling-mongodb-5m-qps.html">Stripe MongoDB 5M QPS</a></li>
+          <li><a href="github-database-sharding-monolith.html">GitHub Database Sharding</a></li>
+          <li><a href="openai-postgres-scaling-chatgpt.html">OpenAI Postgres Scaling</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>&copy; 2026 System Design Notes. Editorial &amp; Technical Analysis curated by Arpit Bhayani Architecture Synthesis.</p>
+    </div>
+  </footer>
+
+  <script src="../assets/js/main.js"></script>
+</body>
+</html>
