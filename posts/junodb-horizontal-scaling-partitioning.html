@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>How JunoDB Scales Horizontally: Consistent Hashing, Virtual Shards &amp; Online Rebalancing — System Design Notes</title>
+  <meta name="description" content="Deep dive into PayPal JunoDB's horizontal scalability architecture: consistent hashing rings, virtual shards, zero-downtime shard migration, and dynamic cluster rebalancing under financial workloads.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css">
+  <link rel="stylesheet" href="../blog-theme.css">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body class="blog-post-page">
+  <div id="progress" aria-hidden="true"></div>
+
+  <header class="site-header">
+    <div class="header-container">
+      <a class="site-name" href="../index.html">
+        <span class="brand-icon">⚡</span>
+        <span>System Design Notes</span>
+      </a>
+      <nav class="site-nav" aria-label="Main">
+        <a href="../index.html">All Notes</a>
+        <a href="../index.html#categories">Categories</a>
+        <a href="../Docs/JunoDB_Horizontal_Scaling_Partitioning_Technical_Breakdown.pdf" class="nav-download-btn" target="_blank" download>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download PDF
+        </a>
+      </nav>
+      <div class="swatches" role="group" aria-label="Colour theme">
+        <button class="swatch" data-set-theme="light" style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+        <button class="swatch" data-set-theme="dark" style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+        <button class="swatch" data-set-theme="sepia" style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+      </div>
+    </div>
+  </header>
+
+  <div class="post-layout">
+    <aside class="post-sidebar">
+      <div class="sidebar-sticky">
+        <div class="sidebar-header">
+          <span class="badge-post">JunoDB Series #3</span>
+          <span class="reading-time">23 min read</span>
+        </div>
+        <nav class="toc" aria-label="Table of Contents">
+          <h4>Table of Contents</h4>
+          <ul>
+            <li><a href="#scaling-challenge">1. The Horizontal Scaling Challenge</a></li>
+            <li><a href="#consistent-hashing">2. Consistent Hashing &amp; Murmur3</a></li>
+            <li><a href="#virtual-shards">3. Virtual Shards Topology</a></li>
+            <li><a href="#2d-matrix-mapping">4. Mapping Shards to the 2D Grid</a></li>
+            <li><a href="#online-migration">5. Zero-Downtime Shard Migration</a></li>
+            <li><a href="#dual-routing">6. Dual-Routing &amp; Catch-Up Sync</a></li>
+            <li><a href="#comparison">7. JunoDB vs. Redis Cluster vs. Cassandra</a></li>
+            <li><a href="#key-takeaways">8. Key Architectural Takeaways</a></li>
+          </ul>
+        </nav>
+        <div class="companion-box">
+          <div class="companion-title">Companion PDF</div>
+          <p>Download the verified 3-page technical breakdown for offline study and architecture review.</p>
+          <a href="../Docs/JunoDB_Horizontal_Scaling_Partitioning_Technical_Breakdown.pdf" class="download-link" target="_blank" download>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            JunoDB Horizontal Scaling PDF
+          </a>
+        </div>
+      </div>
+    </aside>
+
+    <main class="post-content">
+      <header class="post-header">
+        <div class="meta-row">
+          <span class="category-tag">Distributed Databases</span>
+          <time datetime="2026-01-16">January 16, 2026</time>
+          <span class="author-tag">Arpit Bhayani System Design Breakdown</span>
+        </div>
+        <h1>How JunoDB Scales Horizontally: Consistent Hashing, Virtual Shards &amp; Online Rebalancing</h1>
+        <p class="lead-text">
+          Scaling a financial key-value store to 350 billion requests per day requires elastic, linear horizontal scalability. Discover how PayPal's JunoDB combines consistent hashing, fixed virtual shards, and an online four-phase migration protocol to rebalance petabytes of financial state with zero downtime, zero lock contention, and bounded network saturation.
+        </p>
+      </header>
+
+      <section id="scaling-challenge">
+        <h2>1. The Horizontal Scaling Challenge</h2>
+        <p>
+          In a high-scale transactional platform like PayPal, traffic is notoriously spiky. Peak events such as Black Friday, Cyber Monday, and regional holidays generate 5x to 10x traffic surges within minutes. Traditional relational databases and statically partitioned systems face three critical failure modes during scale-out operations:
+        </p>
+        <div class="note-box">
+          <ul>
+            <li><strong>Massive Key Reshuffling:</strong> Simple hash-mod partitioning ($\text{shard} = \text{hash}(key) \pmod N$) forces $(N-1)/N$ of all cluster keys to move when the node count $N$ increments by 1. For a petabyte cluster, adding a single server causes virtually 100% data eviction and total network collapse.</li>
+            <li><strong>Stop-the-World Locking:</strong> Pausing writes on active partition shards to take consistent point-in-time snapshots halts client payments, triggering shopping cart abandonment and cascading timeout storms across microservices.</li>
+            <li><strong>Hotspot Skew:</strong> Non-uniform key distribution or celebrity account traffic concentrated on single physical servers exhausts IOPS and CPU, causing cascading node crashes even when cluster-wide utilization is below 40%.</li>
+          </ul>
+        </div>
+        <p>
+          JunoDB solves these fundamental challenges through a mathematically decoupled partitioning topology: <strong>Consistent Hashing</strong> mapped over a large, invariant space of <strong>Virtual Shards</strong>.
+        </p>
+      </section>
+
+      <section id="consistent-hashing">
+        <h2>2. Consistent Hashing &amp; Murmur3 Foundations</h2>
+        <p>
+          Consistent hashing maps both keys and storage partitions onto a continuous 64-bit integer ring spanning the interval $[0, 2^{64} - 1)$. JunoDB uses <strong>MurmurHash3 (64-bit)</strong> as its hash function due to its superior avalanche properties, sub-nanosecond computation speed, and uniform bit distribution.
+        </p>
+        <p>
+          Given a key $K$, its ring coordinate is computed deterministically:
+        </p>
+        <p>$$\text{RingPosition}(K) = \text{MurmurHash3\_x64\_64}(K) \pmod{2^{64}}$$</p>
+        <p>
+          When a cluster scales from $N$ to $N+1$ physical storage groups, consistent hashing guarantees that on average, only $1/(N+1)$ fraction of keys are relocated. The remaining $N/(N+1)$ keys stay exactly where they are, preserving cache locality and eliminating catastrophic re-shuffling storms.
+        </p>
+      </section>
+
+      <section id="virtual-shards">
+        <h2>3. Virtual Shards Topology: Eliminating Skew</h2>
+        <p>
+          A naive consistent hashing implementation places each physical server at a single coordinate on the hash ring. This introduces severe load variance: the random distance between neighboring tokens on the ring can vary by factors of 10x to 100x, leading to massive storage imbalances.
+        </p>
+        <p>
+          JunoDB eliminates this skew by decoupling <strong>Virtual Shards (Partitions)</strong> from <strong>Physical Storage Groups</strong>:
+        </p>
+        <div class="note-box">
+          <ul>
+            <li><strong>Fixed High Cardinality:</strong> JunoDB partitions the entire hash ring into a fixed, large number of virtual shards $S$ (typically $S = 1024$ or $S = 4096$). This number is chosen once at cluster initialization and never changes.</li>
+            <li><strong>Virtual-to-Physical Mapping:</strong> The cluster management coordinator (or Etcd metadata store) assigns multiple virtual shards uniformly across available physical Storage Groups.</li>
+            <li><strong>Bounded Imbalance:</strong> By assigning $V = S / N$ virtual shards per physical group, the load variance shrinks asymptotically:
+              $$\sigma \approx O\left(\frac{1}{\sqrt{V}}\right)$$
+              With hundreds of virtual shards per physical node, the load disparity between any two servers stays within $\pm 2\%$.
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="2d-matrix-mapping">
+        <h2>4. Mapping Shards to the 2D Storage Grid</h2>
+        <p>
+          In JunoDB, a physical storage unit is not a single server—it is a <strong>Storage Group</strong> consisting of 3 storage replicas placed across orthogonal Availability Zones (Failure Zones).
+        </p>
+        <p>
+          When key $K$ is hashed to Virtual Shard $S_i$, the routing engine looks up the routing table:
+        </p>
+        <pre><code class="language-go">// Simplified JunoDB Proxy Partition Routing Table
+type RoutingTable struct {
+    numVirtualShards uint32
+    shardToGroup     []uint16 // Map virtual shard ID -> Storage Group ID
+    groups           map[uint16]*StorageGroup
+}
+
+func (rt *RoutingTable) Route(key []byte) (*StorageGroup, uint32) {
+    hash := murmur3.Sum64(key)
+    shardID := uint32(hash % uint64(rt.numVirtualShards))
+    groupID := rt.shardToGroup[shardID]
+    return rt.groups[groupID], shardID
+}</code></pre>
+        <p>
+          The proxy immediately fans out the read/write request to the 3 storage nodes residing in <code>StorageGroup[groupID]</code> across Zone 1, Zone 2, and Zone 3. Because the routing table is an in-memory flat array of 16-bit integers, lookup time is $O(1)$ and takes less than 15 nanoseconds per request.
+        </p>
+      </section>
+
+      <section id="online-migration">
+        <h2>5. Zero-Downtime Online Shard Migration Protocol</h2>
+        <p>
+          When seasonal traffic warrants adding new Storage Groups (e.g., expanding from 10 groups to 15 groups), a subset of virtual shards must move from existing groups to new groups. JunoDB achieves this online using a <strong>Four-Phase Migration Protocol</strong>:
+        </p>
+
+        <div class="note-box">
+          <h4>The Four Migration Phases</h4>
+          <ol>
+            <li><strong>Phase 1: Dual-Write &amp; Registration:</strong> The cluster orchestrator updates the cluster configuration. The proxy enters <em>migration mode</em> for the migrating shards. All new write operations for these shards are dispatched to both the Source Storage Group and Destination Storage Group. Reads continue serving exclusively from the Source.</li>
+            <li><strong>Phase 2: Historical Bulk Streaming:</strong> The Source storage nodes stream historical data (SSTable chunks or in-memory snapshot segments) for the migrating virtual shard directly to the Destination nodes. To preserve line-rate payment processing, this background streaming is strictly throttled by token-bucket rate limiters (e.g., max 50 MB/s per node).</li>
+            <li><strong>Phase 3: Catch-Up Delta Log Replay:</strong> During bulk transfer, keys modified by active transactions are recorded in a temporary transfer WAL (Write-Ahead Log). Once bulk data transfer completes, the destination replays the delta log until the replication lag drops below a 5ms threshold.</li>
+            <li><strong>Phase 4: Atomic Routing Cutover:</strong> The coordinator broadcasts a routing table update version. Proxies atomically switch read routing to the Destination group. Writes to the Source are discontinued. Once all proxies acknowledge the cutover, the Source schedules background tombstoning to reclaim disk and memory space.</li>
+          </ol>
+        </div>
+      </section>
+
+      <section id="dual-routing">
+        <h2>6. Dual-Routing &amp; Conflict Resolution Mechanics</h2>
+        <p>
+          During Phase 1 and Phase 2, concurrent operations can theoretically interleave. For example, what happens if an update arrives at the Destination before the bulk snapshot finishes?
+        </p>
+        <p>
+          JunoDB prevents resurrection bugs and stale overwrite anomalies through <strong>Monotonic Record Versioning &amp; Timestamps</strong>:
+        </p>
+        <ul>
+          <li>Every JunoDB record header carries a 64-bit creation timestamp and a monotonically increasing version counter.</li>
+          <li>When the Destination node ingests records from the historical bulk stream, it applies a <em>Last-Write-Wins (LWW)</em> check: if a record already exists with a higher version or later timestamp (injected by an active dual-write), the historical record is discarded.</li>
+          <li>Deletions are propagated as explicit tombstones with TTLs, preventing deleted keys from being resurrected by lagging bulk streams.</li>
+        </ul>
+      </section>
+
+      <section id="comparison">
+        <h2>7. Comparative Architectural Analysis</h2>
+        <table class="comparison-table">
+          <thead>
+            <tr>
+              <th>Feature / Metric</th>
+              <th>PayPal JunoDB</th>
+              <th>Redis Cluster</th>
+              <th>Apache Cassandra</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Partitioning Model</strong></td>
+              <td>Murmur3 + Fixed Virtual Shards (1024–4096)</td>
+              <td>CRC16 + Fixed 16,384 Hash Slots</td>
+              <td>Murmur3 + Tunable Virtual Nodes (vnodes)</td>
+            </tr>
+            <tr>
+              <td><strong>Re-sharding Disruption</strong></td>
+              <td>Zero downtime, rate-limited background streaming</td>
+              <td>Slot migration can stall single-threaded master</td>
+              <td>Heavy CPU/Disk compaction overhead during repair</td>
+            </tr>
+            <tr>
+              <td><strong>Write Routing</strong></td>
+              <td>Stateless Go Proxy with $O(1)$ routing table</td>
+              <td>Smart Client with <code>MOVED</code> / <code>ASK</code> redirects</td>
+              <td>Any node acts as coordinator (peer-to-peer)</td>
+            </tr>
+            <tr>
+              <td><strong>Quorum Guarantee During Migration</strong></td>
+              <td>Synchronous Quorum ($W=2$) enforced on both groups</td>
+              <td>Asynchronous master ACK during slot migration</td>
+              <td>Configurable, but risks stale reads under churn</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="key-takeaways">
+        <h2>8. Key Architectural Takeaways</h2>
+        <div class="note-box">
+          <ul>
+            <li><strong>Decouple Virtual Shards from Physical Machines:</strong> By using a large, fixed virtual partition space ($S \gg N$), cluster re-sharding becomes an exercise in reassigning logical shard pointers rather than calculating new mathematical boundaries.</li>
+            <li><strong>Stateless Proxies Absorb Migration Complexity:</strong> Client applications never handle <code>MOVED</code> or redirect loops. The stateless proxy layer encapsulates routing versioning, dual-writes, and atomic cutovers transparently.</li>
+            <li><strong>Rate-Limit Administrative Bandwidth:</strong> Unchecked data migrations will saturate network interfaces and trigger false-positive heartbeats, turning a routine scale-out into a catastrophic cluster partition. Always enforce strict token-bucket bandwidth caps.</li>
+            <li><strong>Versioned Writes Prevent Migration Resurrections:</strong> In-flight mutations must always supersede historical bulk copies using monotonic versions or physical timestamps to guarantee absolute financial data integrity.</li>
+          </ul>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-col">
+        <div class="footer-brand">
+          <div class="brand-icon">⚡</div>
+          <span class="footer-title">System Design Notes</span>
+        </div>
+        <p class="footer-desc">Production-grade architecture dissections, distributed systems engineering, and first-principles technical notes.</p>
+      </div>
+      <div class="footer-col">
+        <h5>JunoDB Pentology</h5>
+        <ul>
+          <li><a href="junodb-horizontal-scaling-partitioning.html">JunoDB Horizontal Scaling</a></li>
+          <li><a href="junodb-high-level-architecture-system-design.html">JunoDB High-Level Architecture</a></li>
+          <li><a href="junodb-overview-paypal-kv-store.html">JunoDB Overview</a></li>
+          <li><a href="junodb-six-nines-availability-replication.html">JunoDB Six 9s Availability</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Distributed Databases</h5>
+        <ul>
+          <li><a href="dragonflydb-dashtable-internals.html">DragonflyDB DashTable</a></li>
+          <li><a href="rockset-realtime-analytics-database-architecture.html">Rockset ALT Architecture</a></li>
+          <li><a href="amazon-aurora-cloud-native-databases.html">Amazon Aurora Architecture</a></li>
+          <li><a href="reddit-metadata-store-aurora-postgres.html">Reddit Metadata Store</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>&copy; 2026 System Design Notes. Editorial &amp; Technical Analysis curated by Arpit Bhayani Architecture Synthesis.</p>
+    </div>
+  </footer>
+
+  <script src="../assets/js/main.js"></script>
+</body>
+</html>

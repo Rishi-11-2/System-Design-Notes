@@ -657,6 +657,76 @@ const ARTICLES_DATA = [
     excerpt: "Technical deep dive into Slack's email domain classification architecture: the 10% threshold heuristic, event-driven Kafka stream processing, atomic upserts, and resolving counter drift via relative delta reconciliation healers.",
     tags: ["Slack", "Kafka", "Eventual Consistency", "Stream Processing", "Healer Pattern", "Distributed Counters"],
     featured: true
+  },
+  {
+    id: "junodb-overview-paypal-kv-store",
+    slug: "junodb-overview-paypal-kv-store.html",
+    title: "JunoDB Overview: PayPal's Open-Source Key-Value Store for Financial Scale",
+    category: "Distributed Databases",
+    categorySlug: "cloud-databases",
+    readTime: "24 min read",
+    date: "Jan 16, 2026",
+    badge: "Architecture Breakdown",
+    pdfSource: "Docs/JunoDB_Overview_PayPal_KV_Store_Technical_Breakdown.pdf",
+    excerpt: "Technical overview of JunoDB, PayPal's open-source distributed key-value store: processing 350 billion daily requests, six nines of availability (99.9999%), Go runtime architecture, and protecting core financial ledgers.",
+    tags: ["PayPal", "JunoDB", "Key-Value Store", "Go Runtime", "High Concurrency", "Fintech Scale"],
+    featured: true
+  },
+  {
+    id: "junodb-high-level-architecture-system-design",
+    slug: "junodb-high-level-architecture-system-design.html",
+    title: "High-Level Architecture and System Design of JunoDB: The 2D Storage Grid",
+    category: "Distributed Databases",
+    categorySlug: "cloud-databases",
+    readTime: "25 min read",
+    date: "Jan 16, 2026",
+    badge: "System Architecture",
+    pdfSource: "Docs/JunoDB_High_Level_Architecture_Technical_Breakdown.pdf",
+    excerpt: "Technical deep dive into JunoDB's high-level system design: stateless Go proxies, the 2D Storage Grid topology, synchronous quorum consensus, and eliminating single points of failure across financial data centers.",
+    tags: ["PayPal", "JunoDB", "2D Storage Grid", "Synchronous Quorum", "RocksDB", "Stateless Proxy"],
+    featured: true
+  },
+  {
+    id: "junodb-horizontal-scaling-partitioning",
+    slug: "junodb-horizontal-scaling-partitioning.html",
+    title: "How JunoDB Scales Horizontally: Consistent Hashing, Virtual Shards & Online Rebalancing",
+    category: "Distributed Databases",
+    categorySlug: "cloud-databases",
+    readTime: "23 min read",
+    date: "Jan 16, 2026",
+    badge: "Horizontal Scaling",
+    pdfSource: "Docs/JunoDB_Horizontal_Scaling_Partitioning_Technical_Breakdown.pdf",
+    excerpt: "Deep dive into PayPal JunoDB's horizontal scalability architecture: consistent hashing rings, virtual shards, zero-downtime shard migration, and dynamic cluster rebalancing under financial workloads.",
+    tags: ["PayPal", "JunoDB", "Consistent Hashing", "Virtual Shards", "Online Resharding", "Zero Downtime"],
+    featured: true
+  },
+  {
+    id: "junodb-six-nines-availability-replication",
+    slug: "junodb-six-nines-availability-replication.html",
+    title: "Achieving Six 9's Availability: The JunoDB Replication & Fault-Tolerance Architecture",
+    category: "High Availability",
+    categorySlug: "cloud-databases",
+    readTime: "24 min read",
+    date: "Jan 16, 2026",
+    badge: "Fault Tolerance",
+    pdfSource: "Docs/JunoDB_Six_Nines_Availability_Technical_Breakdown.pdf",
+    excerpt: "Technical analysis of how PayPal's JunoDB achieves 99.9999% availability (six nines): zero-latency multi-AZ quorums, active-active cross-datacenter replication, anti-entropy self-healing, and gray failure mitigation.",
+    tags: ["PayPal", "JunoDB", "Six Nines", "High Availability", "Quorum Consensus", "Gray Failures"],
+    featured: true
+  },
+  {
+    id: "junodb-security-architecture-tls-encryption",
+    slug: "junodb-security-architecture-tls-encryption.html",
+    title: "How JunoDB is Engineered for Banking-Grade Security: mTLS, Envelope Encryption & Cryptographic Shredding",
+    category: "Security & Compliance",
+    categorySlug: "foundations-scaling",
+    readTime: "22 min read",
+    date: "Jan 16, 2026",
+    badge: "Fintech Security",
+    pdfSource: "Docs/JunoDB_Security_Architecture_Technical_Breakdown.pdf",
+    excerpt: "Technical breakdown of PayPal JunoDB's security architecture: zero-trust mTLS encryption in transit, envelope encryption at rest, per-tenant cryptographic isolation, and instantaneous key shredding for PCI-DSS compliance.",
+    tags: ["PayPal", "JunoDB", "mTLS", "Envelope Encryption", "PCI-DSS", "Crypto-Shredding"],
+    featured: true
   }
 ];
 

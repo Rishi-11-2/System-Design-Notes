@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>High-Level Architecture and System Design of JunoDB: The 2D Storage Grid — System Design Notes</title>
+  <meta name="description" content="Technical deep dive into JunoDB's high-level system design: stateless Go proxies, the 2D Storage Grid topology, synchronous quorum consensus, and eliminating single points of failure across financial data centers.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css">
+  <link rel="stylesheet" href="../blog-theme.css">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+  <div id="progress" aria-hidden="true"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">Articles</a></li>
+          <li><a href="../index.html#system-eval">Architecture Index</a></li>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="nav-gh">GitHub</a></li>
+        </ul>
+        <div class="swatches" role="group" aria-label="Colour theme">
+          <button class="swatch" data-set-theme="light" style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+          <button class="swatch" data-set-theme="dark" style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+          <button class="swatch" data-set-theme="sepia" style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <header class="article-header">
+    <div class="article-header-inner">
+      <div class="post-category-badge">Distributed Systems &amp; Key-Value Stores</div>
+      <h1 class="article-title">High-Level Architecture and System Design of JunoDB: The 2D Storage Grid</h1>
+      <div class="article-meta">
+        <span>By Arpit Bhayani Architecture Synthesis</span>
+        <span>•</span>
+        <span>22 min read</span>
+        <span>•</span>
+        <span>Updated October 2026</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="article-body">
+    <aside class="table-of-contents">
+      <h3>Table of Contents</h3>
+      <ul class="toc-list">
+        <li><a href="#architectural-mandate">1. The FinTech Reliability Mandate</a></li>
+        <li><a href="#decoupled-three-tier-topology">2. The Decoupled Three-Tier Topology</a></li>
+        <li><a href="#stateless-proxy-tier">3. The Stateless Juno Proxy Tier</a></li>
+        <li><a href="#the-2d-storage-grid">4. The 2D Storage Grid Architecture</a></li>
+        <li><a href="#synchronous-quorum-protocol">5. Synchronous Quorum Consensus &amp; Versioning</a></li>
+        <li><a href="#storage-engine-internals">6. Storage Node Internals: RocksDB &amp; Memory</a></li>
+        <li><a href="#failure-domain-resilience">7. Failure Domain Resilience Analysis</a></li>
+        <li><a href="#key-takeaways">8. Key Architectural Takeaways</a></li>
+      </ul>
+    </aside>
+
+    <main class="article-content">
+      <div class="download-box">
+        <div class="download-box-text">
+          <h4>Download Technical Reference Document</h4>
+          <p>Get the complete 3-page engineering companion PDF covering the 2D Storage Grid matrix, quorum write algorithms, and proxy multiplexing mechanics.</p>
+        </div>
+        <a href="../Docs/JunoDB_High_Level_Architecture_Technical_Breakdown.pdf" download class="btn-primary">
+          <span>📥 Download 3-Page PDF</span>
+        </a>
+      </div>
+
+      <section id="architectural-mandate">
+        <h2>1. The FinTech Reliability Mandate</h2>
+        <p>In payment networks, a storage outage translates directly to stranded consumer transactions and severe regulatory sanctions. PayPal engineered JunoDB to guarantee <strong>six nines of availability (99.9999%)</strong> while sustaining hundreds of thousands of operations per second with sub-5ms latency.</p>
+
+        <p>Traditional key-value architectures fail to satisfy these constraints:</p>
+        <ul>
+          <li><strong>Master-Replica Architectures (e.g., Redis Sentinel/Cluster):</strong> When a master crashes, failover detection and election require 3–15 seconds of downtime. Worse, in-flight asynchronous replication writes are permanently lost.</li>
+          <li><strong>Unstructured Token Rings (e.g., standard Dynamo models):</strong> Placing replicas pseudo-randomly around a hash ring risks co-locating multiple replicas within the same top-of-rack (ToR) switch or physical power strip, causing correlated multi-replica failure during data center hardware incidents.</li>
+        </ul>
+      </section>
+
+      <section id="decoupled-three-tier-topology">
+        <h2>2. The Decoupled Three-Tier Topology</h2>
+        <p>JunoDB decouples client management, request coordination, and physical data persistence into three independent tiers:</p>
+
+        <div class="mermaid">
+flowchart TD
+  subgraph ClientApps ["Application Fleet (Thousands of Pods)"]
+    App1["Checkout Service"]
+    App2["Identity &amp; Auth Service"]
+    App3["Risk Decision Engine"]
+  end
+
+  subgraph L4Tier ["Network Ingress Tier"]
+    LB["Hardware / ECMP Layer-4 Load Balancers"]
+  end
+  ClientApps --> LB
+
+  subgraph ProxyTier ["Juno Proxy Tier (Stateless Routing &amp; Coordination)"]
+    P1["Juno Proxy Node 1 (Go)"]
+    P2["Juno Proxy Node 2 (Go)"]
+    P3["Juno Proxy Node 3 (Go)"]
+  end
+  LB --> P1
+  LB --> P2
+  LB --> P3
+
+  subgraph GridTier ["Juno 2D Storage Grid (Stateful Data Fleet)"]
+    subgraph Row1 ["Storage Group 1 (Shards 0–999)"]
+      N11["Node (1, 1)<br/>Zone A"]
+      N12["Node (1, 2)<br/>Zone B"]
+      N13["Node (1, 3)<br/>Zone C"]
+    end
+    subgraph Row2 ["Storage Group 2 (Shards 1000–1999)"]
+      N21["Node (2, 1)<br/>Zone A"]
+      N22["Node (2, 2)<br/>Zone B"]
+      N23["Node (2, 3)<br/>Zone C"]
+    end
+  end
+
+  P1 -->|Quorum Read/Write| N11
+  P1 -->|Quorum Read/Write| N12
+  P1 -->|Quorum Read/Write| N13
+  P2 -->|Quorum Read/Write| N21
+  P2 -->|Quorum Read/Write| N22
+  P2 -->|Quorum Read/Write| N23
+        </div>
+      </section>
+
+      <section id="stateless-proxy-tier">
+        <h2>3. The Stateless Juno Proxy Tier</h2>
+        <p>The <strong>Juno Proxy</strong> is an elastic compute layer written in Go that acts as the coordinator for all incoming operations. Proxies are 100% stateless:</p>
+
+        <div class="note-box">
+          <strong>The Benefits of Stateless Proxies:</strong>
+          <ul>
+            <li><strong>Elastic Autoscaling:</strong> If traffic surges during Black Friday, new proxy instances can be launched in seconds behind the L4 load balancers without moving a single byte of storage data.</li>
+            <li><strong>Connection Multiplexing:</strong> 100,000+ client application connections are terminated at the proxy tier, multiplexed down to small, persistent connection pools toward the backend storage nodes.</li>
+            <li><strong>Zero-Disruption Failover:</strong> If a proxy instance crashes, the L4 load balancer immediately re-routes client requests to adjacent peer proxies with zero application session loss.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="the-2d-storage-grid">
+        <h2>4. The 2D Storage Grid Architecture</h2>
+        <p>The core structural innovation of JunoDB is organizing storage servers into a <strong>Two-Dimensional (2D) Grid</strong> rather than an arbitrary ring:</p>
+
+        <div class="comparison-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Grid Dimension</th>
+                <th>Physical Representation</th>
+                <th>Architectural Purpose</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Rows (Storage Groups - SGs)</strong></td>
+                <td>Logical clusters of $R$ storage nodes.</td>
+                <td>Each row owns and replicates a dedicated partition of the key space (e.g., Shards $0 \dots K-1$).</td>
+              </tr>
+              <tr>
+                <td><strong>Columns (Failure Zones)</strong></td>
+                <td>Physical fault boundaries (Availability Zones, Racks, Power Feeds).</td>
+                <td>Ensures replicas are physically separated across independent power and networking infrastructure.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Fault Tolerance Mathematical Guarantee</h3>
+        <p>Let $R$ denote the replication factor (typically $R = 3$ or $R = 5$). In a 2D grid with 3 Availability Zones (AZ-A, AZ-B, AZ-C):</p>
+        $$\text{StorageNode}(i, j) \in \text{Row } i \times \text{Column } j$$
+        <p>If an entire Availability Zone (Column $j$) suffers a complete power grid collapse, <strong>every single Storage Group maintains $R-1$ surviving replicas</strong> in Columns $k \ne j$. Since quorum writes require only $W = \lfloor R/2 \rfloor + 1 = 2$ acknowledgments, the cluster continues operating at full write availability with <strong>zero downtime</strong>.</p>
+      </section>
+
+      <section id="synchronous-quorum-protocol">
+        <h2>5. Synchronous Quorum Consensus &amp; Versioning</h2>
+        <p>Unlike Redis or Cassandra which rely on asynchronous background replication or eventual consistency, JunoDB enforces <strong>synchronous quorum writes</strong>:</p>
+
+        <div class="callout">
+          <code>Quorum Rule: Q_read + Q_write > R</code><br>
+          <span style="font-size: 7.4pt; color: #57606a;">For R = 3: Q_write = 2, Q_read = 2. Guarantees that every successful write intersects with at least one replica in any subsequent read quorum.</span>
+        </div>
+
+        <h3>Two-Phase Quorum Write Protocol</h3>
+        <ol>
+          <li><strong>Dispatch:</strong> The Proxy computes the key's shard via consistent hashing and fans out parallel write requests to all 3 nodes in the assigned Storage Group.</li>
+          <li><strong>Prepare &amp; Version Check:</strong> Each storage node checks the record version. Every write carries an incrementing 64-bit version token and microsecond timestamp:
+            $$\text{Version}_{\text{new}} > \text{Version}_{\text{current}}$$
+          </li>
+          <li><strong>Quorum Acknowledgment:</strong> As soon as 2 out of 3 storage nodes persist the record and acknowledge success, the Proxy immediately returns <code>HTTP 200 OK</code> to the client. The third replica syncs asynchronously.</li>
+        </ol>
+      </section>
+
+      <section id="storage-engine-internals">
+        <h2>6. Storage Node Internals: RocksDB &amp; Memory</h2>
+        <p>Each JunoDB storage node is implemented in Go, featuring a pluggable dual-engine backend:</p>
+
+        <ul>
+          <li><strong>Memory-Only Engine:</strong> Backed by Go memory pools and concurrent hash maps. Optimized for ephemeral OAuth sessions and high-churn temporary cart data, achieving sub-millisecond latencies.</li>
+          <li><strong>Persistent Engine (RocksDB):</strong> Embedded Log-Structured Merge-tree (LSM) engine running over local PCIe NVMe SSDs. Incoming mutations append to in-memory <code>MemTables</code> and Write-Ahead Logs (WAL) before flushing to immutable SSTables, delivering high-throughput write performance for financial idempotency keys.</li>
+        </ul>
+      </section>
+
+      <section id="failure-domain-resilience">
+        <h2>7. Failure Domain Resilience Analysis</h2>
+        <div class="comparison-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Failure Event</th>
+                <th>JunoDB Behavior</th>
+                <th>Client Impact</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Single Proxy Node Crash</strong></td>
+                <td>L4 load balancer health check fails in &lt; 500ms; traffic shifted to peer proxies.</td>
+                <td><strong>Zero downtime;</strong> transparent retry by client library.</td>
+              </tr>
+              <tr>
+                <td><strong>Single Storage Node Crash</strong></td>
+                <td>Proxy completes reads and writes against the remaining 2 quorum replicas.</td>
+                <td><strong>Zero downtime;</strong> sub-5ms latency preserved.</td>
+              </tr>
+              <tr>
+                <td><strong>Entire AZ Outage (Column Loss)</strong></td>
+                <td>1/3 of all nodes drop simultaneously; remaining 2 AZs satisfy 2/3 quorums.</td>
+                <td><strong>Zero downtime;</strong> full read/write availability maintained.</td>
+              </tr>
+              <tr>
+                <td><strong>Network Partition (Split-Brain)</strong></td>
+                <td>Minority partition cannot satisfy $Q \ge 2$; rejects writes cleanly to preserve consistency.</td>
+                <td>Consistency preserved; zero data corruption.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="key-takeaways">
+        <h2>8. Key Architectural Takeaways</h2>
+        <div class="note-box">
+          <ul>
+            <li><strong>Decouple Compute from Storage:</strong> Stateless proxies isolate client connection churn and routing logic from stateful storage engines.</li>
+            <li><strong>The 2D Grid Eliminates Correlated Outages:</strong> Organizing storage into rows (shards) and columns (fault zones) mathematically guarantees surviving replicas during datacenter disasters.</li>
+            <li><strong>Synchronous Quorums Prevent Double Charges:</strong> Financial idempotency requires synchronous quorums; asynchronous replication introduces unacceptable data loss risks during failovers.</li>
+            <li><strong>Hybrid Storage Engines Match Workload Realities:</strong> Supporting both pure in-memory and NVMe-backed RocksDB engines allows JunoDB to serve both transient cache and permanent transaction logs within a unified platform.</li>
+          </ul>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-col">
+        <div class="footer-brand">
+          <div class="brand-icon">⚡</div>
+          <span class="footer-title">System Design Notes</span>
+        </div>
+        <p class="footer-desc">Production-grade architecture dissections, distributed systems engineering, and first-principles technical notes.</p>
+      </div>
+      <div class="footer-col">
+        <h5>JunoDB Pentology</h5>
+        <ul>
+          <li><a href="junodb-high-level-architecture-system-design.html">JunoDB High-Level Architecture</a></li>
+          <li><a href="junodb-overview-paypal-kv-store.html">JunoDB Overview</a></li>
+          <li><a href="junodb-horizontal-scaling-partitioning.html">JunoDB Horizontal Scaling</a></li>
+          <li><a href="junodb-six-nines-availability-replication.html">JunoDB Six 9s Availability</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Distributed Databases</h5>
+        <ul>
+          <li><a href="dragonflydb-dashtable-internals.html">DragonflyDB DashTable</a></li>
+          <li><a href="rockset-realtime-analytics-database-architecture.html">Rockset ALT Architecture</a></li>
+          <li><a href="amazon-aurora-cloud-native-databases.html">Amazon Aurora Architecture</a></li>
+          <li><a href="reddit-metadata-store-aurora-postgres.html">Reddit Metadata Store</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>&copy; 2026 System Design Notes. Editorial &amp; Technical Analysis curated by Arpit Bhayani Architecture Synthesis.</p>
+    </div>
+  </footer>
+
+  <script src="../assets/js/main.js"></script>
+</body>
+</html>

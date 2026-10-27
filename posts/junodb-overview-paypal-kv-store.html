@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Overview of JunoDB: PayPal's Open-Source Key-Value Store for Financial Scale — System Design Notes</title>
+  <meta name="description" content="Technical overview of JunoDB, PayPal's open-source distributed key-value store: processing 350 billion daily requests, six nines of availability (99.9999%), Go runtime architecture, and protecting core financial ledgers.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css">
+  <link rel="stylesheet" href="../blog-theme.css">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+  <div id="progress" aria-hidden="true"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">Articles</a></li>
+          <li><a href="../index.html#system-eval">Architecture Index</a></li>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="nav-gh">GitHub</a></li>
+        </ul>
+        <div class="swatches" role="group" aria-label="Colour theme">
+          <button class="swatch" data-set-theme="light" style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+          <button class="swatch" data-set-theme="dark" style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+          <button class="swatch" data-set-theme="sepia" style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <header class="article-header">
+    <div class="article-header-inner">
+      <div class="post-category-badge">Distributed Key-Value Stores &amp; FinTech Scale</div>
+      <h1 class="article-title">Overview of JunoDB: PayPal's Open-Source Key-Value Store for Financial Scale</h1>
+      <div class="article-meta">
+        <span>By Arpit Bhayani Architecture Synthesis</span>
+        <span>•</span>
+        <span>21 min read</span>
+        <span>•</span>
+        <span>Updated October 2026</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="article-body">
+    <aside class="table-of-contents">
+      <h3>Table of Contents</h3>
+      <ul class="toc-list">
+        <li><a href="#the-fintech-storage-gap">1. The FinTech Storage Gap at PayPal</a></li>
+        <li><a href="#why-existing-kv-stores-failed">2. Why Redis, Cassandra &amp; Memcached Failed</a></li>
+        <li><a href="#junodb-core-capabilities">3. JunoDB Core Capabilities &amp; Scale Metrics</a></li>
+        <li><a href="#high-level-topology">4. High-Level Architectural Topology</a></li>
+        <li><a href="#the-language-evolution">5. The C++ to Go Architectural Rewrite</a></li>
+        <li><a href="#critical-use-cases">6. Mission-Critical Use Cases at PayPal</a></li>
+        <li><a href="#key-takeaways">7. Key Architectural Takeaways</a></li>
+      </ul>
+    </aside>
+
+    <main class="article-content">
+      <div class="download-box">
+        <div class="download-box-text">
+          <h4>Download Technical Reference Document</h4>
+          <p>Get the complete 3-page engineering companion PDF covering JunoDB's topology, throughput benchmarks, and financial SLA metrics.</p>
+        </div>
+        <a href="../Docs/JunoDB_Overview_PayPal_KV_Store_Technical_Breakdown.pdf" download class="btn-primary">
+          <span>📥 Download 3-Page PDF</span>
+        </a>
+      </div>
+
+      <section id="the-fintech-storage-gap">
+        <h2>1. The FinTech Storage Gap at PayPal</h2>
+        <p>PayPal processes hundreds of billions of dollars annually, serving over 400 million active consumers and merchants worldwide. Behind every checkout button, money transfer, or debit authorization lies an extreme operational reality: millions of requests per second requiring sub-millisecond data lookups with an uncompromising availability target of <strong>six nines (99.9999%)</strong>—translating to less than <strong>31.5 seconds of total unplanned downtime per year</strong>.</p>
+
+        <p>In payment infrastructure, transactional ledgers (Oracle, MySQL, Spanner) provide ACID guarantees for financial ledger balances. However, relational ledgers cannot scale to absorb the hundreds of billions of auxiliary requests generated by modern financial applications:</p>
+        <ul>
+          <li><strong>User Authentication &amp; OAuth Sessions:</strong> Fast-expiring credentials verified on every API request.</li>
+          <li><strong>Real-Time Fraud &amp; Risk Scoring:</strong> Dynamic velocity checks (e.g., how many attempts were made from IP $X$ in the last 60 seconds).</li>
+          <li><strong>Distributed Idempotency Management:</strong> Caching unique transaction keys to guarantee payments are never double-charged during network retries.</li>
+        </ul>
+
+        <div class="note-box">
+          <strong>The Birth of JunoDB:</strong> To insulate core relational databases from query exhaustion while providing ironclad availability, PayPal built and later open-sourced <strong>JunoDB</strong>: a secure, distributed key-value store engineered specifically for mission-critical financial workloads.
+        </div>
+      </section>
+
+      <section id="why-existing-kv-stores-failed">
+        <h2>2. Why Redis, Cassandra &amp; Memcached Failed</h2>
+        <p>Before building a proprietary storage engine, PayPal extensively benchmarked existing industry-standard distributed caches and NoSQL systems:</p>
+
+        <div class="comparison-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Technology</th>
+                <th>Primary Limitation for PayPal FinTech Workloads</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Memcached</strong></td>
+                <td><strong>Pure In-Memory Volatility:</strong> Node restarts wipe all keys; zero durability for payment idempotency locks; lacks cross-datacenter replication.</td>
+              </tr>
+              <tr>
+                <td><strong>Redis Cluster</strong></td>
+                <td><strong>Asynchronous Replication Data Loss:</strong> Master-replica replication is asynchronous; failover during master crash risks lost updates (violating idempotency safety); single-threaded CPU scaling bottlenecks.</td>
+              </tr>
+              <tr>
+                <td><strong>Apache Cassandra</strong></td>
+                <td><strong>JVM Garbage Collection Spikes &amp; Latency Tail:</strong> JVM STW pauses violate strict sub-10ms p99 SLA; eventual consistency repairs (hinted handoffs / read repair) create read-stale windows unacceptable for anti-fraud.</td>
+              </tr>
+              <tr>
+                <td><strong>Aerospike</strong></td>
+                <td>High operational complexity and hardware licensing costs; lack of integrated native proxy-based security boundaries required for PCI-DSS compliance.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="junodb-core-capabilities">
+        <h2>3. JunoDB Core Capabilities &amp; Scale Metrics</h2>
+        <p>JunoDB was architected from first principles to bridge the gap between high-speed caching and persistent storage:</p>
+
+        <div class="callout">
+          <div class="callout-title">JunoDB Operational Scale at PayPal</div>
+          <ul>
+            <li><strong>Daily Request Volume:</strong> Over <strong>350 billion requests per day</strong> across global PayPal infrastructure.</li>
+            <li><strong>Availability SLA:</strong> <strong>99.9999% ("Six Nines")</strong> verified across multi-region deployments.</li>
+            <li><strong>Data Latency:</strong> Sub-millisecond p50 reads; p99 tail latency strictly bounded under <strong>10 milliseconds</strong>.</li>
+            <li><strong>Storage Hybrid:</strong> Dual storage engines supporting both ephemeral in-memory cache and persistent RocksDB/LMDB on local NVMe SSDs.</li>
+            <li><strong>Zero-Trust Security:</strong> Mandatory hardware-accelerated TLS in-transit and AES-256 encryption at-rest.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="high-level-topology">
+        <h2>4. High-Level Architectural Topology</h2>
+        <p>JunoDB decouples client connection management, request routing, and storage state into three independent layers:</p>
+
+        <div class="mermaid">
+flowchart TD
+  subgraph Clients ["Application Client Tier"]
+    C1["Payment Processing Service"]
+    C2["Fraud &amp; Risk Engine"]
+    C3["OAuth Session Gateway"]
+  end
+
+  subgraph LoadBalancing ["Hardware / L4 Load Balancer"]
+    LB["ECMP / L4 Load Balancer"]
+  end
+  Clients --> LB
+
+  subgraph ProxyTier ["Juno Proxy Tier (Stateless Routing)"]
+    P1["Juno Proxy Node 1 (Go)"]
+    P2["Juno Proxy Node 2 (Go)"]
+    P3["Juno Proxy Node 3 (Go)"]
+  end
+  LB --> P1
+  LB --> P2
+  LB --> P3
+
+  subgraph StorageGrid ["Juno Storage Tier (2D Grid Architecture)"]
+    subgraph Row1 ["Storage Group 1 (Shards 0-999)"]
+      S11["Node 1,1 (Zone A)"]
+      S12["Node 1,2 (Zone B)"]
+      S13["Node 1,3 (Zone C)"]
+    end
+    subgraph Row2 ["Storage Group 2 (Shards 1000-1999)"]
+      S21["Node 2,1 (Zone A)"]
+      S22["Node 2,2 (Zone B)"]
+      S23["Node 2,3 (Zone C)"]
+    end
+  end
+
+  P1 --> S11
+  P1 --> S12
+  P1 --> S13
+  P2 --> S21
+  P2 --> S22
+  P2 --> S23
+        </div>
+
+        <p>The <strong>Juno Proxy</strong> is completely stateless. It inspects incoming client requests, evaluates consistent hashing algorithms, executes synchronous quorum reads and writes across storage groups, and encrypts traffic without holding local storage state.</p>
+      </section>
+
+      <section id="the-language-evolution">
+        <h2>5. The C++ to Go Architectural Rewrite</h2>
+        <p>One of the most compelling engineering chapters in JunoDB's history is its language transformation. JunoDB was originally designed in the early 2010s as a high-performance <strong>C++ application</strong> modeled after Redis, using single-threaded <code>epoll</code> event loops to eliminate lock contention.</p>
+
+        <h3>Why PayPal Rewrote JunoDB in Go (Golang)</h3>
+        <ul>
+          <li><strong>Multi-Core Hardware Saturation:</strong> As cloud bare-metal servers evolved from 8-core CPUs to 64-core and 128-core architectures, single-threaded C++ processes required running dozens of distinct instances per host, creating immense operational port and memory fragmentation.</li>
+          <li><strong>Goroutines &amp; Concurrency:</strong> Go's lightweight runtime scheduler multiplexes hundreds of thousands of concurrent client connections over native goroutines with minimal stack overhead (2KB initial stack).</li>
+          <li><strong>Memory Safety in FinTech:</strong> Memory corruption bugs (buffer overflows, dangling pointers, use-after-free) in C++ present severe financial security liabilities. Go provides automated memory safety with low-latency garbage collection (&lt; 1ms STW pauses).</li>
+          <li><strong>Developer Velocity:</strong> Writing cluster management, consensus protocols, and monitoring tooling in Go accelerated PayPal's engineering delivery speed by 3&times;.</li>
+        </ul>
+      </section>
+
+      <section id="critical-use-cases">
+        <h2>6. Mission-Critical Use Cases at PayPal</h2>
+        <div class="comparison-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Use Case</th>
+                <th>Storage Mode</th>
+                <th>Latency SLA</th>
+                <th>Failure Consequence</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Payment Idempotency Keys</strong></td>
+                <td>Persistent (NVMe)</td>
+                <td>p99 &lt; 5 ms</td>
+                <td>Double charging customers on network retry.</td>
+              </tr>
+              <tr>
+                <td><strong>OAuth Access Tokens</strong></td>
+                <td>TTL In-Memory</td>
+                <td>p99 &lt; 2 ms</td>
+                <td>User logged out; checkout funnel drops.</td>
+              </tr>
+              <tr>
+                <td><strong>Risk &amp; Velocity Counters</strong></td>
+                <td>Persistent (NVMe)</td>
+                <td>p99 &lt; 4 ms</td>
+                <td>Fraudulent transactions slip through verification.</td>
+              </tr>
+              <tr>
+                <td><strong>Shopping Cart State</strong></td>
+                <td>TTL In-Memory</td>
+                <td>p99 &lt; 3 ms</td>
+                <td>Lost merchandise selections; customer abandonment.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="key-takeaways">
+        <h2>7. Key Architectural Takeaways</h2>
+        <div class="note-box">
+          <ul>
+            <li><strong>Shield the Transactional Ledger:</strong> Fast-growing auxiliary state (tokens, velocity counters, idempotency keys) must be offloaded to dedicated key-value infrastructure to keep relational ledgers healthy.</li>
+            <li><strong>Stateless Proxies Enable Fault Isolation:</strong> Isolating routing logic into stateless proxies allows storage nodes to focus on pure disk IO while client connections scale elastically.</li>
+            <li><strong>Availability Requires Synchronous Quorums:</strong> Achieving six nines in financial environments requires synchronous quorum writes across physical failure zones, preventing the data loss inherent to asynchronous replica topologies.</li>
+            <li><strong>Modern Runtime Primitives Pay Off:</strong> Moving from single-threaded C++ to Go unlocked multi-core hardware scaling while eliminating entire classes of memory safety vulnerabilities.</li>
+          </ul>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-col">
+        <div class="footer-brand">
+          <div class="brand-icon">⚡</div>
+          <span class="footer-title">System Design Notes</span>
+        </div>
+        <p class="footer-desc">Production-grade architecture dissections, distributed systems engineering, and first-principles technical notes.</p>
+      </div>
+      <div class="footer-col">
+        <h5>JunoDB Pentology</h5>
+        <ul>
+          <li><a href="junodb-overview-paypal-kv-store.html">JunoDB Overview</a></li>
+          <li><a href="junodb-high-level-architecture-system-design.html">JunoDB High-Level Architecture</a></li>
+          <li><a href="junodb-horizontal-scaling-partitioning.html">JunoDB Horizontal Scaling</a></li>
+          <li><a href="junodb-six-nines-availability-replication.html">JunoDB Six 9s Availability</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Distributed Databases</h5>
+        <ul>
+          <li><a href="dragonflydb-architecture-overview-6m-qps.html">DragonflyDB Architecture</a></li>
+          <li><a href="rockset-realtime-analytics-database-architecture.html">Rockset ALT Architecture</a></li>
+          <li><a href="stripe-scaling-mongodb-5m-qps.html">Stripe MongoDB 5M QPS</a></li>
+          <li><a href="reddit-metadata-store-aurora-postgres.html">Reddit Metadata Store</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>&copy; 2026 System Design Notes. Editorial &amp; Technical Analysis curated by Arpit Bhayani Architecture Synthesis.</p>
+    </div>
+  </footer>
+
+  <script src="../assets/js/main.js"></script>
+</body>
+</html>
