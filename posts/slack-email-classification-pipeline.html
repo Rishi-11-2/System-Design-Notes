@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>How Slack Classifies Emails at Scale: The 10% Threshold Heuristic and Eventually Consistent Counter Healing — System Design Notes</title>
+  <meta name="description" content="Technical deep dive into Slack's email domain classification architecture: the 10% threshold heuristic, event-driven Kafka stream processing, atomic upserts, and resolving counter drift via relative delta reconciliation healers.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css">
+  <link rel="stylesheet" href="../blog-theme.css">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+  <div id="progress" aria-hidden="true"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">Articles</a></li>
+          <li><a href="../index.html#system-eval">Architecture Index</a></li>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="nav-gh">GitHub</a></li>
+        </ul>
+        <div class="swatches" role="group" aria-label="Colour theme">
+          <button class="swatch" data-set-theme="light" style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+          <button class="swatch" data-set-theme="dark" style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+          <button class="swatch" data-set-theme="sepia" style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <header class="article-header">
+    <div class="article-header-inner">
+      <div class="post-category-badge">Asynchronous Systems &amp; Data Consistency</div>
+      <h1 class="article-title">How Slack Classifies Emails at Scale: The 10% Threshold Heuristic and Counter Healing</h1>
+      <div class="article-meta">
+        <span>By Arpit Bhayani Architecture Synthesis</span>
+        <span>•</span>
+        <span>20 min read</span>
+        <span>•</span>
+        <span>Updated October 2026</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="article-body">
+    <aside class="table-of-contents">
+      <h3>Table of Contents</h3>
+      <ul class="toc-list">
+        <li><a href="#the-domain-classification-problem">1. The Domain Classification Problem</a></li>
+        <li><a href="#the-10-percent-heuristic">2. The 10% Threshold Mathematical Heuristic</a></li>
+        <li><a href="#event-driven-architecture">3. Event-Driven Architecture with Kafka</a></li>
+        <li><a href="#atomic-upserts-role-transitions">4. Atomic Upserts &amp; Role Transitions</a></li>
+        <li><a href="#counter-drift-dilemma">5. The Counter Drift Dilemma Under At-Least-Once Delivery</a></li>
+        <li><a href="#delta-healer-architecture">6. The Eventual Consistency Delta Healer</a></li>
+        <li><a href="#production-implementation">7. Production Python &amp; SQL Implementation</a></li>
+        <li><a href="#architectural-takeaways">8. Key Architectural Takeaways</a></li>
+      </ul>
+    </aside>
+
+    <main class="article-content">
+      <div class="download-box">
+        <div class="download-box-text">
+          <h4>Download Technical Reference Document</h4>
+          <p>Get the complete 3-page engineering companion PDF covering the 10% domain classification heuristic, Kafka async event pipelines, and delta reconciliation math.</p>
+        </div>
+        <a href="../Docs/Slack_Email_Classification_Technical_Breakdown.pdf" download class="btn-primary">
+          <span>📥 Download 3-Page PDF</span>
+        </a>
+      </div>
+
+      <section id="the-domain-classification-problem">
+        <h2>1. The Domain Classification Problem</h2>
+        <p>In Slack's enterprise ecosystem, managing workspace memberships and user provisioning at scale presents complex security challenges. When a user creates an account or is invited to a workspace, Slack needs to determine whether their email domain (e.g., <code>@acme.com</code> vs. <code>@gmail.com</code>) is an <strong>Internal Organization Domain</strong> or an <strong>External Guest Domain</strong>.</p>
+
+        <p>This classification governs critical enterprise behavior:</p>
+        <ul>
+          <li><strong>Internal Domains:</strong> Permitted to auto-join workspace channels, discover organization directories, and invite teammates without explicit administrative approval.</li>
+          <li><strong>External Domains:</strong> Restricted to Single-Channel or Multi-Channel Guest roles, requiring explicit administrative sign-off to prevent unauthorized internal data exposure.</li>
+        </ul>
+
+        <p>Calculating these domain ratios synchronously during user signups would lock user tables, degrade API latency, and create database bottlenecks across thousands of enterprise tenants.</p>
+      </section>
+
+      <section id="the-10-percent-heuristic">
+        <h2>2. The 10% Threshold Mathematical Heuristic</h2>
+        <p>Slack codified an empirical classification heuristic: the <strong>10% Threshold Rule</strong>. A domain $d$ is classified as internal to workspace $w$ if at least 10% of active enterprise members share that email domain suffix:</p>
+
+        $$\text{IsInternal}(d, w) \iff \frac{C_{\text{domain}}(d, w)}{N_{\text{total}}(w)} \ge 0.10$$
+
+        <p>Where:</p>
+        <ul>
+          <li>$C_{\text{domain}}(d, w)$ is the count of active enterprise members in workspace $w$ with email suffix $d$.</li>
+          <li>$N_{\text{total}}(w)$ is the total count of active provisioned members in workspace $w$.</li>
+        </ul>
+
+        <div class="note-box">
+          <strong>The Engineering Trade-off:</strong> Computing $C_{\text{domain}}$ and $N_{\text{total}}$ on-the-fly via <code>SELECT COUNT(*) GROUP BY SUBSTRING_INDEX(email, '@', -1)</code> takes hundreds of milliseconds on large enterprise workspaces (100k+ employees). Slack maintains pre-aggregated counter tables updated asynchronously via event streams.
+        </div>
+      </section>
+
+      <section id="event-driven-architecture">
+        <h2>3. Event-Driven Architecture with Kafka</h2>
+        <p>Instead of calculating counts synchronously on the HTTP request-response path, Slack delegates all membership mutations to <strong>Apache Kafka</strong>:</p>
+
+        <div class="mermaid">
+flowchart TD
+  User["User Lifecycle Action<br/>(Join, Deactivate, Role Change)"] --> API["Slack Web App Tier"]
+  API -->|Push Event| Kafka["Kafka Topic: 'workspace_user_events'"]
+  
+  subgraph ConsumerTier ["Asynchronous Worker Fleet"]
+    Worker["Domain Aggregator Consumer"]
+    Worker -->|Atomic Upsert| DB[(Domains Database Table)]
+  end
+  Kafka --> Worker
+
+  subgraph HealerTier ["Background Reconciliation Tier"]
+    Healer["Periodic Healer Job"]
+    Healer -->|Snapshot Audit| MasterDB[(Primary User Store)]
+    Healer -->|Compute Delta: +N / -N| HealerKafka["Kafka Drift Correction"]
+  end
+  HealerKafka --> Worker
+        </div>
+
+        <p>When an action occurs (e.g., <code>user_created</code>, <code>user_deleted</code>, <code>role_updated</code>), an event payload is published to Kafka, offloading the database and ensuring user registration completes in &lt; 20 milliseconds.</p>
+      </section>
+
+      <section id="atomic-upserts-role-transitions">
+        <h2>4. Atomic Upserts &amp; Role Transitions</h2>
+        <p>Consumers process Kafka events and update the <code>domains</code> counter table. To avoid race conditions and expensive read-before-write checks, Slack uses <strong>Atomic Upserts</strong>:</p>
+
+        <div class="code-wrapper">
+          <div class="code-header">
+            <span>upsert_domain.sql</span>
+            <button class="btn-copy">Copy</button>
+          </div>
+          <pre><code class="language-sql">-- Atomic Upsert on User Creation
+INSERT INTO workspace_domains (workspace_id, domain, member_count, updated_at)
+VALUES (:workspace_id, :domain, 1, NOW())
+ON DUPLICATE KEY UPDATE 
+    member_count = member_count + 1,
+    updated_at = NOW();
+
+-- Atomic Transition on Role Change (e.g., Guest to Member)
+UPDATE workspace_domains 
+SET member_count = member_count + 1,
+    guest_count = guest_count - 1,
+    updated_at = NOW()
+WHERE workspace_id = :workspace_id AND domain = :domain;
+</code></pre>
+
+        <p>Because the database executes integer increments atomically, multiple concurrent workers can process events for the same workspace without lost updates.</p>
+      </section>
+
+      <section id="counter-drift-dilemma">
+        <h2>5. The Counter Drift Dilemma Under At-Least-Once Delivery</h2>
+        <p>A fundamental law of distributed message queues is that Kafka guarantees <strong>At-Least-Once Delivery</strong>, not exactly-once delivery across failure boundaries:</p>
+
+        <ul>
+          <li><strong>The Duplicate Delivery Scenario:</strong> A consumer reads a <code>user_created</code> event, executes <code>member_count = member_count + 1</code> in MySQL, but experiences a network timeout before committing its consumer offset back to Kafka.</li>
+          <li><strong>The Drift:</strong> Kafka re-delivers the event to a second consumer, which executes <code>member_count = member_count + 1</code> a second time. A single user has now incremented the counter by $+2$.</li>
+          <li><strong>Counter Drift:</strong> Over months of operations, dropped messages, re-deliveries, and network partitions cause the stored counters in <code>workspace_domains</code> to drift away from physical ground truth.</li>
+        </ul>
+      </section>
+
+      <section id="delta-healer-architecture">
+        <h2>6. The Eventual Consistency Delta Healer</h2>
+        <p>To repair counter drift without taking the database offline or blocking incoming user signups, Slack designed a background <strong>Reconciliation Healer</strong>.</p>
+
+        <h3>Why Naive Absolute Overwrites Fail</h3>
+        <p>A naive approach is for the healer to calculate the ground truth count and overwrite the database value:</p>
+        <div class="callout">
+          <code>Naive Overwrite: UPDATE workspace_domains SET member_count = :ground_truth WHERE domain = :domain</code>
+        </div>
+        <p>This introduces a severe <strong>concurrency race condition</strong>: if a genuine user creates an account while the healer is executing, the naive overwrite stomps over the valid $+1$ increment, creating fresh data corruption!</p>
+
+        <h3>Slack's Innovation: Relative Delta Adjustments</h3>
+        <ol>
+          <li>The healer scans user rows up to a specific snapshot timestamp $T_{\text{snapshot}}$.</li>
+          <li>It calculates the true count $C_{\text{true}}$ at $T_{\text{snapshot}}$.</li>
+          <li>It queries the stored database count $C_{\text{db}}$ at $T_{\text{snapshot}}$.</li>
+          <li>It computes the relative drift: $\Delta = C_{\text{true}} - C_{\text{db}}$.</li>
+          <li>If $\Delta \ne 0$, the healer pushes a <strong>drift correction delta</strong> into the Kafka stream:
+            <pre><code class="language-sql">UPDATE workspace_domains SET member_count = member_count + (:delta) WHERE domain = :domain;</code></pre>
+          </li>
+        </ol>
+
+        <p>Because the adjustment is relative ($\pm \Delta$), live concurrent increments execute seamlessly alongside the healer, allowing the system to converge gracefully to exact consistency.</p>
+      </section>
+
+      <section id="production-implementation">
+        <h2>7. Production Python &amp; SQL Implementation</h2>
+        <p>Below is an implementation of the reconciliation healer pipeline:</p>
+
+        <div class="code-wrapper">
+          <div class="code-header">
+            <span>email_domain_healer.py</span>
+            <button class="btn-copy">Copy</button>
+          </div>
+          <pre><code class="language-python">from dataclasses import dataclass
+from typing import Dict
+import time
+
+@dataclass
+class DomainDriftResult:
+    domain: str
+    stored_count: int
+    true_count: int
+    delta: int
+
+class SlackDomainHealer:
+    def __init__(self, db_client, kafka_producer):
+        self.db = db_client
+        self.producer = kafka_producer
+
+    def audit_workspace_domains(self, workspace_id: str) -> None:
+        snapshot_time = time.time()
+        
+        # 1. Compute ground-truth counts from primary users table
+        true_counts = self.db.execute("""
+            SELECT SUBSTRING_INDEX(email, '@', -1) AS domain, COUNT(*) AS cnt
+            FROM workspace_users 
+            WHERE workspace_id = %s AND deleted_at IS NULL AND created_at <= %s
+            GROUP BY domain;
+        """, (workspace_id, snapshot_time))
+
+        # 2. Fetch active stored counts from aggregate table
+        stored_counts = self.db.execute("""
+            SELECT domain, member_count 
+            FROM workspace_domains 
+            WHERE workspace_id = %s;
+        """, (workspace_id,))
+        stored_map = {row['domain']: row['member_count'] for row in stored_counts}
+
+        # 3. Calculate relative deltas
+        for row in true_counts:
+            domain = row['domain']
+            true_cnt = row['cnt']
+            stored_cnt = stored_map.get(domain, 0)
+            delta = true_cnt - stored_cnt
+
+            if delta != 0:
+                # 4. Publish drift correction message to Kafka
+                self.producer.send("workspace_domain_heals", {
+                    "workspace_id": workspace_id,
+                    "domain": domain,
+                    "delta": delta,
+                    "reason": "HEALER_AUDIT"
+                })
+                print(f"Dispatched heal delta for {domain}: {delta:+d}")
+</code></pre>
+        </div>
+      </section>
+
+      <section id="architectural-takeaways">
+        <h2>8. Key Architectural Takeaways</h2>
+        <div class="note-box">
+          <ul>
+            <li><strong>Embrace Eventual Consistency for Scale:</strong> Moving domain classification out of the synchronous signup request path keeps customer latency under 20ms while isolating database writes.</li>
+            <li><strong>Atomic Upserts Simplify Ingestion:</strong> Database-level atomic increments eliminate race conditions without requiring distributed distributed locks.</li>
+            <li><strong>Never Use Absolute Overwrites for Reconciliation:</strong> Absolute overwrites destroy concurrent in-flight mutations. Always apply relative delta adjustments ($\pm \Delta$) to heal drift.</li>
+            <li><strong>Decouple Healers from Live Pipelines:</strong> Running lightweight background snapshot audits provides a safety net that catches message duplication without impacting high-throughput stream processing.</li>
+          </ul>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-col">
+        <div class="footer-brand">
+          <div class="brand-icon">⚡</div>
+          <span class="footer-title">System Design Notes</span>
+        </div>
+        <p class="footer-desc">Production-grade architecture dissections, distributed systems engineering, and first-principles technical notes.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Event-Driven &amp; Messaging</h5>
+        <ul>
+          <li><a href="slack-email-classification-pipeline.html">Slack Email Classifier</a></li>
+          <li><a href="trello-rabbitmq-to-kafka-migration.html">Trello Kafka Migration</a></li>
+          <li><a href="kafka-exactly-once-semantics.html">Kafka Exactly-Once Semantics</a></li>
+          <li><a href="atlassian-cache-invalidation.html">Atlassian Cache Invalidation</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Payment &amp; Data Consistency</h5>
+        <ul>
+          <li><a href="stripe-idempotent-api-design.html">Stripe Idempotent APIs</a></li>
+          <li><a href="stripe-zero-downtime-schema-migrations.html">Stripe Schema Migrations</a></li>
+          <li><a href="bitbucket-read-your-write-consistency.html">Bitbucket RYW Consistency</a></li>
+          <li><a href="reddit-metadata-store-aurora-postgres.html">Reddit Metadata Store</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>&copy; 2026 System Design Notes. Editorial &amp; Technical Analysis curated by Arpit Bhayani Architecture Synthesis.</p>
+    </div>
+  </footer>
+
+  <script src="../assets/js/main.js"></script>
+</body>
+</html>

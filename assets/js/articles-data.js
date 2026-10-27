@@ -601,6 +601,62 @@ const ARTICLES_DATA = [
     excerpt: "Technical deep dive into Rockset's real-time isolation architecture: achieving sub-second data freshness and 100% compute isolation between ingestion, production APIs, and BI analytics using Virtual Instances and RocksDB-Cloud.",
     tags: ["Rockset", "Workload Isolation", "Zero Data Latency", "Virtual Instances", "RocksDB-Cloud", "Data Freshness"],
     featured: true
+  },
+  {
+    id: "reddit-metadata-store-aurora-postgres",
+    slug: "reddit-metadata-store-aurora-postgres.html",
+    title: "Designing Reddit's Unified Media Metadata Store: 100k RPS at 17ms p99 Latency",
+    category: "High-Scale Storage",
+    categorySlug: "cloud-databases",
+    readTime: "22 min read",
+    date: "Jan 16, 2026",
+    badge: "Architecture Deep Dive",
+    pdfSource: "Docs/Reddit_Metadata_Store_Technical_Breakdown.pdf",
+    excerpt: "How Reddit unified disparate Cassandra and DynamoDB silos into AWS Aurora PostgreSQL, achieving 100k requests/sec at 17ms p99 latency without an external read-through cache using PgBouncer transaction pooling and covering indexes.",
+    tags: ["Reddit", "PostgreSQL", "Aurora", "PgBouncer", "Connection Pooling", "High Throughput", "No Cache"],
+    featured: true
+  },
+  {
+    id: "instagram-disable-garbage-collection-python",
+    slug: "instagram-disable-garbage-collection-python.html",
+    title: "Disabling Garbage Collection at Instagram: How Disabling Cyclic GC Saved Millions",
+    category: "Runtime & Memory",
+    categorySlug: "foundations-scaling",
+    readTime: "21 min read",
+    date: "Jan 16, 2026",
+    badge: "Deep Dive",
+    pdfSource: "Docs/Instagram_Disable_GC_Python_Technical_Breakdown.pdf",
+    excerpt: "How Instagram saved 27% RAM and boosted web server throughput by 10% by explicitly disabling Python's cyclic garbage collection, preserving Linux Copy-on-Write (CoW) memory and inspiring Python 3.7's gc.freeze().",
+    tags: ["Instagram", "Python", "CPython", "Garbage Collection", "Copy-on-Write", "Memory Management", "Django"],
+    featured: true
+  },
+  {
+    id: "stripe-idempotent-api-design",
+    slug: "stripe-idempotent-api-design.html",
+    title: "Designing Idempotent API Endpoints for Payments: The Stripe Architecture",
+    category: "Payment Architecture",
+    categorySlug: "foundations-scaling",
+    readTime: "22 min read",
+    date: "Jan 16, 2026",
+    badge: "Architecture Breakdown",
+    pdfSource: "Docs/Stripe_Idempotent_API_Design_Technical_Breakdown.pdf",
+    excerpt: "Technical deep dive into Stripe's idempotent API architecture: client-generated idempotency keys, atomic state transitions, distributed locking, payload SHA-256 verification, and eliminating double-charging in payment infrastructure.",
+    tags: ["Stripe", "Idempotency", "Payments", "Distributed Transactions", "Two-Phase Locking", "API Design"],
+    featured: true
+  },
+  {
+    id: "slack-email-classification-pipeline",
+    slug: "slack-email-classification-pipeline.html",
+    title: "How Slack Classifies Emails at Scale: The 10% Threshold Heuristic and Counter Healing",
+    category: "Asynchronous Systems",
+    categorySlug: "case-studies",
+    readTime: "20 min read",
+    date: "Jan 16, 2026",
+    badge: "Architecture Breakdown",
+    pdfSource: "Docs/Slack_Email_Classification_Technical_Breakdown.pdf",
+    excerpt: "Technical deep dive into Slack's email domain classification architecture: the 10% threshold heuristic, event-driven Kafka stream processing, atomic upserts, and resolving counter drift via relative delta reconciliation healers.",
+    tags: ["Slack", "Kafka", "Eventual Consistency", "Stream Processing", "Healer Pattern", "Distributed Counters"],
+    featured: true
   }
 ];
 

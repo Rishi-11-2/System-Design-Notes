@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Designing Reddit's Unified Media Metadata Store: 100k RPS at 17ms p99 Latency — System Design Notes</title>
+  <meta name="description" content="Technical deep dive into Reddit's media metadata store architecture: consolidating disparate Cassandra and DynamoDB silos into AWS Aurora PostgreSQL, PgBouncer pooling, cache-less 100k RPS serving, and sub-17ms p99 latency.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css">
+  <link rel="stylesheet" href="../blog-theme.css">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+  <div id="progress" aria-hidden="true"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">Articles</a></li>
+          <li><a href="../index.html#system-eval">Architecture Index</a></li>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="nav-gh">GitHub</a></li>
+        </ul>
+        <div class="swatches" role="group" aria-label="Colour theme">
+          <button class="swatch" data-set-theme="light" style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+          <button class="swatch" data-set-theme="dark" style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+          <button class="swatch" data-set-theme="sepia" style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <header class="article-header">
+    <div class="article-header-inner">
+      <div class="post-category-badge">High-Scale Storage &amp; Relational Engineering</div>
+      <h1 class="article-title">Designing Reddit's Unified Media Metadata Store: 100k RPS at 17ms p99 Latency</h1>
+      <div class="article-meta">
+        <span>By Arpit Bhayani Architecture Synthesis</span>
+        <span>•</span>
+        <span>22 min read</span>
+        <span>•</span>
+        <span>Updated October 2026</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="article-body">
+    <aside class="table-of-contents">
+      <h3>Table of Contents</h3>
+      <ul class="toc-list">
+        <li><a href="#the-fragmented-media-problem">1. The Fragmented Media Metadata Problem</a></li>
+        <li><a href="#why-no-read-through-cache">2. The Radical Decision: No Read-Through Cache</a></li>
+        <li><a href="#aurora-postgres-architecture">3. AWS Aurora PostgreSQL Storage Foundations</a></li>
+        <li><a href="#pgbouncer-connection-pooling">4. PgBouncer Architecture &amp; Connection Multiplexing</a></li>
+        <li><a href="#schema-partitioning-indexing">5. Relational Schema &amp; Partition Pruning</a></li>
+        <li><a href="#cdc-event-streaming">6. Zero-Downtime Migration &amp; Kafka CDC Pipeline</a></li>
+        <li><a href="#empirical-benchmarks">7. Empirical 100k RPS Latency Telemetry</a></li>
+        <li><a href="#architectural-takeaways">8. Key Architectural Takeaways</a></li>
+      </ul>
+    </aside>
+
+    <main class="article-content">
+      <div class="download-box">
+        <div class="download-box-text">
+          <h4>Download Technical Reference Document</h4>
+          <p>Get the complete 3-page engineering companion PDF covering Aurora PostgreSQL storage-compute separation, PgBouncer pool saturation equations, and telemetry graphs.</p>
+        </div>
+        <a href="../Docs/Reddit_Metadata_Store_Technical_Breakdown.pdf" download class="btn-primary">
+          <span>📥 Download 3-Page PDF</span>
+        </a>
+      </div>
+
+      <section id="the-fragmented-media-problem">
+        <h2>1. The Fragmented Media Metadata Problem</h2>
+        <p>Reddit serves tens of billions of media impressions daily—images, short videos, animated GIFs, audio tracks, and previews. Behind every post card rendered in the mobile feed or desktop browser lies a complex web of media metadata: video bitrate ladders (HLS/DASH manifests), progressive thumbnail resolutions, encoding codecs, aspect ratios, and media processing states.</p>
+
+        <p>Historically, Reddit's media metadata was fractured across disparate legacy databases:</p>
+        <ul>
+          <li><strong>Cassandra:</strong> Handled video transcoding states and segmented playlists.</li>
+          <li><strong>DynamoDB:</strong> Stored image dimensions and upload pointers.</li>
+          <li><strong>Postgres Monolith (Thing2):</strong> Maintained legacy post-to-media associations.</li>
+        </ul>
+
+        <p>This architectural fragmentation created severe operational penalties: multi-database distributed transactions were impossible, media metadata queries required multi-hop scatter-gather fan-outs, and cross-datastore consistency bugs plagued mobile client rendering.</p>
+      </section>
+
+      <section id="why-no-read-through-cache">
+        <h2>2. The Radical Decision: No Read-Through Cache</h2>
+        <p>When engineering a system to serve <strong>100,000 requests per second (RPS)</strong> at a strict <strong>p99 latency of 17 milliseconds</strong>, standard engineering orthodoxy dictates placing an in-memory caching tier (e.g., Redis or Memcached) in front of the database.</p>
+
+        <p>Reddit's engineering team deliberately rejected an external read-through cache:</p>
+
+        <div class="note-box">
+          <strong>The Cost of Distributed Caches at Hyperscale:</strong>
+          <ul>
+            <li><strong>Cache Invalidation Bugs:</strong> Media undergoes continuous asynchronous updates (transcoding completes, thumbnails finish, moderation flags trigger). Keeping Redis synchronized across asynchronous workers introduces race conditions and cache poisoning.</li>
+            <li><strong>Thundering Herd / Cache Stampedes:</strong> When a viral post hits the Reddit front page (r/all), cache eviction or TTL expiration causes thousands of concurrent requests to hammer the backing database simultaneously.</li>
+            <li><strong>Infrastructure Cost:</strong> Maintaining a multi-terabyte Redis cluster with replication and cross-AZ durability introduces immense capital and operational overhead.</li>
+          </ul>
+        </div>
+
+        <p>Reddit committed to serving all <strong>100k RPS directly from the database tier</strong>, relying on AWS Aurora PostgreSQL with aggressive connection pooling and optimized B-Tree index structures.</p>
+      </section>
+
+      <section id="aurora-postgres-architecture">
+        <h2>3. AWS Aurora PostgreSQL Storage Foundations</h2>
+        <p>Serving 100k RPS directly from PostgreSQL requires understanding Aurora's underlying cloud-native storage engine:</p>
+
+        <div class="mermaid">
+flowchart TD
+  subgraph AppTier ["Stateless Application Tier"]
+    C1["Feed Service Worker Fleet (Python/Baseplate)"]
+    C2["Media Transcoding Workers (Go)"]
+  end
+
+  subgraph PoolTier ["Connection Multiplexing Tier"]
+    PGB1["PgBouncer Pool (Transaction Mode)"]
+    PGB2["PgBouncer Pool (Transaction Mode)"]
+  end
+  C1 --> PGB1
+  C2 --> PGB2
+
+  subgraph AuroraCluster ["AWS Aurora PostgreSQL Tier"]
+    Primary["Aurora Writer (Ingest &amp; State Updates)"]
+    Replica1["Aurora Read Replica 1 (NVMe Buffer Cache)"]
+    Replica2["Aurora Read Replica 2 (NVMe Buffer Cache)"]
+    Replica3["Aurora Read Replica 3 (NVMe Buffer Cache)"]
+  end
+  PGB1 --> Primary
+  PGB2 --> Replica1
+  PGB2 --> Replica2
+  PGB2 --> Replica3
+
+  subgraph StorageEngine ["Shared Distributed Storage Fleet (Log is the Database)"]
+    S1["Storage Segment 1 (6-way Quorum)"]
+    S2["Storage Segment 2 (6-way Quorum)"]
+  end
+  Primary -.->|Async Redo Log Only| StorageEngine
+  Replica1 -.-> StorageEngine
+  Replica2 -.-> StorageEngine
+  Replica3 -.-> StorageEngine
+        </div>
+
+        <p>Aurora decouples compute from storage. Unlike standard PostgreSQL which writes full dirty 8KB pages to disk, Aurora writes only <strong>redo log records</strong> across 6 storage nodes spread across 3 Availability Zones (4/6 write quorum). Aurora read replicas do not perform local page writes; they stream log updates directly from storage, maintaining hot in-memory buffer caches with sub-10ms replica lag.</p>
+      </section>
+
+      <section id="pgbouncer-connection-pooling">
+        <h2>4. PgBouncer Architecture &amp; Connection Multiplexing</h2>
+        <p>Standard PostgreSQL employs a process-per-connection model. A fleet of 5,000 application worker processes trying to hold persistent TCP connections to PostgreSQL triggers severe memory bloat (each backend connection consumes 5–10MB RAM) and catastrophic CPU context switching.</p>
+
+        <p>Reddit deployed <strong>PgBouncer</strong> configured in <strong>Transaction Pooling Mode</strong>:</p>
+
+        <pre><code class="language-ini"># /etc/pgbouncer/pgbouncer.ini
+[databases]
+reddit_media_db = host=aurora-reader-endpoint port=5432 dbname=media_metadata
+
+[pgbouncer]
+pool_mode = transaction
+max_client_conn = 40000
+default_pool_size = 120
+reserve_pool_size = 30
+server_idle_timeout = 60
+query_timeout = 50ms
+</code></pre>
+
+        <p>In transaction pooling mode, a server database connection is assigned to a client <strong>only for the duration of a single transaction or query</strong>. Once the query completes, the connection is instantly recycled to the pool. This allows 30,000+ incoming client connections to be multiplexed across just 120 server backends per Aurora instance, completely eliminating backend connection thrashing.</p>
+      </section>
+
+      <section id="schema-partitioning-indexing">
+        <h2>5. Relational Schema &amp; Partition Pruning</h2>
+        <p>To ensure index lookups execute strictly in memory ($O(\log N)$ B-Tree seeks), Reddit designed a unified relational schema partitioned by media asset type and creation epoch:</p>
+
+        <div class="code-wrapper">
+          <div class="code-header">
+            <span>schema.sql</span>
+            <button class="btn-copy">Copy</button>
+          </div>
+          <pre><code class="language-sql">-- Unified Media Metadata Schema in Aurora PostgreSQL
+CREATE TABLE media_assets (
+    media_id VARCHAR(64) NOT NULL,
+    post_id VARCHAR(64) NOT NULL,
+    asset_type VARCHAR(16) NOT NULL, -- 'IMAGE', 'VIDEO', 'GIF'
+    status VARCHAR(16) NOT NULL,     -- 'PROCESSING', 'READY', 'FAILED'
+    width INT NOT NULL,
+    height INT NOT NULL,
+    duration_ms INT,
+    variants JSONB NOT NULL,          -- Bitrate ladders, HLS streams, webp thumbnails
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (media_id, created_at)
+) PARTITION BY RANGE (created_at);
+
+-- High-performance covering index for point lookups
+CREATE INDEX idx_media_post_status ON media_assets (post_id, status)
+INCLUDE (variants, width, height);
+</code></pre>
+
+        <p>Using <code>INCLUDE</code> columns in the B-Tree index enables <strong>Index-Only Scans</strong>. Aurora retrieves the required video streams and thumbnails directly from the index leaf page in RAM without issuing a second heap page seek, dropping lookup latency to <strong>under 1.5 milliseconds per row</strong>.</p>
+      </section>
+
+      <section id="cdc-event-streaming">
+        <h2>6. Zero-Downtime Migration &amp; Kafka CDC Pipeline</h2>
+        <p>Migrating billions of records from legacy Cassandra and DynamoDB databases to Aurora without downtime required a dual-write and asynchronous reconciliation architecture:</p>
+
+        <div class="mermaid">
+flowchart LR
+  Writer["App Services"] --> Kafka["Kafka Topic: 'media_events'"]
+  Kafka --> Consumer["Dual-Write Ingestion Consumer"]
+  Consumer -->|Write Old| Cass["Legacy Cassandra"]
+  Consumer -->|Write New| Aurora["Aurora PostgreSQL"]
+  
+  subgraph Reconciler ["Background Shadow Validator"]
+    Job["Reconciliation Worker"]
+    Job --> Cass
+    Job --> Aurora
+    Job --> Diff["Log Inconsistency &amp; Patch"]
+  end
+        </div>
+
+        <p>During the 6-month migration window, shadow validation workers continuously compared primary read traffic between Cassandra and Aurora. Once read parity reached 100% and error rates were verified at zero, the read path was switched atomically via dynamic feature flags.</p>
+      </section>
+
+      <section id="empirical-benchmarks">
+        <h2>7. Empirical 100k RPS Latency Telemetry</h2>
+        <div class="comparison-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Traffic Load</th>
+                <th>Throughput</th>
+                <th>p50 Latency</th>
+                <th>p95 Latency</th>
+                <th>p99 Latency</th>
+                <th>Cache Tier</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Normal Traffic</td>
+                <td>42,000 RPS</td>
+                <td>3.8 ms</td>
+                <td>8.2 ms</td>
+                <td>12.4 ms</td>
+                <td><strong>None (Direct Aurora)</strong></td>
+              </tr>
+              <tr>
+                <td>Front-Page Viral Spike</td>
+                <td><strong>104,000 RPS</strong></td>
+                <td><strong>4.9 ms</strong></td>
+                <td><strong>11.5 ms</strong></td>
+                <td><strong>16.8 ms</strong></td>
+                <td><strong>None (Direct Aurora)</strong></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="architectural-takeaways">
+        <h2>8. Key Architectural Takeaways</h2>
+        <div class="note-box">
+          <ul>
+            <li><strong>Caches Aren't Always Mandatory:</strong> When data is read-heavy and heavily mutated, eliminating the caching layer removes cache invalidation bugs and thundering herds, provided the database is properly tuned.</li>
+            <li><strong>Transaction Pooling Unlocks Relational Scale:</strong> Multiplexing 30,000 client connections into 120 Aurora server backends using PgBouncer prevents PostgreSQL process thrashing.</li>
+            <li><strong>Covering Indexes Avoid Heap Seeks:</strong> Index-Only Scans with <code>INCLUDE</code> clauses allow PostgreSQL to serve high-concurrency metadata lookups strictly from RAM.</li>
+            <li><strong>Aurora Decouples Replication Contention:</strong> Log-based replication allows read replicas to scale query throughput linearly without the write replication overhead of traditional engines.</li>
+          </ul>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-col">
+        <div class="footer-brand">
+          <div class="brand-icon">⚡</div>
+          <span class="footer-title">System Design Notes</span>
+        </div>
+        <p class="footer-desc">Production-grade architecture dissections, distributed systems engineering, and first-principles technical notes.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Relational &amp; Storage Architecture</h5>
+        <ul>
+          <li><a href="reddit-metadata-store-aurora-postgres.html">Reddit Metadata Store</a></li>
+          <li><a href="openai-postgres-scaling-chatgpt.html">OpenAI Postgres Scaling</a></li>
+          <li><a href="storage-compute-separation-aurora.html">Aurora Storage-Compute</a></li>
+          <li><a href="mysql-midpoint-insertion-buffer-pool.html">MySQL Buffer Pool</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Distributed Databases</h5>
+        <ul>
+          <li><a href="github-database-sharding-monolith.html">GitHub Database Sharding</a></li>
+          <li><a href="stripe-scaling-mongodb-5m-qps.html">Stripe MongoDB 5M QPS</a></li>
+          <li><a href="dragonflydb-dashtable-internals.html">DragonflyDB DashTable</a></li>
+          <li><a href="bitcask-storage-engine.html">Bitcask Storage Engine</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>&copy; 2026 System Design Notes. Editorial &amp; Technical Analysis curated by Arpit Bhayani Architecture Synthesis.</p>
+    </div>
+  </footer>
+
+  <script src="../assets/js/main.js"></script>
+</body>
+</html>
