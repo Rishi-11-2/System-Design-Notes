@@ -3,35 +3,34 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Sample post</title>
+  <title>Sample post · System Design Notes</title>
 
   <!-- Applies the saved theme before first paint, so there is no flash -->
   <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="theme.css">
 </head>
 <body>
-  <div id="progress" aria-hidden="true"></div>
-
   <header class="site-header">
     <a class="site-name" href="index.html">System Design Notes</a>
     <nav class="site-nav" aria-label="Main">
-      <a href="index.html" aria-current="page">Writing</a>
+      <a href="reader.html">Notes</a>
+      <a href="index.html">All 72 Notes</a>
       <a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank">GitHub</a>
     </nav>
     <div class="swatches" role="group" aria-label="Colour theme">
-      <button class="swatch" data-set-theme="light"  style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
-      <button class="swatch" data-set-theme="dark"   style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
-      <button class="swatch" data-set-theme="sepia"  style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+      <button class="swatch" data-set-theme="light" style="--s1:#f6f5f2;--s2:#2f5b8a" aria-label="Light"></button>
+      <button class="swatch" data-set-theme="dark"  style="--s1:#121519;--s2:#93b5df" aria-label="Dark"></button>
+      <button class="swatch" data-set-theme="sepia" style="--s1:#ede5d1;--s2:#46603c" aria-label="Sepia"></button>
     </div>
   </header>
 
   <main>
-    <article>
-      <header class="post-head">
+    <article class="note">
+      <header class="note-head">
         <h1>Why I stopped tuning for throughput first</h1>
         <p class="meta">
           <time datetime="2026-10-25">25 October 2026</time>

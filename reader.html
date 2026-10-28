@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>System Design Notes · Reading View</title>
+
+  <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="theme.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="site-name" href="index.html">System Design Notes</a>
+    <nav class="site-nav" aria-label="Main">
+      <a href="reader.html" aria-current="page">Reading View</a>
+      <a href="index.html">All 72 Notes</a>
+      <a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank">GitHub</a>
+    </nav>
+    <div class="swatches" role="group" aria-label="Colour theme">
+      <button class="swatch" data-set-theme="light" style="--s1:#f6f5f2;--s2:#2f5b8a" aria-label="Light"></button>
+      <button class="swatch" data-set-theme="dark"  style="--s1:#121519;--s2:#93b5df" aria-label="Dark"></button>
+      <button class="swatch" data-set-theme="sepia" style="--s1:#ede5d1;--s2:#46603c" aria-label="Sepia"></button>
+    </div>
+  </header>
+
+  <main class="reading-main">
+    <p class="intro">Notes on how large systems are put together: the patterns, the trade-offs, and the ways each one fails.</p>
+
+    <ul class="note-list">
+      <li>
+        <span class="topic">Storage</span>
+        <div>
+          <h2><a href="note.html">Caching strategies</a></h2>
+          <p>Cache-aside, read-through, write-through and write-behind, and the failure each one invites.</p>
+        </div>
+      </li>
+      <li>
+        <span class="topic">Storage</span>
+        <div>
+          <h2><a href="posts/github-database-sharding-monolith.html">Database sharding</a></h2>
+          <p>Splitting data across machines, choosing a shard key, and what you give up in return.</p>
+        </div>
+      </li>
+      <li>
+        <span class="topic">Distribution</span>
+        <div>
+          <h2><a href="posts/consistent-hashing.html">Consistent hashing</a></h2>
+          <p>Adding and removing nodes without reshuffling every key.</p>
+        </div>
+      </li>
+      <li>
+        <span class="topic">Networking</span>
+        <div>
+          <h2><a href="posts/atlassian-cloud-load-balancer-outage.html">Load balancing</a></h2>
+          <p>Round robin, least connections, and where layer 4 and layer 7 differ.</p>
+        </div>
+      </li>
+      <li>
+        <span class="topic">Messaging</span>
+        <div>
+          <h2><a href="posts/kafka-exactly-once-semantics.html">Message queues and streams</a></h2>
+          <p>Decoupling producers from consumers, and what each delivery guarantee costs.</p>
+        </div>
+      </li>
+      <li>
+        <span class="topic">Reliability</span>
+        <div>
+          <h2><a href="posts/stripe-rate-limiter-architecture.html">Rate limiting</a></h2>
+          <p>Token bucket, sliding window, and where in the stack to enforce limits.</p>
+        </div>
+      </li>
+      <li>
+        <span class="topic">Search &amp; NLP</span>
+        <div>
+          <h2><a href="posts/zomato-search-intent-nlp.html">Zomato Search Relevance &amp; Multi-Entity Intent NLP</a></h2>
+          <p>Overcoming naive Elasticsearch title boosts with BPE tokenization, Word2Vec embeddings, and BiLSTM-CRF sequence tagging.</p>
+        </div>
+      </li>
+    </ul>
+  </main>
+
+  <footer class="site-footer">
+    <p>System Design Notes • <a href="index.html">Switch to Full Engineering Portal (72 Articles)</a></p>
+  </footer>
+
+  <script src="theme.js"></script>
+</body>
+</html>

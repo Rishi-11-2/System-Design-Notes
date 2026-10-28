@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Caching strategies · System Design Notes</title>
+
+  <!-- Applies the saved theme before first paint, so there is no flash -->
+  <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="theme.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="site-name" href="index.html">System Design Notes</a>
+    <nav class="site-nav" aria-label="Main">
+      <a href="reader.html">Notes</a>
+      <a href="index.html">All 72 Notes</a>
+      <a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank">GitHub</a>
+    </nav>
+    <div class="swatches" role="group" aria-label="Colour theme">
+      <button class="swatch" data-set-theme="light" style="--s1:#f6f5f2;--s2:#2f5b8a" aria-label="Light"></button>
+      <button class="swatch" data-set-theme="dark"  style="--s1:#121519;--s2:#93b5df" aria-label="Dark"></button>
+      <button class="swatch" data-set-theme="sepia" style="--s1:#ede5d1;--s2:#46603c" aria-label="Sepia"></button>
+    </div>
+  </header>
+
+  <main>
+    <article class="note">
+      <header class="note-head">
+        <h1>Caching strategies</h1>
+        <p class="meta">
+          <time datetime="2026-10-25">Updated 25 October 2026</time>
+          <span>7 min read</span>
+        </p>
+      </header>
+
+      <p class="lede">A cache trades a little correctness for a lot of speed. Choosing a pattern is really choosing which kind of wrong you can live with.</p>
+
+      <p>Reading from memory is thousands of times faster than reading from a database across the network, and most systems read far more than they write. Put the two facts together and a cache is the cheapest speed-up available. The catch is that every cached value is a copy, and copies drift from the original.</p>
+
+      <h2>Where the cache sits</h2>
+
+      <p>Before picking a pattern, decide who is responsible for filling the cache. Either your application does it, or the cache does it on your behalf. Everything else follows from that choice.</p>
+
+      <h3>Cache-aside</h3>
+
+      <p>The application checks the cache first. On a miss it reads the database, stores the result, and returns it. The cache knows nothing about the database, which makes this the simplest pattern to add to an existing system, and the most common.</p>
+
+<pre><code>def get_user(user_id):
+    key = f"user:{user_id}"
+
+    cached = cache.get(key)
+    if cached is not None:
+        return cached                    # hit
+
+    user = db.query_user(user_id)        # miss: go to the source
+    cache.set(key, user, ttl=300)        # keep it for five minutes
+    return user
+
+def update_user(user_id, fields):
+    db.update_user(user_id, fields)
+    cache.delete(f"user:{user_id}")      # next read repopulates it</code></pre>
+
+      <p>Notice that a write deletes the cached value instead of updating it. Deleting is safer: two concurrent writers can set the cache in the wrong order, but they cannot delete in the wrong order.</p>
+
+      <h3>Read-through and write-through</h3>
+
+      <p>Here the cache sits in front of the database and talks to it directly. A read-through cache loads missing values itself. A write-through cache writes every update to the database before it acknowledges, so the two never disagree. You pay for that guarantee with slower writes.</p>
+
+      <h3>Write-behind</h3>
+
+      <p>The cache acknowledges the write immediately and flushes to the database later, often in batches. Writes become very fast and the database sees far less traffic. If the cache dies before it flushes, those writes are gone.</p>
+
+      <h2>Comparing the patterns</h2>
+
+      <table>
+        <thead>
+          <tr><th>Pattern</th><th>Who fills the cache</th><th>Writes go to</th><th>Main risk</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Cache-aside</td><td>The application, on a miss</td><td>Database, then invalidate</td><td>Stale reads until invalidation</td></tr>
+          <tr><td>Read-through</td><td>The cache, on a miss</td><td>Usually paired with write-through</td><td>Slow first request for every key</td></tr>
+          <tr><td>Write-through</td><td>The cache, on every write</td><td>Cache and database together</td><td>Higher write latency</td></tr>
+          <tr><td>Write-behind</td><td>The cache, on every write</td><td>Cache now, database later</td><td>Lost writes if the cache fails</td></tr>
+        </tbody>
+      </table>
+
+      <div class="callout">
+        <p><strong>Invalidation is the hard part.</strong> A time-to-live is a safety net, not a strategy. It limits how long a value can be wrong, but it does nothing to make it right in the meantime.</p>
+      </div>
+
+      <h2>When a popular key expires</h2>
+
+      <p>Imagine a key read ten thousand times a second that expires at noon. For a moment every request misses, and all of them hit the database together. This is a cache stampede, and it tends to happen exactly when load is highest.</p>
+
+      <blockquote>
+        <p>A cache hides your database's limits right up until it doesn't.</p>
+      </blockquote>
+
+      <p>Three habits blunt it:</p>
+
+      <ol>
+        <li>Let only one request rebuild a missing value while the others wait for it.</li>
+        <li>Add a small random jitter to every time-to-live, so keys do not expire in unison.</li>
+        <li>Serve the stale value while a fresh one loads in the background.</li>
+      </ol>
+
+      <h2>What to remember</h2>
+
+      <p>Start with cache-aside and a short time-to-live, because it is easy to reason about and easy to remove. Reach for write-through when readers must never see stale data, and for write-behind only when you can afford to lose the last few writes. Whatever you choose, measure the hit rate: a cache that rarely hits is just extra latency.</p>
+
+      <hr>
+
+      <p>Next in this series: consistent hashing, and how to add a cache node without invalidating everything.</p>
+    </article>
+  </main>
+
+  <footer class="site-footer">
+    <p>System Design Notes</p>
+  </footer>
+
+  <script src="theme.js"></script>
+</body>
+</html>

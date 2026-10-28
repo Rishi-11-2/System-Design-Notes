@@ -1,84 +1,59 @@
-/* ------------------------------------------------------------------
-   System Design Notes & Engineering Blog — Theme Tokens & Base Helpers
-   Light "Fog" · Dark "Midnight" · Sepia "Lamplight"
-   Follows system preference unless <html data-theme="light|dark|sepia"> is set.
-   Fonts: Literata (prose), Instrument Sans (interface), JetBrains Mono (code)
-------------------------------------------------------------------- */
+/* ==========================================================================
+   System Design Notes: reading theme
+
+   Three themes: light (default), dark, sepia.
+   Follows the system theme until a theme is chosen with the dots in the
+   header (stored in localStorage and set as <html data-theme="...">).
+
+   Fonts (loaded in each page's <head>):
+     Newsreader      reading text and headings
+     IBM Plex Sans   small interface text, tables, captions
+     IBM Plex Mono   code
+   ========================================================================== */
 
 :root {
-  color-scheme: light;
-  --bg: #f2f3ef;
-  --raised: #e9ebe5;
-  --ink: #1f272c;
-  --text: #1f272c;
-  --muted: #5e6a70;
-  --rule: #d5d9d1;
-  --border: #d5d9d1;
-  --code-bg: #e9ebe5;
-  --accent: #3d56a0;
+  color-scheme: light dark;
 
-  --serif: "Literata", "Source Serif 4", "Iowan Old Style", Charter, Georgia, serif;
-  --sans: "Instrument Sans", "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
-  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Consolas, monospace;
+  /* Light is a warm grey paper; dark is an ink blue-black, never pure black.
+     Body text sits near 11:1 contrast in every theme: clear, but not glaring. */
+  --bg:     light-dark(#f6f5f2, #121519);
+  --raised: light-dark(#ecebe6, #1a1f25);
+  --ink:    light-dark(#2a2d30, #cdd1d4);
+  --muted:  light-dark(#62676c, #8e959c);
+  --rule:   light-dark(#dcdad3, #272d34);
+  --accent: light-dark(#2f5b8a, #93b5df);
+  --tint:   color-mix(in srgb, var(--accent) 8%, var(--bg));
 
-  --measure: 72ch;
+  --weight: 400;
+
+  --serif: "Newsreader", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --sans:  "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono:  "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --measure: 36rem;  /* about 65 characters per line */
+  --bleed: 3rem;     /* how far code blocks and titles may extend past the text */
 }
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme]) {
-    color-scheme: dark;
-    --bg: #14181c;
-    --raised: #1b2127;
-    --ink: #c9d0d6;
-    --text: #c9d0d6;
-    --muted: #8c97a0;
-    --rule: #2a3138;
-    --border: #2a3138;
-    --code-bg: #1b2127;
-    --accent: #a3b8f2;
-  }
-}
-
-:root[data-theme="light"] {
-  color-scheme: light;
-  --bg: #f2f3ef;
-  --raised: #e9ebe5;
-  --ink: #1f272c;
-  --text: #1f272c;
-  --muted: #5e6a70;
-  --rule: #d5d9d1;
-  --border: #d5d9d1;
-  --code-bg: #e9ebe5;
-  --accent: #3d56a0;
-}
-
-:root[data-theme="dark"] {
-  color-scheme: dark;
-  --bg: #14181c;
-  --raised: #1b2127;
-  --ink: #c9d0d6;
-  --text: #c9d0d6;
-  --muted: #8c97a0;
-  --rule: #2a3138;
-  --border: #2a3138;
-  --code-bg: #1b2127;
-  --accent: #a3b8f2;
-}
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"]  { color-scheme: dark; }
 
 :root[data-theme="sepia"] {
   color-scheme: light;
-  --bg: #e8e0ce;
-  --raised: #dfd6c1;
-  --ink: #3a3224;
-  --text: #3a3224;
-  --muted: #62573f;
-  --rule: #d3c9b2;
-  --border: #d3c9b2;
-  --code-bg: #dfd6c1;
-  --accent: #7b4a2a;
+  --bg:     #ede5d1;
+  --raised: #e3d9c0;
+  --ink:    #3a3326;
+  --muted:  #6a5e49;
+  --rule:   #d8ccb0;
+  --accent: #46603c;
 }
 
-/* ---------- Base Reset (Non-Destructive) ---------- */
+/* Light text on a dark ground looks heavier than it is, so ease the weight. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) { --weight: 380; }
+}
+:root[data-theme="dark"] { --weight: 380; }
+
+/* ---------- Base ---------- */
 
 *, *::before, *::after { box-sizing: border-box; }
 
@@ -89,23 +64,30 @@ html {
 
 body {
   margin: 0;
-  padding: 0;
-  background-color: var(--bg);
+  padding: 0 1.5rem;
+  background: var(--bg);
   color: var(--ink);
-  font-family: var(--sans);
-  line-height: 1.6;
+  font-family: var(--serif);
+  font-weight: var(--weight);
+  font-size: clamp(1.1875rem, 1.12rem + 0.3vw, 1.3125rem);
+  line-height: 1.65;
+  font-optical-sizing: auto;
+  font-kerning: normal;
+  text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
-  transition: background-color 0.2s ease, color 0.2s ease;
+  hanging-punctuation: first;
+  overflow-wrap: break-word;
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
-main {
-  display: block;
-  width: 100%;
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  body { transition: none; }
 }
 
 ::selection {
-  background: var(--accent);
-  color: var(--bg);
+  background: color-mix(in srgb, var(--accent) 30%, var(--bg));
+  color: var(--ink);
 }
 
 :focus-visible {
@@ -114,44 +96,355 @@ main {
   border-radius: 2px;
 }
 
-/* ---------- Theme swatches ---------- */
+a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+  text-decoration-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  transition: text-decoration-color 0.15s ease;
+}
+a:hover { text-decoration-color: var(--accent); }
 
-.swatches {
+/* ---------- Page frame ---------- */
+
+.site-header,
+.site-footer {
+  width: 100%;
+  max-width: var(--measure);
+  margin-inline: auto;
+  font-family: var(--sans);
+  line-height: 1.4;
+}
+
+.site-header {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.5rem 0 0;
+  font-size: 0.9375rem;
 }
+
+.site-name {
+  color: var(--ink);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.site-nav {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+}
+.site-nav a {
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 0.875rem;
+}
+.site-nav a:hover,
+.site-nav a[aria-current="page"] {
+  color: var(--ink);
+}
+
+.site-footer {
+  padding: 2rem 0 3rem;
+  border-top: 1px solid var(--rule);
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+.site-footer p { margin: 0; }
+
+/* The page is a three-column grid: left margin, text, contents rail on the right */
+main.reading-main,
+main:has(article.note) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) min(var(--measure), 100%) minmax(0, 1fr);
+  padding: clamp(3rem, 8vw, 6rem) 0 clamp(4rem, 9vw, 7rem);
+}
+main.reading-main > *,
+main:has(article.note) > * { grid-column: 2; }
+
+/* ---------- Theme dots ---------- */
+
+.swatches { display: flex; gap: 0.1rem; margin-right: -0.2rem; }
 
 .swatch {
-  width: 1.15rem;
-  height: 1.15rem;
-  padding: 0;
-  border: 1px solid var(--border);
+  width: 1.6rem;
+  height: 1.6rem;
+  padding: 0.25rem;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+.swatch::before {
+  content: "";
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 1px solid var(--rule);
   border-radius: 50%;
   background: linear-gradient(135deg, var(--s1) 50%, var(--s2) 50%);
-  cursor: pointer;
   transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
-
-.swatch:hover {
-  transform: scale(1.15);
+.swatch:hover::before { transform: scale(1.12); }
+.swatch[aria-pressed="true"]::before {
+  box-shadow: 0 0 0 2px var(--bg), 0 0 0 3px var(--ink);
 }
 
-.swatch[aria-pressed="true"] {
-  box-shadow: 0 0 0 2px var(--bg), 0 0 0 3.5px var(--accent);
+/* ---------- Contents rail (built by theme.js; placed on the RIGHT side) ---------- */
+
+.toc { display: none; }
+
+@media (min-width: 74rem) {
+  main.reading-main > .toc,
+  main:has(article.note) > .toc {
+    display: block;
+    grid-column: 3;
+    grid-row: 1;
+    justify-self: start;
+    align-self: start;
+    position: sticky;
+    top: 2.5rem;
+    width: 14rem;
+    margin-left: 4rem;
+    margin-right: 0;
+    font-family: var(--sans);
+    font-size: 0.8125rem;
+    line-height: 1.4;
+  }
+  .toc ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    border-left: 1px solid var(--rule);
+  }
+  .toc li { margin: 0; }
+  .toc a {
+    display: block;
+    margin-left: -1px;
+    padding: 0.4rem 0 0.4rem 0.9rem;
+    border-left: 2px solid transparent;
+    color: var(--muted);
+    text-decoration: none;
+    transition: color 0.15s ease, border-color 0.15s ease;
+  }
+  .toc a:hover { color: var(--ink); }
+  .toc a[aria-current="true"] {
+    color: var(--ink);
+    border-left-color: var(--accent);
+  }
 }
 
-/* ---------- Reading progress bar ---------- */
+/* ---------- Note ---------- */
 
-#progress,
-#reading-progress {
-  position: fixed;
-  inset: 0 0 auto 0;
-  z-index: 1000;
-  height: 2.5px;
-  background: var(--accent);
-  transform: scaleX(0);
-  transform-origin: left;
-  pointer-events: none;
-  transition: transform 0.08s linear;
+.note-head { margin-bottom: clamp(2.5rem, 6vw, 3.75rem); }
+
+h1, h2, h3, h4 {
+  text-wrap: balance;
+  scroll-margin-top: 2rem;
+}
+
+h1 {
+  margin: 0 0 1.25rem;
+  font-size: clamp(2.5rem, 1.5rem + 3.6vw, 3.9rem);
+  font-weight: 400;
+  line-height: 1.04;
+  letter-spacing: -0.028em;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 1.5rem;
+  margin: 0;
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+
+.lede {
+  font-size: 1.16em;
+  line-height: 1.55;
+  letter-spacing: -0.003em;
+}
+
+h2 {
+  margin: 2.7em 0 0.65em;
+  font-size: 1.85rem;
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: -0.018em;
+}
+
+h3 {
+  margin: 2.1em 0 0.4em;
+  font-size: 1.28rem;
+  font-weight: 500;
+  font-style: italic;
+  line-height: 1.3;
+  letter-spacing: -0.005em;
+}
+
+h2 + h3 { margin-top: 1.4em; }
+
+p, ul, ol, pre, figure, table { margin: 0 0 1.25em; }
+p, li, blockquote { text-wrap: pretty; }
+
+ul, ol { padding-left: 1.35em; }
+li { margin-bottom: 0.4em; padding-left: 0.2em; }
+li::marker { color: var(--muted); }
+li > ul, li > ol { margin: 0.4em 0 0; }
+
+strong { font-weight: 600; }
+
+blockquote {
+  margin: 2.2em 0;
+  padding: 0 0 0 1.5rem;
+  border-left: 2px solid var(--accent);
+  font-size: 1.1em;
+  font-style: italic;
+  line-height: 1.5;
+}
+blockquote > :last-child { margin-bottom: 0; }
+
+hr {
+  width: 2.5rem;
+  margin: 3.25rem auto;
+  border: 0;
+  border-top: 1px solid var(--rule);
+}
+
+.callout {
+  margin: 2em 0;
+  padding: 1.1rem 1.4rem;
+  background: var(--tint);
+  border-radius: 8px;
+  font-size: 0.96em;
+  line-height: 1.6;
+}
+.callout > :last-child { margin-bottom: 0; }
+
+img, video {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
+
+figure { margin-inline: 0; }
+
+figcaption {
+  margin-top: 0.7rem;
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+/* ---------- Code ---------- */
+
+code, kbd, samp, pre {
+  font-family: var(--mono);
+  font-variant-ligatures: none;
+}
+
+code {
+  padding: 0.1em 0.35em;
+  background: var(--raised);
+  border-radius: 4px;
+  font-size: 0.8em;
+}
+
+pre {
+  margin: 1.75em 0;
+  padding: 1.25rem 1.5rem;
+  overflow-x: auto;
+  background: var(--raised);
+  border-radius: 8px;
+  font-size: 0.875rem;
+  line-height: 1.7;
+  tab-size: 4;
+  -webkit-text-size-adjust: none;
+}
+pre code { padding: 0; background: none; font-size: inherit; }
+
+/* ---------- Tables ---------- */
+
+table {
+  display: block;
+  width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-family: var(--sans);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+thead { border-bottom: 1px solid var(--ink); }
+th, td { padding: 0.65rem 1rem 0.65rem 0; text-align: left; vertical-align: top; }
+th { font-weight: 600; white-space: nowrap; }
+td { border-bottom: 1px solid var(--rule); }
+td:first-child { font-weight: 500; white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+tbody { border-bottom: 1px solid var(--ink); }
+table { margin: 1.75em 0; }
+
+/* On wide screens, code and tables extend past the text column on both sides.
+   The title stays on the text's left edge and may run wider to the right. */
+@media (min-width: 46rem) {
+  pre { margin-inline: calc(var(--bleed) * -1); }
+  table {
+    margin-inline: calc(var(--bleed) * -1);
+    width: calc(100% + var(--bleed) * 2);
+  }
+  .note-head { margin-right: calc(var(--bleed) * -2); }
+}
+
+/* ---------- Index page ---------- */
+
+.intro {
+  margin: 0 0 clamp(3rem, 7vw, 4.5rem);
+  font-size: 1.16em;
+  line-height: 1.55;
+}
+
+.note-list { margin: 0; padding: 0; list-style: none; }
+
+.note-list li {
+  display: grid;
+  gap: 0.15rem 2rem;
+  margin: 0;
+  padding: 1.6rem 0;
+  border-top: 1px solid var(--rule);
+}
+.note-list li:last-child { border-bottom: 1px solid var(--rule); }
+
+.note-list .topic {
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 0.8125rem;
+  line-height: 2.6;
+}
+
+.note-list h2 {
+  margin: 0 0 0.25rem;
+  font-size: 1.5rem;
+  font-weight: 500;
+  line-height: 1.25;
+  letter-spacing: -0.014em;
+}
+.note-list h2 a { color: var(--ink); text-decoration: none; }
+.note-list h2 a:hover { color: var(--accent); }
+
+.note-list p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.92em;
+  line-height: 1.55;
+}
+
+@media (min-width: 40rem) {
+  .note-list li { grid-template-columns: 6.5rem 1fr; }
 }
