@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Atlassian April 2022 Mega Outage: Why a Communication Gap Caused a 14-Day Downtime for 775 Customers — System Design Notes</title>
+  <meta name="description" content="Technical post-mortem and distributed systems engineering analysis of Atlassian's April 2022 outage: script argument confusion, soft-delete cascades, the absence of bulk restoration tooling, and architectural lessons in blast-radius containment.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css">
+  <link rel="stylesheet" href="../blog-theme.css">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body class="blog-post-page">
+  <div id="progress" aria-hidden="true"></div>
+
+  <header class="site-header">
+    <div class="header-container">
+      <a class="site-name" href="../index.html">
+        <span class="brand-icon">⚡</span>
+        <span>System Design Notes</span>
+      </a>
+      <nav class="site-nav" aria-label="Main">
+        <a href="../index.html">All Notes</a>
+        <a href="../index.html#categories">Categories</a>
+        <a href="../Docs/Atlassian_April_2022_Mega_Outage_Technical_Breakdown.pdf" class="nav-download-btn" target="_blank" download>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download PDF
+        </a>
+      </nav>
+      <div class="swatches" role="group" aria-label="Colour theme">
+        <button class="swatch" data-set-theme="light" style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+        <button class="swatch" data-set-theme="dark" style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+        <button class="swatch" data-set-theme="sepia" style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+      </div>
+    </div>
+  </header>
+
+  <div class="post-layout">
+    <aside class="post-sidebar">
+      <div class="sidebar-sticky">
+        <div class="sidebar-header">
+          <span class="badge-post">Incident Post-Mortem</span>
+          <span class="reading-time">24 min read</span>
+        </div>
+        <nav class="toc" aria-label="Table of Contents">
+          <h4>Table of Contents</h4>
+          <ul>
+            <li><a href="#incident-summary">1. Executive Summary &amp; The 14-Day Timeline</a></li>
+            <li><a href="#communication-gap">2. The Fatal Miscommunication &amp; Parameter Confusion</a></li>
+            <li><a href="#soft-delete-cascade">3. The Automated Cascading Soft-Delete Pipeline</a></li>
+            <li><a href="#why-14-days">4. Why Recovery Took 14 Days: Automation Asymmetry</a></li>
+            <li><a href="#shard-restoration">5. Multi-Tenant Database Reconstruction Mechanics</a></li>
+            <li><a href="#architectural-flaws">6. Root Cause Analysis &amp; Systemic Vulnerabilities</a></li>
+            <li><a href="#engineering-reforms">7. Post-Incident Architectural Reforms</a></li>
+            <li><a href="#comparative-matrix">8. Resilient vs. Brittle Administrative Architecture</a></li>
+            <li><a href="#key-takeaways">9. Key Architectural Takeaways</a></li>
+          </ul>
+        </nav>
+        <div class="companion-box">
+          <div class="companion-title">Companion PDF</div>
+          <p>Download the verified 3-page technical breakdown for offline study and architecture review.</p>
+          <a href="../Docs/Atlassian_April_2022_Mega_Outage_Technical_Breakdown.pdf" class="download-link" target="_blank" download>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Atlassian Mega Outage PDF
+          </a>
+        </div>
+      </div>
+    </aside>
+
+    <main class="post-content">
+      <header class="post-header">
+        <div class="meta-row">
+          <span class="category-tag">Disaster Recovery &amp; Architecture</span>
+          <time datetime="2026-01-16">January 16, 2026</time>
+          <span class="author-tag">Arpit Bhayani System Design Breakdown</span>
+        </div>
+        <h1>Atlassian April 2022 Mega Outage: Why a Communication Gap Caused a 14-Day Downtime for 775 Customers</h1>
+        <p class="lead-text">
+          On April 5, 2022, 775 enterprise businesses logged into Jira, Confluence, and Opsgenie only to be met with dead endpoints. What began as a routine maintenance task to disable a deprecated Marketplace app cascaded into a catastrophic 14-day global outage. Explore the engineering anatomy of this disaster: how identical UUID namespaces and script parameter misunderstandings triggered irreversible multi-service deprovisioning, and why the complete absence of bulk restoration tooling forced manual database surgery across two grueling weeks.
+        </p>
+      </header>
+
+      <section id="incident-summary">
+        <h2>1. Executive Summary &amp; The 14-Day Timeline</h2>
+        <p>
+          In cloud distributed systems, most severe outages last minutes or hours—a cascading retry storm, an expired TLS certificate, or a corrupted BGP route. When an outage persists for <strong>14 consecutive days</strong>, it indicates a structural breakdown in the fundamental lifecycle architecture of the platform.
+        </p>
+        <div class="note-box">
+          <ul>
+            <li><strong>Affected Scope:</strong> 775 cloud enterprise tenants (representing ~0.3% of Atlassian’s customer base, but disproportionately large enterprise organizations).</li>
+            <li><strong>Products Knocked Offline:</strong> Jira Software, Jira Service Management, Confluence, Opsgenie, Statuspage, and Atlassian Access.</li>
+            <li><strong>Duration:</strong> April 5, 2022 to April 19, 2022 (full restoration took 336 hours).</li>
+            <li><strong>Data Loss:</strong> Zero customer data lost. All data remained encrypted and stored on Amazon EBS and RDS snapshots, yet systems were completely unreachable and non-functional.</li>
+          </ul>
+        </div>
+        <p>
+          The central paradox of the incident: <em>If no customer data was destroyed, why did it take a world-class engineering organization two full weeks to bring 775 websites back online?</em> The answer lies in the <strong>Asymmetry of Operational Tooling</strong>.
+        </p>
+      </section>
+
+      <section id="communication-gap">
+        <h2>2. The Fatal Miscommunication &amp; Parameter Confusion</h2>
+        <p>
+          The incident originated from a migration cleanup. Previously, Atlassian acquired a third-party asset management app called <em>Insight - Asset Management</em> from the Atlassian Marketplace. Over several quarters, engineering integrated Insight directly into Jira Service Management as a native core capability.
+        </p>
+        <p>
+          Consequently, customers who had previously installed the standalone Marketplace app now had two versions running concurrently: the legacy Marketplace add-on and the integrated native version. Engineering scheduled a cleanup script to deactivate the deprecated Marketplace add-on for 775 specific tenants.
+        </p>
+
+        <div class="code-box">
+┌──────────────────────────────────────────────────────────────────────────┐
+│                             THE FATAL INPUT                              │
+├──────────────────────────────────────────────────────────────────────────┤
+│ Engineering Team A intended to pass:                                     │
+│   App_ID / Extension_ID = "com.riadalabs.jira.plugins.insight"           │
+│   Target Scope = [Site_1, Site_2, ... Site_775]                          │
+│                                                                          │
+│ Operating Team B executed administrative deactivation script:            │
+│   ./deactivate-site.sh --ids [Site_1, Site_2, ... Site_775]              │
+│                                                                          │
+│ RESULT: The script invoked the Tenant Site Deprovisioning API,           │
+│         deleting all 775 cloud tenant environments instead of the app!   │
+└──────────────────────────────────────────────────────────────────────────┘</div>
+
+        <p>
+          The administrative script accepted a generic list of IDs. Because Atlassian utilized uniform, raw UUIDs without type prefixes (e.g. <code>b4e2f910-482a-4a88-8422-92a0e5b901a1</code>), the script could not discern whether the parameter represented an App ID, an Organization ID, or a Customer Site ID.
+        </p>
+      </section>
+
+      <section id="soft-delete-cascade">
+        <h2>3. The Automated Cascading Soft-Delete Pipeline</h2>
+        <p>
+          Atlassian’s cloud infrastructure is organized around autonomous microservices coordinated through an identity and tenant directory platform (Identity / Provisioning Engine). When the script ran, it called the internal <code>mark_site_deleted()</code> API endpoint.
+        </p>
+        <p>
+          The system operated exactly as engineered: modern cloud platforms are optimized for rapid, automated tenant cleanup to ensure GDPR/CCPA compliance and reclaim cloud resources. Within seconds, a cascading event storm propagated across the entire service fleet:
+        </p>
+
+        <div class="mermaid">
+flowchart TD
+  Script[Admin Script: Deactivate Site IDs] --> Provisioning[Identity &amp; Tenant Provisioning API]
+  Provisioning -->|Mark Site Tombstoned| TenantDB[(Global Tenant Directory)]
+  Provisioning -->|Publish SiteDeactivated Event| Bus[Kafka / SQS Event Bus]
+  
+  Bus --> Routing[Global API Gateway / DNS Router]
+  Bus --> Jira[Jira Microservice Fleet]
+  Bus --> Conf[Confluence Microservice Fleet]
+  Bus --> Auth[Atlassian Access / SAML SSO]
+  Bus --> Storage[S3 Attachment Storage Layer]
+
+  Routing -->|Drop Virtual Host Mapping| 404[Return HTTP 404 / 410 Gone]
+  Jira -->|Detach RDS Tenant Schema| JiraDB[(RDS Multi-Tenant Shards)]
+  Conf -->|Drop Space Permissions &amp; Lucene Index| ConfDB[(Confluence RDS Shards)]
+  Auth -->|Revoke OAuth / Invalidate User Tokens| SSO[Okta / Azure AD Invalidation]
+  Storage -->|Mark S3 Objects Orphaned| S3[(Customer File Buckets)]
+        </div>
+
+        <p>
+          Within minutes, 775 customer tenants were vanished from global routing tables. DNS hosts resolved to maintenance pages, user sessions were revoked, and database schemas were marked unmapped.
+        </p>
+      </section>
+
+      <section id="why-14-days">
+        <h2>4. Why Recovery Took 14 Days: Automation Asymmetry</h2>
+        <p>
+          When incident responders realized what occurred, the immediate thought was: <em>"Just flip <code>is_deleted = false</code> in the database!"</em>
+        </p>
+        <p>
+          This was impossible due to the <strong>Asymmetry of Lifecycle Operations</strong>:
+        </p>
+        <div class="note-box">
+          <ul>
+            <li><strong>Automated Deconstruction:</strong> Deletion was a fully automated, asynchronous, fan-out event with high test coverage, built to teardown resources cleanly in seconds.</li>
+            <li><strong>Manual Reconstruction:</strong> "Site Undelete" had never been built as an automated bulk API. In Atlassian's entire corporate history, a site deactivation was either permanent (customer canceled subscription) or handled as a bespoke, manual, one-off ticket by support engineers once every few months.</li>
+            <li><strong>Microservice State Divergence:</strong> Soft-delete wasn't a single database column. It triggered distributed side effects across dozens of independent datastores—Jira relational schemas, Confluence Lucene search indexes, S3 attachment access policies, and central Atlassian Access authentication tokens.</li>
+          </ul>
+        </div>
+        <p>
+          To restore a single site, an engineer had to stitch back together fractured relational links across 15+ microservices, ensure zero data loss, and verify that no orphaned records were leaked.
+        </p>
+      </section>
+
+      <section id="shard-restoration">
+        <h2>5. Multi-Tenant Database Reconstruction Mechanics</h2>
+        <p>
+          The hardest bottleneck during the 14-day recovery was the physical architecture of Atlassian's data tier: <strong>Multi-Tenant Shared RDS Shards</strong>.
+        </p>
+        <p>
+          Atlassian does not allocate a dedicated AWS RDS instance per customer. Instead, hundreds of customer tenants share the same Amazon Aurora PostgreSQL and MySQL database clusters, separated logically by <code>tenant_id</code> or dedicated schemas within the shared database.
+        </p>
+
+        <div class="code-box">
+AWS RDS Aurora Multi-Tenant Cluster (Shard 42)
+┌────────────────────────────────────────────────────────────────────────┐
+│ Tenant A (Active)     │ Tenant B (DEACTIVATED) │ Tenant C (Active)     │
+│ 400,000 Jira Issues   │ 2,500,000 Issues (404) │ 120,000 Issues        │
+├───────────────────────┴────────────────────────┴───────────────────────┤
+│ Point-In-Time Snapshot cannot be restored over live Shard 42!         │
+│ Overwriting Shard 42 would destroy all new writes to Tenant A and C!    │
+└────────────────────────────────────────────────────────────────────────┘</div>
+
+        <p>
+          Why point-in-time recovery (PITR) could not be executed directly:
+        </p>
+        <ol>
+          <li>If Atlassian restored the entire RDS snapshot from before the script execution, it would revert the database state for the <strong>thousands of active, unaffected customers</strong> sharing those same shards, destroying hours of their legitimate business transactions!</li>
+          <li>Therefore, to recover Tenant B:
+            <ul>
+              <li>Spin up a separate, temporary Aurora RDS cluster from the historical snapshot.</li>
+              <li>Write custom extraction scripts to export only Tenant B's relational tables, issue histories, comments, custom fields, and foreign keys.</li>
+              <li>Sanitize and transform the exported dataset to match current production schema versions.</li>
+              <li>Import the tenant dataset into the live production cluster without taking write locks that would degrade active neighboring tenants.</li>
+              <li>Re-index Elasticsearch/Lucene search clusters for that tenant.</li>
+            </ul>
+          </li>
+        </ol>
+        <p>
+          Restoring a single tenant took between <strong>2 and 8 hours</strong>. Multiplying this by 775 tenants across a finite pool of authorized senior database administrators resulted in the grueling 14-day recovery window.
+        </p>
+      </section>
+
+      <section id="architectural-flaws">
+        <h2>6. Root Cause Analysis &amp; Systemic Vulnerabilities</h2>
+        <p>
+          The official post-mortem revealed several foundational distributed systems design anti-patterns:
+        </p>
+
+        <div class="note-box">
+          <h4>1. Untyped Global Identifiers</h4>
+          <p>
+            When entity IDs are raw UUIDs (e.g. <code>UUIDv4</code>), compiler type-checking and CLI validators cannot distinguish an App ID from a Customer Site ID. A script receiving <code>site_id</code> when expecting <code>app_id</code> executed silently without raising type errors.
+          </p>
+        </div>
+
+        <div class="note-box">
+          <h4>2. Infinite Blast Radius &amp; Absence of Rate Limiting</h4>
+          <p>
+            The administrative script allowed unbounded array sizes. An operator could pass 1 ID or 100,000 IDs in a single invocation. There was no internal rate limiter, circuit breaker, or canary batching (e.g. <em>"Deactivate 1 site, wait 10 minutes, evaluate metrics, then proceed"</em>).
+          </p>
+        </div>
+
+        <div class="note-box">
+          <h4>3. Lack of Multi-Party Authorization (The 4-Eyes Principle)</h4>
+          <p>
+            A high-severity administrative action with irrevocable customer impact was executable by a single operator without requiring cryptographic dual-control or peer sign-off in the terminal workflow.
+          </p>
+        </div>
+
+        <div class="note-box">
+          <h4>4. Neglect of Reverse-Path Engineering</h4>
+          <p>
+            Engineering teams heavily invested in fast, automated deletion paths for compliance, while entirely neglecting the reverse restoration pathway. An operational capability is only as safe as its tested rollback procedure.
+          </p>
+        </div>
+      </section>
+
+      <section id="engineering-reforms">
+        <h2>7. Post-Incident Architectural Reforms</h2>
+        <p>
+          Following the outage, Atlassian implemented transformative infrastructure and cultural changes across its cloud platform:
+        </p>
+
+        <div class="mermaid">
+flowchart LR
+  subgraph Pre-2022 Vulnerability
+    A1[Raw UUIDs] --> B1[CLI Tool]
+    B1 --> C1[Infinite Batch Size]
+    C1 --> D1[Single-Click Deletion]
+  end
+
+  subgraph Post-2022 Hardened Architecture
+    A2[Prefixed Typed IDs: site_xxx] --> B2[Schema-Validated CLI]
+    B2 --> C2[Canary Limiter: Max 5/batch]
+    C2 --> D2[Multi-Party 4-Eyes Approval]
+    D2 --> E2[Automated 30-Day Instant Rollback API]
+  end
+        </div>
+
+        <h3>1. Prefixed, Strongly Typed Identifiers</h3>
+        <p>
+          All internal identifiers were migrated to type-prefixed formats (inspired by Stripe's ID standard). For example:
+        </p>
+        <ul>
+          <li>Tenant Site ID: <code>site_live_9x8f2a1b...</code></li>
+          <li>App / Add-on ID: <code>addon_insight_7c4d1e...</code></li>
+          <li>Workspace ID: <code>wrk_prod_3b9a0c...</code></li>
+        </ul>
+        <p>
+          Any internal API receiving an ID string runs strict prefix validation at the gateway; submitting a <code>site_</code> token to an <code>addon_</code> endpoint fails immediately with HTTP 422 Unprocessable Entity.
+        </p>
+
+        <h3>2. Blast Radius Circuit Breakers</h3>
+        <p>
+          Destructive administrative APIs enforce hard operational boundaries:
+        </p>
+        <ul>
+          <li>Maximum batch limit of 10 sites per command.</li>
+          <li>Mandatory canary stage: deprovision 1 entity, pause execution, and require manual confirmation after monitoring tenant health signals.</li>
+          <li>Administrative rate limiters throttle deactivations across the global fleet.</li>
+        </ul>
+
+        <h3>3. Automated Tenant Reconstitution &amp; Instant Rollback</h3>
+        <p>
+          Atlassian engineered an automated bulk restoration pipeline. "Soft-delete" was redefined: all downstream microservices retain encrypted metadata pointers and tombstoned rows in cold storage for 30 days. An automated single-click <code>reconstitute_tenant(site_id)</code> API can orchestrate multi-service restoration across Jira, Confluence, and Access in under 5 minutes without manual database dumps.
+        </p>
+      </section>
+
+      <section id="comparative-matrix">
+        <h2>8. Resilient vs. Brittle Administrative Architecture</h2>
+        <table class="comparison-table">
+          <thead>
+            <tr>
+              <th>Dimension</th>
+              <th>Legacy / Fragile Operations</th>
+              <th>Resilient Distributed Enterprise Operations</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>ID Typing</strong></td>
+              <td>Raw UUIDv4 strings (Identical across domain models)</td>
+              <td><strong>Type-prefixed, schema-validated IDs (e.g. <code>site_</code>, <code>addon_</code>)</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Operational Blast Radius</strong></td>
+              <td>Unbounded array inputs in scripts</td>
+              <td><strong>Strict batch limits, canary staging, and fleet rate limiters</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Authorization Protocol</strong></td>
+              <td>Single-operator script execution</td>
+              <td><strong>Multi-party 4-eyes approval with cryptographically signed tokens</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Restoration Tooling</strong></td>
+              <td>Manual, serialized database snapshot extraction</td>
+              <td><strong>Automated multi-service bulk tenant reconstitution APIs</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Disaster Recovery Drills</strong></td>
+              <td>Focus on infrastructure failover (AZ/Region loss)</td>
+              <td><strong>Tenant-level logical disaster recovery and corruption drills</strong></td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="key-takeaways">
+        <h2>9. Key Architectural Takeaways</h2>
+        <div class="note-box">
+          <ul>
+            <li><strong>Deletion Without Tested Rollback Is Technical Debt:</strong> If your system features an automated, high-speed deletion or deprovisioning pipeline, you must invest proportional engineering effort into an automated rollback pipeline.</li>
+            <li><strong>Design for Blast Radius Minimization:</strong> Administrative tooling must assume human error. Hard limits on batch sizes, canary deactivations, and circuit breakers prevent a single miskeyed argument from taking down hundreds of enterprise accounts.</li>
+            <li><strong>Shared Multi-Tenant Storage Amplifies Recovery Friction:</strong> Logical tenant isolation on shared physical database shards makes point-in-time snapshot recovery exponentially complex. Design logical tenant-level snapshotting and export tools from day one.</li>
+            <li><strong>Embed Semantic Type Hints in Identifiers:</strong> Raw UUIDs are an invitation to catastrophic parameter confusion. Prefixing identifiers with their entity domain (e.g. <code>tenant_</code>, <code>app_</code>) eliminates cross-parameter errors at the API gateway layer.</li>
+          </ul>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-col">
+        <div class="footer-brand">
+          <div class="brand-icon">⚡</div>
+          <span class="footer-title">System Design Notes</span>
+        </div>
+        <p class="footer-desc">Production-grade architecture dissections, distributed systems engineering, and first-principles technical notes.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Incident Post-Mortems &amp; Reliability</h5>
+        <ul>
+          <li><a href="atlassian-april-2022-mega-outage-dissection.html">Atlassian April 2022 Mega Outage</a></li>
+          <li><a href="atlassian-cloud-load-balancer-outage.html">Atlassian Cloud LB Outage</a></li>
+          <li><a href="github-rate-limiter-incident.html">GitHub Rate Limiter Incident</a></li>
+          <li><a href="paypal-thundering-herd-cache-stampede.html">PayPal Thundering Herd Stampede</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Distributed Platforms &amp; Storage</h5>
+        <ul>
+          <li><a href="junodb-overview-paypal-kv-store.html">PayPal JunoDB Architecture</a></li>
+          <li><a href="shopify-ghostferry-live-shard-migration.html">Shopify Ghostferry Shard Migration</a></li>
+          <li><a href="discord-data-platform-petabytes.html">Discord Data Platform</a></li>
+          <li><a href="airbnb-himeji-authorization-system.html">Airbnb Himeji Authorization</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>&copy; 2026 System Design Notes. Editorial &amp; Technical Analysis curated by Arpit Bhayani Architecture Synthesis.</p>
+    </div>
+  </footer>
+
+  <script src="../assets/js/main.js"></script>
+</body>
+</html>

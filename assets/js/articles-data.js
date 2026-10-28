@@ -895,6 +895,62 @@ const ARTICLES_DATA = [
     excerpt: "Technical deep dive into Pinterest's Goku TSDB: in-memory C++ time-series engine, Gorilla delta-of-delta and XOR floating-point compression, sub-50ms query aggregations, and replacing OpenTSDB.",
     tags: ["Pinterest", "Goku", "TSDB", "Gorilla Compression", "Time Series", "In-Memory Database"],
     featured: true
+  },
+  {
+    id: "airbnb-knowledge-graph-architecture",
+    slug: "airbnb-knowledge-graph-architecture.html",
+    title: "Airbnb Knowledge Graph: Semantic Search, Entity Resolution & Graph Embeddings at Scale",
+    category: "Knowledge Graphs & AI",
+    categorySlug: "case-studies",
+    readTime: "23 min read",
+    date: "Jan 16, 2026",
+    badge: "Knowledge Graphs",
+    pdfSource: "Docs/Airbnb_Knowledge_Graph_Technical_Breakdown.pdf",
+    excerpt: "Technical deep dive into Airbnb's Knowledge Graph architecture: converting unstructured listings into rich entity ontologies, Graph Neural Network (GNN) embeddings, entity resolution, and sub-20ms semantic search serving.",
+    tags: ["Airbnb", "Knowledge Graph", "GNN", "Semantic Search", "Entity Resolution", "Machine Learning"],
+    featured: true
+  },
+  {
+    id: "swiggy-chatbot-nlp-architecture",
+    slug: "swiggy-chatbot-nlp-architecture.html",
+    title: "Swiggy AI Customer Support Chatbot: Multi-Turn Dialog Management & Low-Latency NLP Pipeline",
+    category: "Conversational AI",
+    categorySlug: "case-studies",
+    readTime: "23 min read",
+    date: "Jan 16, 2026",
+    badge: "Conversational AI",
+    pdfSource: "Docs/Swiggy_Chatbot_NLP_Technical_Breakdown.pdf",
+    excerpt: "Technical deep dive into Swiggy's customer support AI chatbot: multi-turn contextual dialog management, hybrid BERT intent classification, slot extraction, automated compensation policies, and sub-80ms response SLAs.",
+    tags: ["Swiggy", "Chatbot", "NLP", "BERT", "Conversational AI", "Dialog Management"],
+    featured: true
+  },
+  {
+    id: "instagram-hashtag-counts-architecture",
+    slug: "instagram-hashtag-counts-architecture.html",
+    title: "Instagram Real-Time Hashtag Counts Architecture: Count-Min Sketch, Sharded Counters & Write Buffers",
+    category: "Stream Aggregations",
+    categorySlug: "cloud-databases",
+    readTime: "22 min read",
+    date: "Jan 16, 2026",
+    badge: "Stream Aggregations",
+    pdfSource: "Docs/Instagram_Hashtag_Counts_Technical_Breakdown.pdf",
+    excerpt: "Technical deep dive into Instagram's real-time hashtag counting architecture: Count-Min Sketch (CMS) probabilistic counting, thread-local write buffering, sharded counter persistence, and viral hotspot isolation.",
+    tags: ["Instagram", "Count-Min Sketch", "Hashtag Counts", "Sharded Counters", "Redis", "Kafka"],
+    featured: true
+  },
+  {
+    id: "atlassian-april-2022-mega-outage-dissection",
+    slug: "atlassian-april-2022-mega-outage-dissection.html",
+    title: "Atlassian April 2022 Mega Outage: Why a Communication Gap Caused a 14-Day Downtime for 775 Customers",
+    category: "Incident Post-Mortems",
+    categorySlug: "case-studies",
+    readTime: "24 min read",
+    date: "Jan 16, 2026",
+    badge: "Incident Post-Mortem",
+    pdfSource: "Docs/Atlassian_April_2022_Mega_Outage_Technical_Breakdown.pdf",
+    excerpt: "Technical post-mortem and distributed systems engineering analysis of Atlassian's April 2022 outage: script argument confusion, soft-delete cascades, the absence of bulk restoration tooling, and architectural lessons in blast-radius containment.",
+    tags: ["Atlassian", "Outage Post-Mortem", "Site Reliability", "Multi-Tenant Architecture", "Disaster Recovery", "Blast Radius"],
+    featured: true
   }
 ];
 
