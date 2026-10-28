@@ -727,6 +727,62 @@ const ARTICLES_DATA = [
     excerpt: "Technical breakdown of PayPal JunoDB's security architecture: zero-trust mTLS encryption in transit, envelope encryption at rest, per-tenant cryptographic isolation, and instantaneous key shredding for PCI-DSS compliance.",
     tags: ["PayPal", "JunoDB", "mTLS", "Envelope Encryption", "PCI-DSS", "Crypto-Shredding"],
     featured: true
+  },
+  {
+    id: "shopify-ghostferry-live-shard-migration",
+    slug: "shopify-ghostferry-live-shard-migration.html",
+    title: "Shopify Ghostferry: Live MySQL Shard Migration with Zero Downtime",
+    category: "Database Sharding",
+    categorySlug: "cloud-databases",
+    readTime: "22 min read",
+    date: "Jan 16, 2026",
+    badge: "Database Sharding",
+    pdfSource: "Docs/Shopify_Ghostferry_Live_Shard_Migration_Technical_Breakdown.pdf",
+    excerpt: "Technical deep dive into Shopify's Ghostferry: live MySQL tenant shard migrations, concurrent binlog streaming, cutover write locks under 500ms, and zero data loss at e-commerce scale.",
+    tags: ["Shopify", "Ghostferry", "MySQL", "Sharding", "Live Migration", "Zero Downtime"],
+    featured: true
+  },
+  {
+    id: "twitter-search-earlybird-architecture",
+    slug: "twitter-search-earlybird-architecture.html",
+    title: "Twitter's Earlybird Real-Time Search Engine: Custom Lucene Internals & Scatter-Gather Architecture",
+    category: "Search Systems",
+    categorySlug: "case-studies",
+    readTime: "23 min read",
+    date: "Jan 16, 2026",
+    badge: "Real-Time Search",
+    pdfSource: "Docs/Twitter_Search_Earlybird_Technical_Breakdown.pdf",
+    excerpt: "Technical deep dive into Twitter's Earlybird real-time search architecture: custom in-memory Lucene inverted indexes, lock-free Single-Writer Multiple-Reader concurrency, and sub-second tweet indexing at 50,000 QPS.",
+    tags: ["Twitter", "Earlybird", "Lucene", "Inverted Index", "Real-Time Search", "Lock-Free Concurrency"],
+    featured: true
+  },
+  {
+    id: "discord-data-platform-petabytes",
+    slug: "discord-data-platform-petabytes.html",
+    title: "Scaling Discord's Data Platform to Petabytes: ScyllaDB, BigQuery & Real-Time Kafka Pipelines",
+    category: "Data Platforms",
+    categorySlug: "cloud-databases",
+    readTime: "24 min read",
+    date: "Jan 16, 2026",
+    badge: "Data Platform",
+    pdfSource: "Docs/Discord_Data_Platform_Petabytes_Technical_Breakdown.pdf",
+    excerpt: "Technical deep dive into Discord's petabyte-scale data platform architecture: migrating trillions of messages from Cassandra to ScyllaDB, real-time Kafka event streaming, and BigQuery analytics.",
+    tags: ["Discord", "ScyllaDB", "Cassandra", "Kafka", "BigQuery", "Petabyte Scale"],
+    featured: true
+  },
+  {
+    id: "airbnb-himeji-authorization-system",
+    slug: "airbnb-himeji-authorization-system.html",
+    title: "Airbnb Himeji: Centralized Zanzibar-Inspired Authorization at Scale",
+    category: "Security & Authorization",
+    categorySlug: "case-studies",
+    readTime: "22 min read",
+    date: "Jan 16, 2026",
+    badge: "Authorization Architecture",
+    pdfSource: "Docs/Airbnb_Himeji_Authorization_Technical_Breakdown.pdf",
+    excerpt: "Technical deep dive into Airbnb's Himeji: centralized graph-based authorization, Zanzibar-inspired relation tuples, sub-10ms permission evaluations, and eliminating microservice auth sprawl.",
+    tags: ["Airbnb", "Himeji", "Zanzibar", "Authorization", "Access Control", "Graph Traversal"],
+    featured: true
   }
 ];
 

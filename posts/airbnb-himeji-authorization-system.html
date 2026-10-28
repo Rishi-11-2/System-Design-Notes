@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Airbnb Himeji: Centralized Zanzibar-Inspired Authorization at Scale — System Design Notes</title>
+  <meta name="description" content="Technical deep dive into Airbnb's Himeji: centralized graph-based authorization, Zanzibar-inspired relation tuples, sub-10ms permission evaluations, and eliminating microservice auth sprawl.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css">
+  <link rel="stylesheet" href="../blog-theme.css">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body class="blog-post-page">
+  <div id="progress" aria-hidden="true"></div>
+
+  <header class="site-header">
+    <div class="header-container">
+      <a class="site-name" href="../index.html">
+        <span class="brand-icon">⚡</span>
+        <span>System Design Notes</span>
+      </a>
+      <nav class="site-nav" aria-label="Main">
+        <a href="../index.html">All Notes</a>
+        <a href="../index.html#categories">Categories</a>
+        <a href="../Docs/Airbnb_Himeji_Authorization_Technical_Breakdown.pdf" class="nav-download-btn" target="_blank" download>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download PDF
+        </a>
+      </nav>
+      <div class="swatches" role="group" aria-label="Colour theme">
+        <button class="swatch" data-set-theme="light" style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+        <button class="swatch" data-set-theme="dark" style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+        <button class="swatch" data-set-theme="sepia" style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+      </div>
+    </div>
+  </header>
+
+  <div class="post-layout">
+    <aside class="post-sidebar">
+      <div class="sidebar-sticky">
+        <div class="sidebar-header">
+          <span class="badge-post">Authorization Systems</span>
+          <span class="reading-time">22 min read</span>
+        </div>
+        <nav class="toc" aria-label="Table of Contents">
+          <h4>Table of Contents</h4>
+          <ul>
+            <li><a href="#auth-sprawl">1. The Authorization Sprawl Problem</a></li>
+            <li><a href="#zanzibar-model">2. The Google Zanzibar Tuple Model</a></li>
+            <li><a href="#himeji-architecture">3. Himeji System Architecture</a></li>
+            <li><a href="#graph-traversal">4. Recursive Graph Traversal &amp; BFS</a></li>
+            <li><a href="#caching-invalidation">5. Multilayered Caching &amp; CDC Invalidation</a></li>
+            <li><a href="#latency-sla">6. Sub-10ms Latency Optimizations</a></li>
+            <li><a href="#fail-closed">7. Fail-Closed vs. Fail-Open Semantics</a></li>
+            <li><a href="#key-takeaways">8. Key Architectural Takeaways</a></li>
+          </ul>
+        </nav>
+        <div class="companion-box">
+          <div class="companion-title">Companion PDF</div>
+          <p>Download the verified 3-page technical breakdown for offline study and architecture review.</p>
+          <a href="../Docs/Airbnb_Himeji_Authorization_Technical_Breakdown.pdf" class="download-link" target="_blank" download>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Airbnb Himeji PDF
+          </a>
+        </div>
+      </div>
+    </aside>
+
+    <main class="post-content">
+      <header class="post-header">
+        <div class="meta-row">
+          <span class="category-tag">Security &amp; Authorization</span>
+          <time datetime="2026-01-16">January 16, 2026</time>
+          <span class="author-tag">Arpit Bhayani System Design Breakdown</span>
+        </div>
+        <h1>Airbnb Himeji: Centralized Zanzibar-Inspired Authorization at Scale</h1>
+        <p class="lead-text">
+          Decentralized authorization logic scattered across hundreds of microservices is a catastrophic security liability. Discover how Airbnb engineered Himeji—a centralized, high-throughput authorization platform inspired by Google Zanzibar—evaluating complex transitive relational access control in under 10 milliseconds across billions of daily RPCs.
+        </p>
+      </header>
+
+      <section id="auth-sprawl">
+        <h2>1. The Authorization Sprawl Problem</h2>
+        <p>
+          In a complex multi-sided marketplace like Airbnb, access control is inherently relational:
+        </p>
+        <div class="note-box">
+          <ul>
+            <li>Can user $U$ edit listing $L$? Yes, if $U$ is the primary host, or $U$ is an authorized co-host, or $U$ is a property management team administrator.</li>
+            <li>Can user $U$ view guest check-in instructions for reservation $R$? Yes, if $U$ is the confirmed booker, or an approved trip companion added by the booker.</li>
+          </ul>
+        </div>
+        <p>
+          Historically at Airbnb, these permission checks were hardcoded across hundreds of services and Ruby on Rails monolith models. This created severe operational failures:
+        </p>
+        <ul>
+          <li><strong>RPC Amplification:</strong> To check a single permission, Service A called Service B, which called Service C to inspect database tables, cascading into 10+ internal RPC hops.</li>
+          <li><strong>Inconsistent Access Rules:</strong> Different microservices implemented subtly divergent checks for the same resource, leading to security vulnerabilities and leaked financial records.</li>
+          <li><strong>High Latency &amp; Tight Coupling:</strong> Critical user paths suffered 200ms+ authorization overhead due to network round-trips.</li>
+        </ul>
+      </section>
+
+      <section id="zanzibar-model">
+        <h2>2. The Google Zanzibar Tuple Model</h2>
+        <p>
+          Inspired by Google's landmark Zanzibar paper, Airbnb designed <strong>Himeji</strong> around a unified relational graph represented as <strong>Entity-Relation-Entity Tuples</strong>:
+        </p>
+        <div class="note-box">
+          <p style="text-align: center; font-size: 1.1rem; font-weight: 700; color: #ff385c; margin: 6px 0;">
+            $$\langle \text{Object} \rangle \# \langle \text{Relation} \rangle @ \langle \text{User or UserSet} \rangle$$
+          </p>
+          <p>Examples of relation tuples in Himeji:</p>
+          <ul>
+            <li><code>listing:101#host@user:55</code> (User 55 is the direct host of listing 101)</li>
+            <li><code>listing:101#co_host@user:88</code> (User 88 is an approved co-host)</li>
+            <li><code>reservation:500#parent_listing@listing:101</code> (Reservation 500 belongs to listing 101)</li>
+            <li><code>reservation:500#can_view@listing:101#host</code> (Any host of listing 101 can view reservation 500)</li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="himeji-architecture">
+        <h2>3. Himeji System Architecture</h2>
+        <p>
+          Himeji operates as a centralized, high-throughput gRPC service backed by distributed persistence and multi-level caching:
+        </p>
+
+        <div class="code-box">
+[ Microservice Client (Java / Ruby / Node.js) ]
+                      │ gRPC Check(user, relation, object) (&lt;10ms)
+                      ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                        HIMEJI AUTHORIZATION SERVICE                    │
+├────────────────────────────────────────────────────────────────────────┤
+│ • Local L1 In-Memory Cache (Caffeine • LRU with TTL)                   │
+│ • Graph Traversal Engine (Breadth-First Search with Cycle Detection)   │
+│ • Central L2 Distributed Cache (Redis Cluster)                         │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │ Cache Misses
+                                    ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                    SHARDED RELATIONAL STORE (MySQL)                    │
+│ • Primary source of truth for ACL relation tuples                      │
+│ • Partitioned by `object_id` for deterministic locality                │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │ Change Data Capture (Debezium)
+                                    ▼
+                       [ Kafka Cache Invalidator ]</div>
+      </section>
+
+      <section id="graph-traversal">
+        <h2>4. Recursive Graph Traversal &amp; BFS</h2>
+        <p>
+          When an application service dispatches a <code>Check(user:X, can_edit, listing:101)</code> query, Himeji translates permission evaluation into a directed graph reachability search:
+        </p>
+        <ol>
+          <li><strong>Direct Edge Lookup:</strong> Himeji queries whether the direct tuple <code>listing:101#can_edit@user:X</code> exists. If found, returns <code>ALLOW</code> immediately.</li>
+          <li><strong>Rule Expansion:</strong> The schema indicates that <code>can_edit</code> is satisfied by either <code>host</code> or <code>property_manager#admin</code>.</li>
+          <li><strong>Breadth-First Search (BFS):</strong> Himeji traverses outward along relation edges. To prevent infinite loops caused by accidental administrative cycles, the search incorporates a visited-set bitmask and a strict traversal depth cap (e.g., max 6 hops).</li>
+        </ol>
+      </section>
+
+      <section id="caching-invalidation">
+        <h2>5. Multilayered Caching &amp; CDC Invalidation</h2>
+        <p>
+          Evaluating graph traversals across millions of daily operations would overwhelm relational databases. Himeji employs a tiered caching architecture:
+        </p>
+        <ul>
+          <li><strong>L1 In-Process Cache:</strong> Local memory cache inside each Himeji instance holding frequently checked permissions (e.g., active host IDs). Resolves checks in under 0.2ms.</li>
+          <li><strong>L2 Distributed Cache:</strong> A clustered Redis layer storing pre-evaluated permission graphs and hot tuple lists.</li>
+          <li><strong>CDC Invalidation Pipeline:</strong> When a user adds a co-host, MySQL writes the new tuple. Debezium captures the binlog mutation and publishes an event to Kafka. Dedicated cache invalidation workers evict affected Redis keys within 50 milliseconds.</li>
+        </ul>
+      </section>
+
+      <section id="latency-sla">
+        <h2>6. Sub-10ms Latency Optimizations</h2>
+        <p>
+          To maintain strict sub-10ms p99 SLAs on auth checks:
+        </p>
+        <ul>
+          <li><strong>Consistent Hashing by Object:</strong> Queries for the same listing or reservation deterministically route to the same Himeji service instances, maximizing L1 cache hit rates (>98%).</li>
+          <li><strong>Parallel Sub-Graph Fanout:</strong> Independent branches of the relation schema (e.g., checking if user is host vs. checking if user is co-host) are evaluated concurrently using Go/Java thread pools, returning as soon as any branch yields <code>ALLOW</code>.</li>
+        </ul>
+      </section>
+
+      <section id="fail-closed">
+        <h2>7. Fail-Closed vs. Fail-Open Semantics</h2>
+        <p>
+          When network partitions or downstream database stalls occur, authorization systems face a profound engineering trade-off:
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>Operation Type</th>
+              <th>Enforced Semantics</th>
+              <th>Failure Behavior</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Mutating / Financial Actions</strong></td>
+              <td><strong>Fail-Closed (Deny)</strong></td>
+              <td>Payout modifications, listing deletions, or refund requests are strictly rejected if Himeji times out. Safety takes precedence over availability.</td>
+            </tr>
+            <tr>
+              <td><strong>Public Read Views</strong></td>
+              <td><strong>Fail-Open / Fallback</strong></td>
+              <td>Viewing public listing descriptions or neighborhood reviews degrades gracefully to cached public visibility rather than displaying a blank error page.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="key-takeaways">
+        <h2>8. Key Architectural Takeaways</h2>
+        <div class="note-box">
+          <ul>
+            <li><strong>Centralize Authorization as a Graph:</strong> Modeling permissions as relation tuples $\langle \text{Object} \rangle \# \langle \text{Relation} \rangle @ \langle \text{User} \rangle$ replaces thousands of brittle application queries with unified graph reachability.</li>
+            <li><strong>Decouple Auth from Business Logic:</strong> Microservices should only ask: <em>"Can user X perform action Y on resource Z?"</em> The authorization platform encapsulates the complexity of resolving co-hosts, teams, and administrative roles.</li>
+            <li><strong>Layer Caches with Event-Driven Invalidation:</strong> Combining in-memory L1 caches with CDC-driven Kafka invalidations delivers sub-10ms performance while maintaining strict data consistency.</li>
+            <li><strong>Differentiate Security Semantics by Action:</strong> Financial payouts and data mutations must always fail-closed on timeout, whereas non-sensitive read paths can degrade gracefully.</li>
+          </ul>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-col">
+        <div class="footer-brand">
+          <div class="brand-icon">⚡</div>
+          <span class="footer-title">System Design Notes</span>
+        </div>
+        <p class="footer-desc">Production-grade architecture dissections, distributed systems engineering, and first-principles technical notes.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Security &amp; Authorization</h5>
+        <ul>
+          <li><a href="airbnb-himeji-authorization-system.html">Airbnb Himeji Authorization</a></li>
+          <li><a href="junodb-security-architecture-tls-encryption.html">PayPal JunoDB Security</a></li>
+          <li><a href="stripe-idempotent-api-design.html">Stripe Idempotent API Design</a></li>
+          <li><a href="uber-emergency-sos-service.html">Uber Emergency SOS Service</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Distributed Systems</h5>
+        <ul>
+          <li><a href="discord-data-platform-petabytes.html">Discord Data Platform</a></li>
+          <li><a href="twitter-search-earlybird-architecture.html">Twitter Earlybird Search</a></li>
+          <li><a href="shopify-ghostferry-live-shard-migration.html">Shopify Ghostferry Migration</a></li>
+          <li><a href="rockset-zero-data-latency-workload-isolation.html">Rockset Workload Isolation</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>&copy; 2026 System Design Notes. Editorial &amp; Technical Analysis curated by Arpit Bhayani Architecture Synthesis.</p>
+    </div>
+  </footer>
+
+  <script src="../assets/js/main.js"></script>
+</body>
+</html>

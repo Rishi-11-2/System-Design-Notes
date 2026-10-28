@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Scaling Discord's Data Platform to Petabytes: ScyllaDB, BigQuery &amp; Real-Time Kafka Pipelines — System Design Notes</title>
+  <meta name="description" content="Technical deep dive into Discord's petabyte-scale data platform architecture: migrating trillions of messages from Cassandra to ScyllaDB, real-time Kafka event streaming, and BigQuery analytics.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css">
+  <link rel="stylesheet" href="../blog-theme.css">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body class="blog-post-page">
+  <div id="progress" aria-hidden="true"></div>
+
+  <header class="site-header">
+    <div class="header-container">
+      <a class="site-name" href="../index.html">
+        <span class="brand-icon">⚡</span>
+        <span>System Design Notes</span>
+      </a>
+      <nav class="site-nav" aria-label="Main">
+        <a href="../index.html">All Notes</a>
+        <a href="../index.html#categories">Categories</a>
+        <a href="../Docs/Discord_Data_Platform_Petabytes_Technical_Breakdown.pdf" class="nav-download-btn" target="_blank" download>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download PDF
+        </a>
+      </nav>
+      <div class="swatches" role="group" aria-label="Colour theme">
+        <button class="swatch" data-set-theme="light" style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+        <button class="swatch" data-set-theme="dark" style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+        <button class="swatch" data-set-theme="sepia" style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+      </div>
+    </div>
+  </header>
+
+  <div class="post-layout">
+    <aside class="post-sidebar">
+      <div class="sidebar-sticky">
+        <div class="sidebar-header">
+          <span class="badge-post">Data Platforms</span>
+          <span class="reading-time">24 min read</span>
+        </div>
+        <nav class="toc" aria-label="Table of Contents">
+          <h4>Table of Contents</h4>
+          <ul>
+            <li><a href="#discord-scale">1. Trillions of Messages: The Discord Scale</a></li>
+            <li><a href="#cassandra-limits">2. The Cassandra GC &amp; Compaction Wall</a></li>
+            <li><a href="#scylladb-migration">3. Migrating to ScyllaDB &amp; Seastar</a></li>
+            <li><a href="#partitioning-strategy">4. Message Partitioning &amp; Bucketing</a></li>
+            <li><a href="#kafka-pipeline">5. Real-Time Event Streaming with Kafka</a></li>
+            <li><a href="#analytics-lake">6. GCS &amp; BigQuery Columnar Data Lake</a></li>
+            <li><a href="#trust-safety">7. Real-Time Trust &amp; Safety ML Pipelines</a></li>
+            <li><a href="#key-takeaways">8. Key Architectural Takeaways</a></li>
+          </ul>
+        </nav>
+        <div class="companion-box">
+          <div class="companion-title">Companion PDF</div>
+          <p>Download the verified 3-page technical breakdown for offline study and architecture review.</p>
+          <a href="../Docs/Discord_Data_Platform_Petabytes_Technical_Breakdown.pdf" class="download-link" target="_blank" download>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Discord Data Platform PDF
+          </a>
+        </div>
+      </div>
+    </aside>
+
+    <main class="post-content">
+      <header class="post-header">
+        <div class="meta-row">
+          <span class="category-tag">Data Platforms &amp; Storage</span>
+          <time datetime="2026-01-16">January 16, 2026</time>
+          <span class="author-tag">Arpit Bhayani System Design Breakdown</span>
+        </div>
+        <h1>Scaling Discord's Data Platform to Petabytes: ScyllaDB, BigQuery &amp; Real-Time Kafka Pipelines</h1>
+        <p class="lead-text">
+          Storing trillions of chat messages and processing hundreds of gigabytes per second of live event telemetry requires extreme architectural discipline. Discover how Discord scaled its data platform from MongoDB to Apache Cassandra, and ultimately to ScyllaDB in C++, integrated with real-time Kafka pipelines and BigQuery analytical data lakes.
+        </p>
+      </header>
+
+      <section id="discord-scale">
+        <h2>1. Trillions of Messages: The Discord Scale</h2>
+        <p>
+          Discord supports hundreds of millions of monthly active users participating in massive communities (guilds) with over 500,000 concurrent members. Every text channel, voice state update, reaction emoji, and direct message generates continuous persistent data:
+        </p>
+        <div class="note-box">
+          <ul>
+            <li><strong>Message Scale:</strong> Over <strong>trillions of messages</strong> stored across thousands of database nodes.</li>
+            <li><strong>Traffic Profile:</strong> High write-throughput with read bursts: when an active user opens a channel, the application requests the last 50 messages, followed by paginated scrolling into history.</li>
+            <li><strong>Latency SLA:</strong> Sub-15ms p99 read latencies on recent messages to guarantee smooth real-time conversational user experiences.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="cassandra-limits">
+        <h2>2. The Cassandra GC &amp; Compaction Wall</h2>
+        <p>
+          In its early days, Discord migrated from MongoDB to Apache Cassandra. Cassandra's LSM-tree architecture handled high write volumes effectively. However, as dataset size surged into hundreds of terabytes, Cassandra hit severe operational bottlenecks:
+        </p>
+        <ul>
+          <li><strong>JVM Garbage Collection Pauses:</strong> Java heap allocations from reading large partitions caused stop-the-world GC pauses of up to 2–5 seconds, triggering timeout storms across gateway connections.</li>
+          <li><strong>Compaction Stalls:</strong> Cassandra's background LSM compactions competed fiercely with live client reads for NVMe I/O and CPU cores, degrading p99 read latency past 1,000ms.</li>
+          <li><strong>Hot Partitions:</strong> High-volume channels (e.g., general chat in mega-servers) created massive partitions spanning gigabytes, overwhelming individual Cassandra nodes.</li>
+        </ul>
+      </section>
+
+      <section id="scylladb-migration">
+        <h2>3. Migrating to ScyllaDB: The C++ Seastar Engine</h2>
+        <p>
+          To permanently eliminate JVM GC pauses, Discord migrated its core message storage cluster to <strong>ScyllaDB</strong>—a ground-up C++ reimplementation of the Cassandra protocol built on the <strong>Seastar asynchronous framework</strong>:
+        </p>
+
+        <div class="code-box">
+┌────────────────────────────────────────────────────────────────────────┐
+│               SCYLLADB SHARED-NOTHING THREAD-PER-CORE                  │
+├────────────────────────────────────────────────────────────────────────┤
+│ • CPU CORE 0 ──► Thread 0 (Owns 1/N of memory, NIC queue, &amp; NVMe I/O) │
+│ • CPU CORE 1 ──► Thread 1 (Owns 1/N of memory, NIC queue, &amp; NVMe I/O) │
+│ • CPU CORE 2 ──► Thread 2 (Owns 1/N of memory, NIC queue, &amp; NVMe I/O) │
+│ • CPU CORE K ──► Thread K (Owns 1/N of memory, NIC queue, &amp; NVMe I/O) │
+├────────────────────────────────────────────────────────────────────────┤
+│ ZERO LOCKING CONTENTION • ZERO JVM GARBAGE COLLECTION • KERNEL-BYPASS  │
+└────────────────────────────────────────────────────────────────────────┘</div>
+        <p>
+          By adopting a shared-nothing, thread-per-core model, ScyllaDB locks each operating system thread to a dedicated physical CPU core with its own local memory arena. Cross-thread mutex contention is eliminated, reducing p99 message read latency from <strong>over 1,000ms down to under 15ms</strong> across trillions of rows.
+        </p>
+      </section>
+
+      <section id="partitioning-strategy">
+        <h2>4. Message Partitioning &amp; Time-Window Bucketing</h2>
+        <p>
+          To prevent individual channel partitions from expanding infinitely, Discord implemented an intelligent <strong>Time-Window Bucketing Scheme</strong>:
+        </p>
+        <pre><code class="language-sql">CREATE TABLE messages (
+    channel_id bigint,
+    bucket int,
+    message_id bigint,
+    author_id bigint,
+    content text,
+    PRIMARY KEY ((channel_id, bucket), message_id)
+) WITH CLUSTERING ORDER BY (message_id DESC);</code></pre>
+        <div class="note-box">
+          <ul>
+            <li><strong>Compound Partition Key:</strong> <code>(channel_id, bucket)</code>. Each bucket holds approximately 10 days of messages.</li>
+            <li><strong>Clustering Key:</strong> <code>message_id DESC</code>. Because Discord uses Twitter Snowflake IDs (where the highest bits encode the creation timestamp), sorting by <code>message_id DESC</code> returns the latest messages with sequential disk I/O.</li>
+            <li><strong>Bounded Partition Sizes:</strong> Even for ultra-active channels with millions of messages, each partition is capped at roughly 100MB, eliminating Cassandra/ScyllaDB wide-partition compaction stalls.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="kafka-pipeline">
+        <h2>5. Real-Time Event Streaming with Kafka</h2>
+        <p>
+          Beyond chat messages, user actions generate hundreds of gigabytes per second of raw telemetry. Discord leverages Apache Kafka as its unified event backbone:
+        </p>
+        <div class="code-box">
+[ Gateway Nodes / WebSockets ] ──► [ Kafka Cluster (Thousands of Partitions) ]
+                                                │
+         ┌──────────────────────────────────────┼──────────────────────────────┐
+         ▼                                      ▼                              ▼
+[ ScyllaDB Message Store ]          [ Real-Time Trust &amp; Safety ]       [ Cloud Storage Data Lake ]
+(Live Chat Persistence)             (Flink / Rust Stream ML)            (Secor / GCS Parquet)</div>
+      </section>
+
+      <section id="analytics-lake">
+        <h2>6. GCS &amp; BigQuery Columnar Data Lake</h2>
+        <p>
+          For historical analytical queries, business intelligence, and product analytics, Discord decouples storage from compute:
+        </p>
+        <ul>
+          <li><strong>Secor Kafka Sink:</strong> Streams raw Kafka events directly to Google Cloud Storage (GCS) in partitioned Snappy-compressed Parquet files.</li>
+          <li><strong>BigQuery External Tables:</strong> Data scientists query petabytes of event history in BigQuery without putting analytical query loads on the transactional ScyllaDB cluster.</li>
+          <li><strong>Apache Airflow Orchestration:</strong> Nightly batch pipelines compute daily active users (DAU), voice channel duration metrics, and retention cohorts.</li>
+        </ul>
+      </section>
+
+      <section id="trust-safety">
+        <h2>7. Real-Time Trust &amp; Safety ML Pipelines</h2>
+        <p>
+          With millions of public communities, detecting spam raids, malicious phishing links, and CSAM content in real time is vital:
+        </p>
+        <ul>
+          <li><strong>Stateful Stream Processing:</strong> Apache Flink and custom Rust microservices tail Kafka topics, maintaining rolling window counters of messages sent per second per user.</li>
+          <li><strong>Nearline Classification:</strong> High-risk messages are routed through machine learning classifiers for text sentiment, image perceptual hashes, and link reputation before reaching guild members.</li>
+        </ul>
+      </section>
+
+      <section id="key-takeaways">
+        <h2>8. Key Architectural Takeaways</h2>
+        <div class="note-box">
+          <ul>
+            <li><strong>Thread-Per-Core Replaces JVM GC at Scale:</strong> In ultra-high-throughput systems, Java Garbage Collection becomes an unpredictable operational liability. Shared-nothing architectures like ScyllaDB deliver deterministic sub-15ms p99 latencies.</li>
+            <li><strong>Bucket Partitions to Prevent Unbounded Growth:</strong> Never allow partition keys to accumulate data forever. Slicing partitions by composite keys <code>(entity_id, time_bucket)</code> caps shard size and guarantees efficient compactions.</li>
+            <li><strong>Decouple Real-Time Serving from Analytics:</strong> Write live transactions to high-speed KV/NoSQL databases, stream events to Kafka, and sink them to columnar object storage (Parquet + BigQuery) for analytical workloads.</li>
+            <li><strong>Snowflake IDs Provide Free Temporal Ordering:</strong> Embedding timestamps into 64-bit ID generation primitives eliminates the need for secondary indexing on creation dates.</li>
+          </ul>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-col">
+        <div class="footer-brand">
+          <div class="brand-icon">⚡</div>
+          <span class="footer-title">System Design Notes</span>
+        </div>
+        <p class="footer-desc">Production-grade architecture dissections, distributed systems engineering, and first-principles technical notes.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Data Platforms &amp; Storage</h5>
+        <ul>
+          <li><a href="discord-data-platform-petabytes.html">Discord Data Platform</a></li>
+          <li><a href="rockset-realtime-analytics-database-architecture.html">Rockset ALT Architecture</a></li>
+          <li><a href="reddit-metadata-store-aurora-postgres.html">Reddit Metadata Store</a></li>
+          <li><a href="dragonflydb-architecture-overview-6m-qps.html">DragonflyDB Architecture</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Event Streaming &amp; Scale</h5>
+        <ul>
+          <li><a href="kafka-architecture-part1.html">Kafka Architecture Fundamentals</a></li>
+          <li><a href="slack-email-classification-pipeline.html">Slack Event Processing</a></li>
+          <li><a href="trello-rabbitmq-to-kafka-migration.html">Trello Kafka Migration</a></li>
+          <li><a href="airbnb-http-streaming-performance.html">Airbnb Streaming Pipeline</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>&copy; 2026 System Design Notes. Editorial &amp; Technical Analysis curated by Arpit Bhayani Architecture Synthesis.</p>
+    </div>
+  </footer>
+
+  <script src="../assets/js/main.js"></script>
+</body>
+</html>
