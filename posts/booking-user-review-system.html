@@ -7,9 +7,10 @@
   <meta name="description" content="Architectural breakdown of Booking.com's user review platform: handling 10,000+ peak QPS with sub-50ms P99 latency across 250M+ reviews. Detailed analysis of pre-materialized views, centralized caching, sharded multi-AZ storage, the modulo rebalancing storm, and consistent hashing with virtual nodes.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../blog-theme.css">
-  <link rel="stylesheet" href="../assets/css/style.css">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css?v=3.2">
+  <link rel="stylesheet" href="../blog-theme.css?v=3.2">
+  <link rel="stylesheet" href="../assets/css/style.css?v=3.2">
   <script>
     (function() {
       const saved = localStorage.getItem('theme');
@@ -101,38 +102,6 @@
     </header>
 
     <div class="article-container">
-      <aside class="toc-sidebar">
-        <div class="toc-title">Table of Contents</div>
-        <ul class="toc-list">
-          <li><a href="#executive-summary">1. Executive Summary &amp; Core Dilemma</a></li>
-          <li><a href="#business-imperative">2. Verified-Stay Moat &amp; Business Stakes</a></li>
-          <li><a href="#scale-slos">3. Scale Requirements &amp; SLOs</a></li>
-          <li><a href="#read-path-architecture">4. Read-Path Architecture</a></li>
-          <li class="toc-sub"><a href="#sql-aggregation-fallacy">On-The-Fly Aggregation Fallacy</a></li>
-          <li class="toc-sub"><a href="#materialized-views">Pre-Materialized Database Views</a></li>
-          <li class="toc-sub"><a href="#remote-caching">Centralized Remote Caching Tier</a></li>
-          <li><a href="#api-service-tier">5. Stateless REST API Service Tier</a></li>
-          <li><a href="#storage-sharding">6. Storage Tier: Database Sharding</a></li>
-          <li class="toc-sub"><a href="#partition-key-selection">Partition Key: hotel_id</a></li>
-          <li class="toc-sub"><a href="#cross-shard-elimination">Eliminating Cross-Shard Joins</a></li>
-          <li><a href="#elasticity-dilemma">7. Elasticity Dilemma: Seasonal Surges</a></li>
-          <li><a href="#modulo-sharding-catastrophe">8. The Modulo Sharding Catastrophe</a></li>
-          <li><a href="#consistent-hashing-solution">9. Consistent Hashing &amp; Hash Ring</a></li>
-          <li class="toc-sub"><a href="#hash-ring-mechanics">Circular Ring Mechanics</a></li>
-          <li class="toc-sub"><a href="#minimal-relocation">Proof of 1/(N+1) Minimal Relocation</a></li>
-          <li><a href="#virtual-nodes">10. Virtual Nodes (VNodes)</a></li>
-          <li class="toc-sub"><a href="#vnode-mechanics">Uniform Partition Distribution</a></li>
-          <li class="toc-sub"><a href="#diffused-recovery">Diffused Failure Absorption</a></li>
-          <li><a href="#multi-az-resilience">11. Multi-AZ Infrastructure Resilience</a></li>
-          <li><a href="#request-lifecycle">12. End-to-End System Request Lifecycle</a></li>
-          <li class="toc-sub"><a href="#read-path-flow">Read Path Execution Flow</a></li>
-          <li class="toc-sub"><a href="#write-path-flow">Write Path &amp; Async Materialization</a></li>
-          <li><a href="#architectural-comparison">13. Architectural Comparison Table</a></li>
-          <li><a href="#proactive-capacity-testing">14. Proactive Capacity &amp; Shadow Testing</a></li>
-          <li><a href="#engineering-takeaways">15. Systems Engineering Lessons</a></li>
-        </ul>
-      </aside>
-
       <article class="prose">
         <div class="callout callout-note">
           <div class="callout-title">📌 Primary Architectural Takeaway: Decoupling Serving from Storage &amp; Elastic Rebalancing</div>
@@ -487,6 +456,38 @@ sequenceDiagram
           </ol>
         </div>
       </article>
+
+    <aside class="toc-sidebar">
+        <div class="toc-title">Table of Contents</div>
+        <ul class="toc-list">
+          <li><a href="#executive-summary">1. Executive Summary &amp; Core Dilemma</a></li>
+          <li><a href="#business-imperative">2. Verified-Stay Moat &amp; Business Stakes</a></li>
+          <li><a href="#scale-slos">3. Scale Requirements &amp; SLOs</a></li>
+          <li><a href="#read-path-architecture">4. Read-Path Architecture</a></li>
+          <li class="toc-sub"><a href="#sql-aggregation-fallacy">On-The-Fly Aggregation Fallacy</a></li>
+          <li class="toc-sub"><a href="#materialized-views">Pre-Materialized Database Views</a></li>
+          <li class="toc-sub"><a href="#remote-caching">Centralized Remote Caching Tier</a></li>
+          <li><a href="#api-service-tier">5. Stateless REST API Service Tier</a></li>
+          <li><a href="#storage-sharding">6. Storage Tier: Database Sharding</a></li>
+          <li class="toc-sub"><a href="#partition-key-selection">Partition Key: hotel_id</a></li>
+          <li class="toc-sub"><a href="#cross-shard-elimination">Eliminating Cross-Shard Joins</a></li>
+          <li><a href="#elasticity-dilemma">7. Elasticity Dilemma: Seasonal Surges</a></li>
+          <li><a href="#modulo-sharding-catastrophe">8. The Modulo Sharding Catastrophe</a></li>
+          <li><a href="#consistent-hashing-solution">9. Consistent Hashing &amp; Hash Ring</a></li>
+          <li class="toc-sub"><a href="#hash-ring-mechanics">Circular Ring Mechanics</a></li>
+          <li class="toc-sub"><a href="#minimal-relocation">Proof of 1/(N+1) Minimal Relocation</a></li>
+          <li><a href="#virtual-nodes">10. Virtual Nodes (VNodes)</a></li>
+          <li class="toc-sub"><a href="#vnode-mechanics">Uniform Partition Distribution</a></li>
+          <li class="toc-sub"><a href="#diffused-recovery">Diffused Failure Absorption</a></li>
+          <li><a href="#multi-az-resilience">11. Multi-AZ Infrastructure Resilience</a></li>
+          <li><a href="#request-lifecycle">12. End-to-End System Request Lifecycle</a></li>
+          <li class="toc-sub"><a href="#read-path-flow">Read Path Execution Flow</a></li>
+          <li class="toc-sub"><a href="#write-path-flow">Write Path &amp; Async Materialization</a></li>
+          <li><a href="#architectural-comparison">13. Architectural Comparison Table</a></li>
+          <li><a href="#proactive-capacity-testing">14. Proactive Capacity &amp; Shadow Testing</a></li>
+          <li><a href="#engineering-takeaways">15. Systems Engineering Lessons</a></li>
+        </ul>
+      </aside>
     </div>
   </main>
 
@@ -546,6 +547,6 @@ sequenceDiagram
     </div>
   </footer>
 
-  <script src="../assets/js/main.js"></script>
+  <script src="../assets/js/main.js?v=3.2"></script>
 </body>
 </html>

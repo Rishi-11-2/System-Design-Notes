@@ -7,10 +7,10 @@
   <meta name="description" content="Technical deep dive into how GitHub partitioned and sharded its monolithic MySQL database cluster without downtime: virtual schema domains, query and transaction linters, ProxySQL routing, and GTID cutovers.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../theme.css">
-  <link rel="stylesheet" href="../blog-theme.css">
-  <link rel="stylesheet" href="../assets/css/style.css">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css?v=3.2">
+  <link rel="stylesheet" href="../blog-theme.css?v=3.2">
+  <link rel="stylesheet" href="../assets/css/style.css?v=3.2">
   <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
   <!-- KaTeX for Math Rendering -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
@@ -86,26 +86,6 @@
   </header>
 
   <main class="article-body">
-    <aside class="toc-sidebar">
-      <div class="toc-title">Table of Contents</div>
-      <ul class="toc-list">
-        <li><a href="#monolith-scale">1. The Monolith: Scaling `mysql1` to 950K QPS</a></li>
-        <li><a href="#noisy-neighbors">2. The Breaking Point: Noisy Neighbors &amp; Blast Radius</a></li>
-        <li><a href="#schema-domains">3. Phase 1: Virtual Partitioning via Schema Domains</a></li>
-        <li><a href="#linters-and-guardrails">4. Query &amp; Transaction Linters in CI</a></li>
-        <li><a href="#physical-partitioning">5. Phase 2: Zero-Downtime Physical Partitioning</a></li>
-        <li><a href="#proxysql-routing">6. Traffic Cutover Mechanics with ProxySQL &amp; GTIDs</a></li>
-        <li><a href="#production-impact">7. Production Impact &amp; 50% Load Reduction</a></li>
-        <li><a href="#engineering-verdict">8. First-Principles Summary &amp; Design Lessons</a></li>
-      </ul>
-      <div class="download-box" style="margin-top: 2rem; padding: 1rem; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-surface);">
-        <div style="font-weight: 600; font-size: 0.85rem; margin-bottom: 0.5rem;">Companion Artifact</div>
-        <a href="../Docs/GitHub_Database_Sharding_Technical_Breakdown.pdf" target="_blank" download class="btn-primary" style="display: block; text-align: center; font-size: 0.8rem; padding: 0.5rem;">
-          📥 Download 3-Page PDF
-        </a>
-      </div>
-    </aside>
-
     <article class="article-content">
       <section id="monolith-scale">
         <h2>1. The Monolith: Scaling `mysql1` to 950K QPS</h2>
@@ -326,6 +306,26 @@ sequenceDiagram
         </ul>
       </section>
     </article>
+
+    <aside class="toc-sidebar">
+      <div class="toc-title">Table of Contents</div>
+      <ul class="toc-list">
+        <li><a href="#monolith-scale">1. The Monolith: Scaling `mysql1` to 950K QPS</a></li>
+        <li><a href="#noisy-neighbors">2. The Breaking Point: Noisy Neighbors &amp; Blast Radius</a></li>
+        <li><a href="#schema-domains">3. Phase 1: Virtual Partitioning via Schema Domains</a></li>
+        <li><a href="#linters-and-guardrails">4. Query &amp; Transaction Linters in CI</a></li>
+        <li><a href="#physical-partitioning">5. Phase 2: Zero-Downtime Physical Partitioning</a></li>
+        <li><a href="#proxysql-routing">6. Traffic Cutover Mechanics with ProxySQL &amp; GTIDs</a></li>
+        <li><a href="#production-impact">7. Production Impact &amp; 50% Load Reduction</a></li>
+        <li><a href="#engineering-verdict">8. First-Principles Summary &amp; Design Lessons</a></li>
+      </ul>
+      <div class="download-box" style="margin-top: 2rem; padding: 1rem; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-surface);">
+        <div style="font-weight: 600; font-size: 0.85rem; margin-bottom: 0.5rem;">Companion Artifact</div>
+        <a href="../Docs/GitHub_Database_Sharding_Technical_Breakdown.pdf" target="_blank" download class="btn-primary" style="display: block; text-align: center; font-size: 0.8rem; padding: 0.5rem;">
+          📥 Download 3-Page PDF
+        </a>
+      </div>
+    </aside>
   </main>
 
   <footer class="footer">
@@ -346,6 +346,6 @@ sequenceDiagram
     </div>
   </footer>
 
-  <script src="../theme.js"></script>
+  <script src="../theme.js?v=3.2"></script>
 </body>
 </html>

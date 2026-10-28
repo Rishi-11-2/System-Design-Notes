@@ -7,9 +7,10 @@
   <meta name="description" content="Technical breakdown of Stripe's canonical log line pattern: replacing fragmented microservice log noise with pre-joined, high-cardinality wide events, request-scoped context accumulators, and ultra-fast incident analytics.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../blog-theme.css">
-  <link rel="stylesheet" href="../assets/css/style.css">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css?v=3.2">
+  <link rel="stylesheet" href="../blog-theme.css?v=3.2">
+  <link rel="stylesheet" href="../assets/css/style.css?v=3.2">
   <script>
     (function() {
       const saved = localStorage.getItem('theme');
@@ -90,20 +91,6 @@
   </header>
 
   <main class="article-body">
-    <aside class="toc-sidebar">
-      <div class="toc-title">Table of Contents</div>
-      <ul class="toc-list">
-        <li><a href="#logging-nightmare">1. The Fragmented Log Nightmare</a></li>
-        <li><a href="#canonical-concept">2. The Core Thesis: One Wide Event per Unit of Work</a></li>
-        <li><a href="#log-anatomy">3. Anatomy of a Canonical Log Line</a></li>
-        <li><a href="#context-accumulator">4. The Request Context Accumulator Architecture</a></li>
-        <li><a href="#cardinality-math">5. Resolving the High-Cardinality Analytics Dilemma</a></li>
-        <li><a href="#comparison-matrix">6. Canonical Logs vs Metrics vs Distributed Traces</a></li>
-        <li><a href="#code-implementation">7. Production Implementation Pattern</a></li>
-        <li><a href="#observability-verdict">8. Engineering Takeaways &amp; Best Practices</a></li>
-      </ul>
-    </aside>
-
     <article class="prose">
       <blockquote>
         <p><strong>Source Attribution:</strong> This deep-dive synthesizes Arpit Bhayani's engineering dissection on Stripe's Logging Architecture and Brandur Leach's influential Stripe engineering publication, <em>"Fast and flexible observability with canonical log lines"</em>.</p>
@@ -392,6 +379,20 @@ func CanonicalLogMiddleware(next http.Handler) http.Handler {
         <li><strong>Unify Business &amp; Systems Metrics:</strong> The magic of canonical log lines happens when you combine system metrics (<code>db_duration_ms</code>, <code>memory_allocated</code>) with business entities (<code>merchant_id</code>, <code>charge_amount</code>, <code>tier</code>). This allows engineers to immediately determine if an outage is isolated to a specific tier, API version, or merchant.</li>
       </ol>
     </article>
+
+    <aside class="toc-sidebar">
+      <div class="toc-title">Table of Contents</div>
+      <ul class="toc-list">
+        <li><a href="#logging-nightmare">1. The Fragmented Log Nightmare</a></li>
+        <li><a href="#canonical-concept">2. The Core Thesis: One Wide Event per Unit of Work</a></li>
+        <li><a href="#log-anatomy">3. Anatomy of a Canonical Log Line</a></li>
+        <li><a href="#context-accumulator">4. The Request Context Accumulator Architecture</a></li>
+        <li><a href="#cardinality-math">5. Resolving the High-Cardinality Analytics Dilemma</a></li>
+        <li><a href="#comparison-matrix">6. Canonical Logs vs Metrics vs Distributed Traces</a></li>
+        <li><a href="#code-implementation">7. Production Implementation Pattern</a></li>
+        <li><a href="#observability-verdict">8. Engineering Takeaways &amp; Best Practices</a></li>
+      </ul>
+    </aside>
   </main>
 
   <footer class="footer">
@@ -451,6 +452,6 @@ func CanonicalLogMiddleware(next http.Handler) http.Handler {
     </div>
   </footer>
 
-  <script src="../assets/js/main.js"></script>
+  <script src="../assets/js/main.js?v=3.2"></script>
 </body>
 </html>

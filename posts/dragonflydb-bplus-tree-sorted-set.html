@@ -7,9 +7,10 @@
   <meta name="description" content="Architectural breakdown of why DragonflyDB replaced Redis SkipLists with in-memory B+ Trees for Sorted Sets: 40% memory reduction, 5x to 24x throughput scaling, 3.2-byte vs 37-byte pointer overhead, 256-byte cache-line aligned leaf nodes, and million ZADD benchmarks.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../blog-theme.css">
-  <link rel="stylesheet" href="../assets/css/style.css">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css?v=3.2">
+  <link rel="stylesheet" href="../blog-theme.css?v=3.2">
+  <link rel="stylesheet" href="../assets/css/style.css?v=3.2">
   <script>
     (function() {
       const saved = localStorage.getItem('theme');
@@ -101,29 +102,6 @@
     </header>
 
     <div class="article-container">
-      <aside class="toc-sidebar">
-        <div class="toc-title">Table of Contents</div>
-        <ul class="toc-list">
-          <li><a href="#executive-summary">1. Executive Summary</a></li>
-          <li><a href="#redis-sorted-sets">2. Redis Sorted Set Mechanics</a></li>
-          <li class="toc-sub"><a href="#uniqueness-ordering">Uniqueness &amp; Score Ordering</a></li>
-          <li class="toc-sub"><a href="#listpack-skiplist-threshold">Listpack vs. SkipList Threshold</a></li>
-          <li><a href="#skiplist-mechanics">3. How SkipLists Work</a></li>
-          <li><a href="#pointer-overhead-crisis">4. Pointer Overhead Crisis</a></li>
-          <li class="toc-sub"><a href="#zskiplistnode-anatomy">zskiplistNode C Anatomy</a></li>
-          <li class="toc-sub"><a href="#empirical-metadata-tax">The 37-Byte Metadata Tax</a></li>
-          <li><a href="#dragonflydb-bplus-tree">5. DragonflyDB In-Memory B+ Tree</a></li>
-          <li class="toc-sub"><a href="#leaf-node-architecture">256-Byte Leaf Nodes</a></li>
-          <li class="toc-sub"><a href="#architecture-diagram">SkipList vs. B+ Tree Diagram</a></li>
-          <li><a href="#mathematical-proof">6. Mathematical Overhead Proof</a></li>
-          <li><a href="#hardware-symbiosis">7. Hardware Symbiosis &amp; Cache Lines</a></li>
-          <li><a href="#empirical-benchmarks">8. Empirical Benchmarks</a></li>
-          <li class="toc-sub"><a href="#throughput-benchmark">Million ZADD Throughput</a></li>
-          <li class="toc-sub"><a href="#memory-benchmark">Memory Consumption Scaling</a></li>
-          <li><a href="#engineering-takeaways">9. Engineering Takeaways</a></li>
-        </ul>
-      </aside>
-
       <article class="prose">
         <div class="callout callout-note">
           <div class="callout-title">📌 Primary Takeaway: Hardware Symbiosis Over Algorithmic Dogma</div>
@@ -380,6 +358,29 @@ flowchart LR
           </ol>
         </div>
       </article>
+
+    <aside class="toc-sidebar">
+        <div class="toc-title">Table of Contents</div>
+        <ul class="toc-list">
+          <li><a href="#executive-summary">1. Executive Summary</a></li>
+          <li><a href="#redis-sorted-sets">2. Redis Sorted Set Mechanics</a></li>
+          <li class="toc-sub"><a href="#uniqueness-ordering">Uniqueness &amp; Score Ordering</a></li>
+          <li class="toc-sub"><a href="#listpack-skiplist-threshold">Listpack vs. SkipList Threshold</a></li>
+          <li><a href="#skiplist-mechanics">3. How SkipLists Work</a></li>
+          <li><a href="#pointer-overhead-crisis">4. Pointer Overhead Crisis</a></li>
+          <li class="toc-sub"><a href="#zskiplistnode-anatomy">zskiplistNode C Anatomy</a></li>
+          <li class="toc-sub"><a href="#empirical-metadata-tax">The 37-Byte Metadata Tax</a></li>
+          <li><a href="#dragonflydb-bplus-tree">5. DragonflyDB In-Memory B+ Tree</a></li>
+          <li class="toc-sub"><a href="#leaf-node-architecture">256-Byte Leaf Nodes</a></li>
+          <li class="toc-sub"><a href="#architecture-diagram">SkipList vs. B+ Tree Diagram</a></li>
+          <li><a href="#mathematical-proof">6. Mathematical Overhead Proof</a></li>
+          <li><a href="#hardware-symbiosis">7. Hardware Symbiosis &amp; Cache Lines</a></li>
+          <li><a href="#empirical-benchmarks">8. Empirical Benchmarks</a></li>
+          <li class="toc-sub"><a href="#throughput-benchmark">Million ZADD Throughput</a></li>
+          <li class="toc-sub"><a href="#memory-benchmark">Memory Consumption Scaling</a></li>
+          <li><a href="#engineering-takeaways">9. Engineering Takeaways</a></li>
+        </ul>
+      </aside>
     </div>
   </main>
 
@@ -434,6 +435,6 @@ flowchart LR
     </div>
   </footer>
 
-  <script src="../assets/js/main.js"></script>
+  <script src="../assets/js/main.js?v=3.2"></script>
 </body>
 </html>

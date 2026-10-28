@@ -1,81 +1,89 @@
 /* ------------------------------------------------------------------
    System Design Notes & Engineering Blog — Theme Tokens & Base Helpers
-   Light "Fog" · Dark "Midnight" · Sepia "Lamplight"
+   Light (warm grey paper) · Dark (ink blue-black) · Sepia (lamplight)
    Follows system preference unless <html data-theme="light|dark|sepia"> is set.
-   Fonts: Literata (prose), Instrument Sans (interface), JetBrains Mono (code)
+   Fonts: Newsreader (reading prose), IBM Plex Sans (interface), IBM Plex Mono (code)
 ------------------------------------------------------------------- */
+
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&display=swap');
 
 :root {
   color-scheme: light;
-  --bg: #f2f3ef;
-  --raised: #e9ebe5;
-  --ink: #1f272c;
-  --text: #1f272c;
-  --muted: #5e6a70;
-  --rule: #d5d9d1;
-  --border: #d5d9d1;
-  --code-bg: #e9ebe5;
-  --accent: #3d56a0;
+  --bg: #f6f5f2;
+  --raised: #ecebe6;
+  --ink: #2a2d30;
+  --text: #2a2d30;
+  --muted: #62676c;
+  --rule: #dcdad3;
+  --border: #dcdad3;
+  --code-bg: #ecebe6;
+  --accent: #2f5b8a;
+  --tint: color-mix(in srgb, var(--accent) 8%, var(--bg));
 
-  --serif: "Literata", "Source Serif 4", "Iowan Old Style", Charter, Georgia, serif;
-  --sans: "Instrument Sans", "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
-  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Consolas, monospace;
+  --serif: "Newsreader", "Literata", "Source Serif 4", "Iowan Old Style", Charter, Georgia, serif;
+  --sans: "IBM Plex Sans", "Instrument Sans", "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
+  --mono: "IBM Plex Mono", "JetBrains Mono", ui-monospace, "SF Mono", Consolas, monospace;
 
   --measure: 72ch;
+  --bleed: 3rem;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) {
     color-scheme: dark;
-    --bg: #14181c;
-    --raised: #1b2127;
-    --ink: #c9d0d6;
-    --text: #c9d0d6;
-    --muted: #8c97a0;
-    --rule: #2a3138;
-    --border: #2a3138;
-    --code-bg: #1b2127;
-    --accent: #a3b8f2;
+    --bg: #121519;
+    --raised: #1a1f25;
+    --ink: #cdd1d4;
+    --text: #cdd1d4;
+    --muted: #8e959c;
+    --rule: #272d34;
+    --border: #272d34;
+    --code-bg: #1a1f25;
+    --accent: #93b5df;
+    --tint: color-mix(in srgb, var(--accent) 8%, var(--bg));
   }
 }
 
 :root[data-theme="light"] {
   color-scheme: light;
-  --bg: #f2f3ef;
-  --raised: #e9ebe5;
-  --ink: #1f272c;
-  --text: #1f272c;
-  --muted: #5e6a70;
-  --rule: #d5d9d1;
-  --border: #d5d9d1;
-  --code-bg: #e9ebe5;
-  --accent: #3d56a0;
+  --bg: #f6f5f2;
+  --raised: #ecebe6;
+  --ink: #2a2d30;
+  --text: #2a2d30;
+  --muted: #62676c;
+  --rule: #dcdad3;
+  --border: #dcdad3;
+  --code-bg: #ecebe6;
+  --accent: #2f5b8a;
+  --tint: color-mix(in srgb, var(--accent) 8%, var(--bg));
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #14181c;
-  --raised: #1b2127;
-  --ink: #c9d0d6;
-  --text: #c9d0d6;
-  --muted: #8c97a0;
-  --rule: #2a3138;
-  --border: #2a3138;
-  --code-bg: #1b2127;
-  --accent: #a3b8f2;
+  --bg: #121519;
+  --raised: #1a1f25;
+  --ink: #cdd1d4;
+  --text: #cdd1d4;
+  --muted: #8e959c;
+  --rule: #272d34;
+  --border: #272d34;
+  --code-bg: #1a1f25;
+  --accent: #93b5df;
+  --tint: color-mix(in srgb, var(--accent) 8%, var(--bg));
 }
 
 :root[data-theme="sepia"] {
   color-scheme: light;
-  --bg: #e8e0ce;
-  --raised: #dfd6c1;
-  --ink: #3a3224;
-  --text: #3a3224;
-  --muted: #62573f;
-  --rule: #d3c9b2;
-  --border: #d3c9b2;
-  --code-bg: #dfd6c1;
-  --accent: #7b4a2a;
+  --bg: #ede5d1;
+  --raised: #e3d9c0;
+  --ink: #3a3326;
+  --text: #3a3326;
+  --muted: #6a5e49;
+  --rule: #d8ccb0;
+  --border: #d8ccb0;
+  --code-bg: #e3d9c0;
+  --accent: #46603c;
+  --tint: color-mix(in srgb, var(--accent) 8%, var(--bg));
 }
 
 /* ---------- Base Reset (Non-Destructive) ---------- */
@@ -104,8 +112,8 @@ main {
 }
 
 ::selection {
-  background: var(--accent);
-  color: var(--bg);
+  background: color-mix(in srgb, var(--accent) 30%, var(--bg));
+  color: var(--ink);
 }
 
 :focus-visible {
@@ -123,8 +131,8 @@ main {
 }
 
 .swatch {
-  width: 1.15rem;
-  height: 1.15rem;
+  width: 1.35rem;
+  height: 1.35rem;
   padding: 0;
   border: 1px solid var(--border);
   border-radius: 50%;

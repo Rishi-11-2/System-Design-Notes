@@ -7,9 +7,10 @@
   <meta name="description" content="Deep technical breakdown of Google's monorepo architecture: managing 2+ billion lines of code, 86 TB of data, Piper distributed VCS, CitC FUSE virtual file system, Blaze/Bazel hermetic builds, Rosie automated refactoring, and eliminating diamond dependencies.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../blog-theme.css">
-  <link rel="stylesheet" href="../assets/css/style.css">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css?v=3.2">
+  <link rel="stylesheet" href="../blog-theme.css?v=3.2">
+  <link rel="stylesheet" href="../assets/css/style.css?v=3.2">
   <script>
     (function() {
       const saved = localStorage.getItem('theme');
@@ -90,21 +91,6 @@
   </header>
 
   <main class="article-body">
-    <aside class="toc-sidebar">
-      <div class="toc-title">Table of Contents</div>
-      <ul class="toc-list">
-        <li><a href="#scale-metrics">1. Colossal Scale &amp; Operating Realities</a></li>
-        <li><a href="#polyrepo-vs-monorepo">2. The Monorepo Dilemma: Trade-offs</a></li>
-        <li><a href="#evolution-vcs">3. Evolution of Version Control at Google</a></li>
-        <li><a href="#piper-architecture">4. Piper: Distributed VCS on Spanner</a></li>
-        <li><a href="#citc-fuse">5. CitC &amp; The FUSE Virtual Filesystem</a></li>
-        <li><a href="#trunk-based-diamond">6. Trunk-Based Development &amp; Diamond Dependencies</a></li>
-        <li><a href="#blaze-bazel">7. Blaze: Hermetic Distributed Build Graph</a></li>
-        <li><a href="#rosie-governance">8. Rosie, Critique &amp; Automated Refactoring</a></li>
-        <li><a href="#engineering-verdict">9. Architectural Verdict &amp; Takeaways</a></li>
-      </ul>
-    </aside>
-
     <article class="prose">
       <blockquote>
         <p><strong>Source Attribution:</strong> This deep-dive synthesizes Arpit Bhayani's engineering dissection on Google's Monorepo architecture and Rachel Potvin &amp; Josh Levenberg's seminal Communications of the ACM paper, <em>"Why Google Stores Billions of Lines of Code in a Single Repository"</em>.</p>
@@ -329,6 +315,21 @@ flowchart LR
         <li><strong>Pragmatic Guidance for Modern Teams:</strong> For 99% of companies, standard Git with modular microservices or bounded monorepos (powered by modern open-source tooling like Bazel, Nx, or Turborepo) offers the best balance of simplicity and velocity without requiring hundreds of dedicated internal tool engineers.</li>
       </ol>
     </article>
+
+    <aside class="toc-sidebar">
+      <div class="toc-title">Table of Contents</div>
+      <ul class="toc-list">
+        <li><a href="#scale-metrics">1. Colossal Scale &amp; Operating Realities</a></li>
+        <li><a href="#polyrepo-vs-monorepo">2. The Monorepo Dilemma: Trade-offs</a></li>
+        <li><a href="#evolution-vcs">3. Evolution of Version Control at Google</a></li>
+        <li><a href="#piper-architecture">4. Piper: Distributed VCS on Spanner</a></li>
+        <li><a href="#citc-fuse">5. CitC &amp; The FUSE Virtual Filesystem</a></li>
+        <li><a href="#trunk-based-diamond">6. Trunk-Based Development &amp; Diamond Dependencies</a></li>
+        <li><a href="#blaze-bazel">7. Blaze: Hermetic Distributed Build Graph</a></li>
+        <li><a href="#rosie-governance">8. Rosie, Critique &amp; Automated Refactoring</a></li>
+        <li><a href="#engineering-verdict">9. Architectural Verdict &amp; Takeaways</a></li>
+      </ul>
+    </aside>
   </main>
 
   <footer class="footer">
@@ -389,6 +390,6 @@ flowchart LR
     </div>
   </footer>
 
-  <script src="../assets/js/main.js"></script>
+  <script src="../assets/js/main.js?v=3.2"></script>
 </body>
 </html>

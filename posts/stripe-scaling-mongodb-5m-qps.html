@@ -7,10 +7,10 @@
   <meta name="description" content="Technical deep-dive into Stripe's DocDB architecture: scaling MongoDB Community Edition to 5M+ QPS across 2,000+ shards, Go-based database proxies, dynamic shard splitting, and the Data Movement Platform.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../theme.css">
-  <link rel="stylesheet" href="../blog-theme.css">
-  <link rel="stylesheet" href="../assets/css/style.css">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css?v=3.2">
+  <link rel="stylesheet" href="../blog-theme.css?v=3.2">
+  <link rel="stylesheet" href="../assets/css/style.css?v=3.2">
   <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
   <!-- KaTeX for Math Rendering -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
@@ -86,20 +86,6 @@
   </header>
 
   <main class="article-body">
-    <aside class="toc-sidebar">
-      <div class="toc-title">Table of Contents</div>
-      <ul class="toc-list">
-        <li><a href="#scale-overview">1. The 5M QPS Operational Reality</a></li>
-        <li><a href="#why-docdb">2. Evolution: From Raw MongoDB to DocDB</a></li>
-        <li><a href="#proxy-architecture">3. The Go-Based Database Proxy Layer</a></li>
-        <li><a href="#logical-physical">4. Decoupling Logical from Physical Shards</a></li>
-        <li><a href="#data-movement">5. The Data Movement Platform</a></li>
-        <li><a href="#versioned-config-flip">6. The Versioned Config-Flip Mechanism</a></li>
-        <li><a href="#bin-packing">7. Dynamic Shard Splitting &amp; Bin-Packing</a></li>
-        <li><a href="#key-takeaways">8. Core Architectural Lessons</a></li>
-      </ul>
-    </aside>
-
     <article class="prose">
       <blockquote>
         <p><strong>Source Attribution:</strong> This deep-dive synthesizes Arpit Bhayani's engineering dissection on Stripe's MongoDB scaling strategies and technical publications from Stripe Engineering detailing DocDB and the Data Movement Platform.</p>
@@ -259,6 +245,20 @@ sequenceDiagram
         <li><strong>Embrace Lazy Consistency for Routing Updates:</strong> Rather than relying on fragile two-phase commit protocols across distributed proxy fleets, versioned epochs and rejection-triggered cache invalidation deliver reliable, split-brain-free cutovers.</li>
       </ol>
     </article>
+
+    <aside class="toc-sidebar">
+      <div class="toc-title">Table of Contents</div>
+      <ul class="toc-list">
+        <li><a href="#scale-overview">1. The 5M QPS Operational Reality</a></li>
+        <li><a href="#why-docdb">2. Evolution: From Raw MongoDB to DocDB</a></li>
+        <li><a href="#proxy-architecture">3. The Go-Based Database Proxy Layer</a></li>
+        <li><a href="#logical-physical">4. Decoupling Logical from Physical Shards</a></li>
+        <li><a href="#data-movement">5. The Data Movement Platform</a></li>
+        <li><a href="#versioned-config-flip">6. The Versioned Config-Flip Mechanism</a></li>
+        <li><a href="#bin-packing">7. Dynamic Shard Splitting &amp; Bin-Packing</a></li>
+        <li><a href="#key-takeaways">8. Core Architectural Lessons</a></li>
+      </ul>
+    </aside>
   </main>
 
   <footer class="footer">
@@ -298,7 +298,7 @@ sequenceDiagram
     </div>
   </footer>
 
-  <script src="../assets/js/main.js"></script>
-  <script src="../theme.js"></script>
+  <script src="../assets/js/main.js?v=3.2"></script>
+  <script src="../theme.js?v=3.2"></script>
 </body>
 </html>
