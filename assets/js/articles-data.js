@@ -783,6 +783,62 @@ const ARTICLES_DATA = [
     excerpt: "Technical deep dive into Airbnb's Himeji: centralized graph-based authorization, Zanzibar-inspired relation tuples, sub-10ms permission evaluations, and eliminating microservice auth sprawl.",
     tags: ["Airbnb", "Himeji", "Zanzibar", "Authorization", "Access Control", "Graph Traversal"],
     featured: true
+  },
+  {
+    id: "gojek-phone-masking-security",
+    slug: "gojek-phone-masking-security.html",
+    title: "Gojek Phone Masking Architecture: Virtual Number Pooling & High-Throughput Call Routing",
+    category: "Security & Telephony",
+    categorySlug: "case-studies",
+    readTime: "21 min read",
+    date: "Jan 16, 2026",
+    badge: "Privacy Engineering",
+    pdfSource: "Docs/Gojek_Phone_Masking_Security_Technical_Breakdown.pdf",
+    excerpt: "Technical deep dive into Gojek's phone masking architecture: virtual number pooling, graph coloring allocation, sub-100ms telco webhook routing, and privacy preservation at super-app scale.",
+    tags: ["Gojek", "Phone Masking", "Telephony", "Virtual Numbers", "Privacy Engineering", "Graph Coloring"],
+    featured: true
+  },
+  {
+    id: "yelp-nrtsearch-engine-architecture",
+    slug: "yelp-nrtsearch-engine-architecture.html",
+    title: "Yelp nrtSearch: Disaggregated Near-Real-Time Lucene Search Architecture",
+    category: "Search Systems",
+    categorySlug: "case-studies",
+    readTime: "22 min read",
+    date: "Jan 16, 2026",
+    badge: "Search Architecture",
+    pdfSource: "Docs/Yelp_nrtSearch_Engine_Technical_Breakdown.pdf",
+    excerpt: "Technical deep dive into Yelp's nrtSearch: decoupled index-writer primary and search replicas, segment-level replication over gRPC, S3 persistence, and sub-second freshness at scale.",
+    tags: ["Yelp", "nrtSearch", "Lucene", "Search Engine", "Segment Replication", "Disaggregated Storage"],
+    featured: true
+  },
+  {
+    id: "giphy-cdn-serving-10-billion-gifs",
+    slug: "giphy-cdn-serving-10-billion-gifs.html",
+    title: "Giphy CDN Architecture: Serving 10 Billion GIFs Daily at Petabyte Scale",
+    category: "CDN & Media",
+    categorySlug: "foundations-scaling",
+    readTime: "23 min read",
+    date: "Jan 16, 2026",
+    badge: "CDN Architecture",
+    pdfSource: "Docs/Giphy_CDN_Serving_10_Billion_GIFs_Technical_Breakdown.pdf",
+    excerpt: "Technical deep dive into Giphy's global CDN architecture: serving 10 billion animated GIFs daily, MP4/WebM video transcoding pipelines, multi-CDN Anycast RUM routing, and origin shield caching.",
+    tags: ["Giphy", "CDN", "Media Transcoding", "Multi-CDN", "Origin Shield", "Petabyte Scale"],
+    featured: true
+  },
+  {
+    id: "dropbox-thumbnail-architecture",
+    slug: "dropbox-thumbnail-architecture.html",
+    title: "Dropbox Thumbnail Engine: High-Throughput Media Processing & Sandboxed Pipelines",
+    category: "Media Systems",
+    categorySlug: "case-studies",
+    readTime: "22 min read",
+    date: "Jan 16, 2026",
+    badge: "Media Pipelines",
+    pdfSource: "Docs/Dropbox_Thumbnail_Architecture_Technical_Breakdown.pdf",
+    excerpt: "Technical deep dive into Dropbox's thumbnail generation architecture: serving tens of thousands of thumbnails per second, seccomp sandboxed image decoders, multi-tier caching, and asynchronous speculative generation.",
+    tags: ["Dropbox", "Thumbnails", "Media Processing", "Sandboxing", "Seccomp", "Magic Pocket"],
+    featured: true
   }
 ];
 

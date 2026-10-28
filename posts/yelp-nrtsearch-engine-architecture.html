@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Yelp nrtSearch: Disaggregated Near-Real-Time Lucene Search Architecture — System Design Notes</title>
+  <meta name="description" content="Technical deep dive into Yelp's nrtSearch: decoupled index-writer primary and search replicas, segment-level replication over gRPC, S3 persistence, and sub-second freshness at scale.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css">
+  <link rel="stylesheet" href="../blog-theme.css">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body class="blog-post-page">
+  <div id="progress" aria-hidden="true"></div>
+
+  <header class="site-header">
+    <div class="header-container">
+      <a class="site-name" href="../index.html">
+        <span class="brand-icon">⚡</span>
+        <span>System Design Notes</span>
+      </a>
+      <nav class="site-nav" aria-label="Main">
+        <a href="../index.html">All Notes</a>
+        <a href="../index.html#categories">Categories</a>
+        <a href="../Docs/Yelp_nrtSearch_Engine_Technical_Breakdown.pdf" class="nav-download-btn" target="_blank" download>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download PDF
+        </a>
+      </nav>
+      <div class="swatches" role="group" aria-label="Colour theme">
+        <button class="swatch" data-set-theme="light" style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+        <button class="swatch" data-set-theme="dark" style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+        <button class="swatch" data-set-theme="sepia" style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+      </div>
+    </div>
+  </header>
+
+  <div class="post-layout">
+    <aside class="post-sidebar">
+      <div class="sidebar-sticky">
+        <div class="sidebar-header">
+          <span class="badge-post">Search Architecture</span>
+          <span class="reading-time">22 min read</span>
+        </div>
+        <nav class="toc" aria-label="Table of Contents">
+          <h4>Table of Contents</h4>
+          <ul>
+            <li><a href="#yelp-challenge">1. The Near-Real-Time Search Dilemma</a></li>
+            <li><a href="#elasticsearch-bottlenecks">2. Where Elasticsearch Hit the Wall</a></li>
+            <li><a href="#nrtsearch-design">3. nrtSearch Disaggregated Architecture</a></li>
+            <li><a href="#segment-replication">4. Primary-Replica Segment Streaming</a></li>
+            <li><a href="#s3-storage">5. Stateless Search &amp; S3 Archival</a></li>
+            <li><a href="#grpc-plugins">6. High-Throughput gRPC Query Execution</a></li>
+            <li><a href="#comparison-table">7. Elasticsearch vs. nrtSearch</a></li>
+            <li><a href="#key-takeaways">8. Key Architectural Takeaways</a></li>
+          </ul>
+        </nav>
+        <div class="companion-box">
+          <div class="companion-title">Companion PDF</div>
+          <p>Download the verified 3-page technical breakdown for offline study and architecture review.</p>
+          <a href="../Docs/Yelp_nrtSearch_Engine_Technical_Breakdown.pdf" class="download-link" target="_blank" download>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Yelp nrtSearch PDF
+          </a>
+        </div>
+      </div>
+    </aside>
+
+    <main class="post-content">
+      <header class="post-header">
+        <div class="meta-row">
+          <span class="category-tag">Search &amp; Information Retrieval</span>
+          <time datetime="2026-01-16">January 16, 2026</time>
+          <span class="author-tag">Arpit Bhayani System Design Breakdown</span>
+        </div>
+        <h1>Yelp nrtSearch: Disaggregated Near-Real-Time Lucene Search Architecture</h1>
+        <p class="lead-text">
+          Providing millions of local business search results with sub-second attribute freshness requires rethinking traditional full-text search clusters. Discover how Yelp engineered nrtSearch—an open-source search platform decoupling index-writing primaries from stateless search replicas via segment-level streaming over gRPC, slashing CPU usage by 60% and delivering true near-real-time visibility.
+        </p>
+      </header>
+
+      <section id="yelp-challenge">
+        <h2>1. The Near-Real-Time Search Dilemma</h2>
+        <p>
+          At Yelp, search is the primary interface for over 100 million consumers discovering restaurants, home services, and local businesses. However, business attributes are highly dynamic:
+        </p>
+        <div class="note-box">
+          <ul>
+            <li><strong>Instant Operational Status:</strong> A restaurant marking itself "Temporarily Closed" due to emergency maintenance must vanish from open listings within seconds.</li>
+            <li><strong>Live Table Availability:</strong> Reservation slots and waitlist times fluctuate every second as patrons arrive and depart.</li>
+            <li><strong>Continuous Content Streams:</strong> Thousands of reviews, star ratings, and uploaded food photos stream into the platform continuously.</li>
+          </ul>
+        </div>
+        <p>
+          Achieving <strong>sub-second indexing freshness</strong> while concurrently servicing thousands of complex, geo-spatial, multi-facet search queries per second (QPS) with sub-30ms p99 latency breaks conventional clustered search engines.
+        </p>
+      </section>
+
+      <section id="elasticsearch-bottlenecks">
+        <h2>2. Where Elasticsearch Hit the Wall</h2>
+        <p>
+          Yelp historically operated massive Elasticsearch clusters. However, at scale, Elasticsearch's core architectural model revealed three fundamental bottlenecks:
+        </p>
+        <div class="note-box">
+          <ol>
+            <li><strong>Duplicate Document Indexing ($N \times$ CPU Waste):</strong> In Elasticsearch, every replica node independently ingests raw JSON documents, executing duplicate tokenization, stemming, analyzer parsing, and segment creation. If a shard has 1 primary and 4 replicas, CPU work is multiplied by 5x!</li>
+            <li><strong>Cluster State Overhead:</strong> Frequent index updates, mapping changes, and shard health gossiping saturated the cluster master nodes, causing cluster state lock freezes during traffic spikes.</li>
+            <li><strong>I/O &amp; Segment Merge Contention:</strong> Search read queries competed directly with heavy background Lucene segment compaction on the same physical instances, triggering tail-latency spikes ($p_{99} > 800\text{ms}$).</li>
+          </ol>
+        </div>
+      </section>
+
+      <section id="nrtsearch-design">
+        <h2>3. nrtSearch Disaggregated Architecture</h2>
+        <p>
+          To eliminate redundant indexing and isolate search compute from indexing compute, Yelp engineered <strong>nrtSearch</strong>—a high-throughput, standalone gRPC search engine built on modern Apache Lucene:
+        </p>
+
+        <div class="code-box">
+┌────────────────────────────────────────────────────────────────────────┐
+│                        PRIMARY INDEXER NODE (Single)                   │
+│ • Consumes business updates &amp; reservations from Kafka                  │
+│ • Parses JSON, tokenizes text, and writes Lucene memory segments       │
+│ • Flushes segments every 500ms to disk and generates segment manifest  │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │ gRPC Stream Segment Files (NRT)
+                 ┌──────────────────┼──────────────────┐
+                 ▼                  ▼                  ▼
+┌────────────────────────┐┌────────────────────────┐┌────────────────────┐
+│ SEARCH REPLICA NODE 1  ││ SEARCH REPLICA NODE 2  ││ SEARCH REPLICA K   │
+│ • Zero Document Parsing││ • Zero Document Parsing││ • Autoscaling Pool │
+│ • Memory-Maps Segments ││ • Memory-Maps Segments ││ • Pure Read QPS   │
+│ • Serves gRPC Queries  ││ • Serves gRPC Queries  ││ • Backed by S3     │
+└────────────────────────┘└────────────────────────┘└────────────────────┘</div>
+      </section>
+
+      <section id="segment-replication">
+        <h2>4. Primary-Replica Segment Streaming over gRPC</h2>
+        <p>
+          The core innovation of nrtSearch is <strong>Segment-Level Physical Replication</strong>:
+        </p>
+        <ul>
+          <li><strong>Single Ingestion Pipeline:</strong> Only the Primary node ingests documents. It performs all intensive text tokenization, phonetics, and inverted list compression.</li>
+          <li><strong>Direct Segment Streaming:</strong> When the Primary flushes a new segment (e.g., every 500ms), it notifies all search replicas via gRPC. Replicas pull only the newly created segment delta files.</li>
+          <li><strong>Instantaneous Visibility:</strong> Replicas call <code>IndexReader.openIfChanged()</code> over memory-mapped segment files. The new documents become searchable across all replicas within <strong>under 1 second</strong> with virtually zero replica CPU expenditure.</li>
+        </ul>
+      </section>
+
+      <section id="s3-storage">
+        <h2>5. Stateless Search &amp; S3 Archival Storage</h2>
+        <p>
+          By separating persistence from query execution, nrtSearch achieves true stateless search scalability:
+        </p>
+        <div class="note-box">
+          <p>
+            The Primary node asynchronously backs up every flushed Lucene segment to <strong>Amazon S3</strong>:
+          </p>
+          <ul>
+            <li><strong>Elastic Horizontal Autoscaling:</strong> During lunchtime and evening traffic surges, Yelp spins up hundreds of ephemeral replica nodes in Kubernetes.</li>
+            <li><strong>Fast Bootstrap:</strong> New replicas pull the latest segment snapshot directly from S3 or peer replicas, warming local NVMe page caches and joining the active gRPC load balancer pool in under 60 seconds.</li>
+            <li><strong>Disaster Recovery:</strong> If the Primary node suffers a hardware crash, a new Primary is elected, restores state from S3, catches up on the Kafka replication queue, and resumes indexing within seconds.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="grpc-plugins">
+        <h2>6. High-Throughput gRPC Query Execution</h2>
+        <p>
+          nrtSearch replaces HTTP/JSON REST APIs with low-latency binary <strong>gRPC over HTTP/2</strong>:
+        </p>
+        <ul>
+          <li><strong>Protobuf Serialization:</strong> Protobuf binary payloads reduce network bandwidth by 40% and eliminate JSON parsing CPU overhead on frontend gateways.</li>
+          <li><strong>Pluggable Dynamic Rescoring:</strong> Supports custom C++ and Java scoring plugins directly in the Lucene collector loop, combining BM25 relevance with machine learning ranking models (user preferences, distance decay, and pricing tier).</li>
+        </ul>
+      </section>
+
+      <section id="comparison-table">
+        <h2>7. Comparative Architectural Analysis</h2>
+        <table class="comparison-table">
+          <thead>
+            <tr>
+              <th>Vector</th>
+              <th>Elasticsearch / OpenSearch</th>
+              <th>Yelp nrtSearch</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Replication Model</strong></td>
+              <td>Document-level (All replicas parse &amp; index JSON)</td>
+              <td><strong>Segment-level (Primary streams pre-built Lucene files)</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Cluster Coordination</strong></td>
+              <td>Central Master with heavy cluster state gossip</td>
+              <td>Stateless replicas + External Orchestration (K8s)</td>
+            </tr>
+            <tr>
+              <td><strong>CPU Efficiency</strong></td>
+              <td>Redundant CPU work across $N$ replicas</td>
+              <td><strong>60% CPU reduction across search fleet</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Freshness Latency</strong></td>
+              <td>10s – 60s (Due to merge / refresh overhead)</td>
+              <td><strong>Sub-second (500ms NRT segment replication)</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Storage Decoupling</strong></td>
+              <td>Coupled to local EBS/NVMe drives</td>
+              <td>Disaggregated (S3 archival + ephemeral local cache)</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="key-takeaways">
+        <h2>8. Key Architectural Takeaways</h2>
+        <div class="note-box">
+          <ul>
+            <li><strong>Replicate Segments, Not Documents:</strong> Replicating pre-built Lucene binary segments eliminates redundant parsing and indexing across replicas, saving up to 60% of total cluster compute.</li>
+            <li><strong>Isolate Ingestion from Search Workloads:</strong> Dedicating a single Primary to indexing and decoupling read replicas guarantees that heavy segment merging never causes query tail-latency spikes.</li>
+            <li><strong>Disaggregate Persistence to Cloud Storage:</strong> Backing Lucene segments to object storage (S3) transforms search nodes into stateless workers, enabling rapid elastic autoscaling and trivial disaster recovery.</li>
+            <li><strong>Binary Protocols Beat JSON REST at Scale:</strong> Replacing JSON REST interfaces with binary gRPC streaming eliminates serialization overhead and supports high-throughput connection multiplexing.</li>
+          </ul>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-col">
+        <div class="footer-brand">
+          <div class="brand-icon">⚡</div>
+          <span class="footer-title">System Design Notes</span>
+        </div>
+        <p class="footer-desc">Production-grade architecture dissections, distributed systems engineering, and first-principles technical notes.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Search Systems</h5>
+        <ul>
+          <li><a href="yelp-nrtsearch-engine-architecture.html">Yelp nrtSearch Architecture</a></li>
+          <li><a href="twitter-search-earlybird-architecture.html">Twitter Earlybird Search</a></li>
+          <li><a href="synonymic-query-expansion-search.html">Synonymic Query Expansion</a></li>
+          <li><a href="rockset-converged-indexes-architecture.html">Rockset Converged Indexes</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Cloud &amp; Storage</h5>
+        <ul>
+          <li><a href="discord-data-platform-petabytes.html">Discord Data Platform</a></li>
+          <li><a href="shopify-ghostferry-live-shard-migration.html">Shopify Ghostferry Migration</a></li>
+          <li><a href="reddit-metadata-store-aurora-postgres.html">Reddit Metadata Store</a></li>
+          <li><a href="dragonflydb-architecture-overview-6m-qps.html">DragonflyDB Architecture</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>&copy; 2026 System Design Notes. Editorial &amp; Technical Analysis curated by Arpit Bhayani Architecture Synthesis.</p>
+    </div>
+  </footer>
+
+  <script src="../assets/js/main.js"></script>
+</body>
+</html>

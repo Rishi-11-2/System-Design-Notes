@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gojek Phone Masking Architecture: Virtual Number Pooling &amp; High-Throughput Call Routing — System Design Notes</title>
+  <meta name="description" content="Technical deep dive into Gojek's phone masking architecture: virtual number pooling, graph coloring allocation, sub-100ms telco webhook routing, and privacy preservation at super-app scale.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css">
+  <link rel="stylesheet" href="../blog-theme.css">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body class="blog-post-page">
+  <div id="progress" aria-hidden="true"></div>
+
+  <header class="site-header">
+    <div class="header-container">
+      <a class="site-name" href="../index.html">
+        <span class="brand-icon">⚡</span>
+        <span>System Design Notes</span>
+      </a>
+      <nav class="site-nav" aria-label="Main">
+        <a href="../index.html">All Notes</a>
+        <a href="../index.html#categories">Categories</a>
+        <a href="../Docs/Gojek_Phone_Masking_Security_Technical_Breakdown.pdf" class="nav-download-btn" target="_blank" download>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download PDF
+        </a>
+      </nav>
+      <div class="swatches" role="group" aria-label="Colour theme">
+        <button class="swatch" data-set-theme="light" style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+        <button class="swatch" data-set-theme="dark" style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+        <button class="swatch" data-set-theme="sepia" style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+      </div>
+    </div>
+  </header>
+
+  <div class="post-layout">
+    <aside class="post-sidebar">
+      <div class="sidebar-sticky">
+        <div class="sidebar-header">
+          <span class="badge-post">Privacy Engineering</span>
+          <span class="reading-time">21 min read</span>
+        </div>
+        <nav class="toc" aria-label="Table of Contents">
+          <h4>Table of Contents</h4>
+          <ul>
+            <li><a href="#privacy-challenge">1. The Privacy &amp; Harassment Problem</a></li>
+            <li><a href="#masking-foundations">2. Virtual Number Masking Primitives</a></li>
+            <li><a href="#pooling-problem">3. Virtual Number Pool Optimization</a></li>
+            <li><a href="#allocation-algorithm">4. Graph Coloring &amp; Bipartite Matching</a></li>
+            <li><a href="#routing-gateway">5. Low-Latency Telco Webhook Gateway</a></li>
+            <li><a href="#redis-datastore">6. In-Memory State &amp; TTL Expiration</a></li>
+            <li><a href="#failure-modes">7. Telecom Edge Failure Modes</a></li>
+            <li><a href="#key-takeaways">8. Key Architectural Takeaways</a></li>
+          </ul>
+        </nav>
+        <div class="companion-box">
+          <div class="companion-title">Companion PDF</div>
+          <p>Download the verified 3-page technical breakdown for offline study and architecture review.</p>
+          <a href="../Docs/Gojek_Phone_Masking_Security_Technical_Breakdown.pdf" class="download-link" target="_blank" download>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Gojek Phone Masking PDF
+          </a>
+        </div>
+      </div>
+    </aside>
+
+    <main class="post-content">
+      <header class="post-header">
+        <div class="meta-row">
+          <span class="category-tag">Security &amp; Telephony</span>
+          <time datetime="2026-01-16">January 16, 2026</time>
+          <span class="author-tag">Arpit Bhayani System Design Breakdown</span>
+        </div>
+        <h1>Gojek Phone Masking Architecture: Virtual Number Pooling &amp; High-Throughput Call Routing</h1>
+        <p class="lead-text">
+          Allowing millions of drivers and passengers to coordinate pickups without exposing personal mobile phone numbers is a critical privacy requirement. Discover how Gojek engineered its phone masking architecture—optimizing scarce virtual number pools via bipartite graph coloring, sub-100ms telco webhook routing, and automatic TTL bridge tear-downs.
+        </p>
+      </header>
+
+      <section id="privacy-challenge">
+        <h2>1. The Privacy &amp; Harassment Problem</h2>
+        <p>
+          Gojek powers millions of ride-hailing trips, food deliveries, and logistical couriers across Southeast Asia daily. In an on-demand workflow, drivers and consumers frequently need to communicate directly (e.g., clarifying street landmarks, verifying building gate codes, or confirming order substitutes).
+        </p>
+        <div class="note-box">
+          <p>
+            Directly displaying real phone numbers in mobile apps introduces severe security liabilities:
+          </p>
+          <ul>
+            <li><strong>Harassment &amp; Stalking:</strong> Drivers or customers retaining personal phone numbers after order completion.</li>
+            <li><strong>Off-Platform Disintermediation:</strong> Parties bypassing platform transaction fees for future recurring services.</li>
+            <li><strong>Regulatory Non-Compliance:</strong> Violation of strict national data protection laws (e.g., GDPR, Singapore PDPA, Indonesian PDP Law).</li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="masking-foundations">
+        <h2>2. Virtual Number Masking Primitives</h2>
+        <p>
+          To protect user privacy, Gojek introduces an intermediate proxy tier known as <strong>Number Masking</strong>:
+        </p>
+        <div class="code-box">
+[ Customer Real Phone (P_C) ]                         [ Driver Real Phone (P_D) ]
+             │                                                     │
+             │ Dials Virtual Bridge Number (V_K)                   │ Dials Virtual Bridge Number (V_K)
+             ▼                                                     ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                   TELECOM CARRIER (Twilio / Exotel / SIP)              │
+│ Dispatches HTTP Webhook: "Incoming Call from P_C to V_K"              │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │ Webhook HTTP POST (&lt;100ms SLA)
+                                    ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                   GOJEK PHONE MASKING GATEWAY (Go)                     │
+│ 1. Redis Lookup: Active Order where (Caller=P_C, Virtual=V_K)          │
+│ 2. Identifies Target: Driver Real Phone P_D                            │
+│ 3. Returns XML/JSON Bridge Dial Response to Telecom Carrier            │
+└────────────────────────────────────────────────────────────────────────┘</div>
+      </section>
+
+      <section id="pooling-problem">
+        <h2>3. Virtual Number Pool Optimization &amp; Economics</h2>
+        <p>
+          Telecom operators lease virtual DID (Direct Inward Dialing) phone numbers on a recurring monthly fee. Purchasing a dedicated virtual number for every simultaneous trip would cost millions of dollars each month.
+        </p>
+        <div class="note-box">
+          <p>
+            <strong>The Core Scaling Challenge:</strong> How do we support 1,000,000 active concurrent orders using a limited pool of only 1,000 to 5,000 virtual phone numbers?
+          </p>
+          <p>
+            A single virtual number $V_K$ can be simultaneously assigned to Order 1 (between Customer A and Driver B) and Order 2 (between Customer C and Driver D), <strong>as long as none of the participants overlap</strong>. When Driver B calls $V_K$, the gateway uniquely identifies Order 1 because the caller's Caller Line Identification (CLI) is Driver B!
+          </p>
+        </div>
+      </section>
+
+      <section id="allocation-algorithm">
+        <h2>4. Graph Coloring &amp; Bipartite Matching Allocation</h2>
+        <p>
+          Assigning virtual numbers to active orders without collision can be modeled mathematically as a <strong>Vertex Coloring Problem on an Interval Graph</strong>:
+        </p>
+        <ul>
+          <li><strong>Conflict Condition:</strong> Two concurrent orders $O_1(C_1, D_1)$ and $O_2(C_2, D_2)$ cannot share virtual number $V_K$ if $\{C_1, D_1\} \cap \{C_2, D_2\} \neq \emptyset$. (i.e., if the same driver or customer is active on multiple simultaneous orders).</li>
+          <li><strong>Least Recently Used (LRU) Pool Recycling:</strong> Available virtual numbers are indexed in a Redis Sorted Set scored by timestamp of last order completion. The system greedily selects the virtual number that has rested longest in cooldown, preventing delayed callbacks from reaching previous tenants.</li>
+        </ul>
+      </section>
+
+      <section id="routing-gateway">
+        <h2>5. Low-Latency Telco Webhook Gateway</h2>
+        <p>
+          Telecom carrier switches enforce strict timeouts: if the phone masking gateway does not respond within <strong>1,500 milliseconds</strong>, the telecommunication switch drops the phone call with an audible busy tone.
+        </p>
+        <p>
+          Gojek's gateway delivers sub-100ms p99 responses through lean Go microservices:
+        </p>
+        <pre><code class="language-go">// High-performance Call Routing Handler in Go
+func HandleIncomingCallWebhook(w http.ResponseWriter, r *http.Request) {
+    callerPhone := r.FormValue("From")
+    virtualPhone := r.FormValue("To")
+
+    // Single O(1) Redis Hash lookup
+    key := fmt.Sprintf("bridge:%s:%s", virtualPhone, callerPhone)
+    targetPhone, err := redisClient.Get(r.Context(), key).Result()
+    if err != nil {
+        // Fallback: Play automated IVR recording
+        w.Write([]byte("<Response><Say>Order expired or invalid.</Say></Response>"))
+        return
+    }
+
+    // Return immediate dial instruction to carrier switch
+    resp := fmt.Sprintf("<Response><Dial timeout='20'>%s</Dial></Response>", targetPhone)
+    w.Header().Set("Content-Type", "application/xml")
+    w.Write([]byte(resp))
+}</code></pre>
+      </section>
+
+      <section id="redis-datastore">
+        <h2>6. In-Memory State &amp; TTL Expiration</h2>
+        <p>
+          All virtual bridge mappings are ephemeral:
+        </p>
+        <ul>
+          <li><strong>Bidirectional Keys in Redis:</strong>
+            <ul>
+              <li><code>bridge:V_K:P_Customer -> P_Driver</code></li>
+              <li><code>bridge:V_K:P_Driver -> P_Customer</code></li>
+            </ul>
+          </li>
+          <li><strong>Automatic Expiration (TTL):</strong> Keys are initialized with a 2-hour TTL. Upon order completion, the TTL is shortened to 15 minutes, allowing a brief window for lost item retrieval before the bridge is reclaimed into the virtual pool.</li>
+        </ul>
+      </section>
+
+      <section id="failure-modes">
+        <h2>7. Telecom Edge Failure Modes &amp; Resilience</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Failure Scenario</th>
+              <th>Impact</th>
+              <th>Resilience Mitigation</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Redis Cluster Failure</strong></td>
+              <td>Gateway cannot resolve mapping</td>
+              <td>Fallback to in-memory local cache sidecar + secondary Redis replica in under 5ms</td>
+            </tr>
+            <tr>
+              <td><strong>Carrier Webhook Timeout</strong></td>
+              <td>Telco drops call</td>
+              <td>In-app VoIP calling (WebRTC) offered as one-tap backup</td>
+            </tr>
+            <tr>
+              <td><strong>Number Pool Exhaustion</strong></td>
+              <td>All numbers allocated to active trips</td>
+              <td>Dynamic surge pool expansion via secondary telecom carrier SIP trunks</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="key-takeaways">
+        <h2>8. Key Architectural Takeaways</h2>
+        <div class="note-box">
+          <ul>
+            <li><strong>Virtual Number Multiplexing Saves Millions:</strong> By identifying active orders via the combination of Caller CLI + Virtual Number, a single virtual number can safely serve hundreds of simultaneous trips.</li>
+            <li><strong>Telecom Webhooks Demand Extreme Latency SLAs:</strong> Telco switches terminate calls within 1.5s of silence. In-memory data structures (Redis) and zero-allocation Go handlers guarantee sub-100ms routing.</li>
+            <li><strong>Automate Bridge Teardowns with TTLs:</strong> Enforce strict time-to-live policies to automatically expire bridges post-trip, preventing lingering harassment channels.</li>
+            <li><strong>Provide VoIP Fallback Channels:</strong> Network carriers will experience regional trunk outages. In-app WebRTC calling provides a seamless, carrier-independent fallback.</li>
+          </ul>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-col">
+        <div class="footer-brand">
+          <div class="brand-icon">⚡</div>
+          <span class="footer-title">System Design Notes</span>
+        </div>
+        <p class="footer-desc">Production-grade architecture dissections, distributed systems engineering, and first-principles technical notes.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Telephony &amp; Privacy</h5>
+        <ul>
+          <li><a href="gojek-phone-masking-security.html">Gojek Phone Masking</a></li>
+          <li><a href="uber-emergency-sos-service.html">Uber Emergency SOS</a></li>
+          <li><a href="airbnb-himeji-authorization-system.html">Airbnb Himeji Authorization</a></li>
+          <li><a href="stripe-idempotent-api-design.html">Stripe Idempotent API Design</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Distributed Platforms</h5>
+        <ul>
+          <li><a href="discord-data-platform-petabytes.html">Discord Data Platform</a></li>
+          <li><a href="twitter-search-earlybird-architecture.html">Twitter Earlybird Search</a></li>
+          <li><a href="shopify-ghostferry-live-shard-migration.html">Shopify Ghostferry Migration</a></li>
+          <li><a href="junodb-overview-paypal-kv-store.html">PayPal JunoDB Architecture</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>&copy; 2026 System Design Notes. Editorial &amp; Technical Analysis curated by Arpit Bhayani Architecture Synthesis.</p>
+    </div>
+  </footer>
+
+  <script src="../assets/js/main.js"></script>
+</body>
+</html>

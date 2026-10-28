@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Giphy CDN Architecture: Serving 10 Billion GIFs Daily at Petabyte Scale — System Design Notes</title>
+  <meta name="description" content="Technical deep dive into Giphy's global CDN architecture: serving 10 billion animated GIFs daily, MP4/WebM video transcoding pipelines, multi-CDN Anycast RUM routing, and origin shield caching.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css">
+  <link rel="stylesheet" href="../blog-theme.css">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body class="blog-post-page">
+  <div id="progress" aria-hidden="true"></div>
+
+  <header class="site-header">
+    <div class="header-container">
+      <a class="site-name" href="../index.html">
+        <span class="brand-icon">⚡</span>
+        <span>System Design Notes</span>
+      </a>
+      <nav class="site-nav" aria-label="Main">
+        <a href="../index.html">All Notes</a>
+        <a href="../index.html#categories">Categories</a>
+        <a href="../Docs/Giphy_CDN_Serving_10_Billion_GIFs_Technical_Breakdown.pdf" class="nav-download-btn" target="_blank" download>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download PDF
+        </a>
+      </nav>
+      <div class="swatches" role="group" aria-label="Colour theme">
+        <button class="swatch" data-set-theme="light" style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+        <button class="swatch" data-set-theme="dark" style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+        <button class="swatch" data-set-theme="sepia" style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+      </div>
+    </div>
+  </header>
+
+  <div class="post-layout">
+    <aside class="post-sidebar">
+      <div class="sidebar-sticky">
+        <div class="sidebar-header">
+          <span class="badge-post">CDN &amp; Media</span>
+          <span class="reading-time">23 min read</span>
+        </div>
+        <nav class="toc" aria-label="Table of Contents">
+          <h4>Table of Contents</h4>
+          <ul>
+            <li><a href="#gif-problem">1. The Inherent Inefficiency of GIFs</a></li>
+            <li><a href="#transcoding-pipeline">2. The Transcoding Engine (GIF to MP4/WebM)</a></li>
+            <li><a href="#multi-cdn">3. Multi-CDN Architecture &amp; RUM Routing</a></li>
+            <li><a href="#origin-shielding">4. Tiered Origin Shield Caching</a></li>
+            <li><a href="#content-addressing">5. Content-Addressable Asset Fingerprinting</a></li>
+            <li><a href="#cache-coherence">6. Cache Invalidation &amp; Purge Strategies</a></li>
+            <li><a href="#bandwidth-economics">7. Bandwidth Economics &amp; Performance</a></li>
+            <li><a href="#key-takeaways">8. Key Architectural Takeaways</a></li>
+          </ul>
+        </nav>
+        <div class="companion-box">
+          <div class="companion-title">Companion PDF</div>
+          <p>Download the verified 3-page technical breakdown for offline study and architecture review.</p>
+          <a href="../Docs/Giphy_CDN_Serving_10_Billion_GIFs_Technical_Breakdown.pdf" class="download-link" target="_blank" download>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Giphy CDN PDF
+          </a>
+        </div>
+      </div>
+    </aside>
+
+    <main class="post-content">
+      <header class="post-header">
+        <div class="meta-row">
+          <span class="category-tag">Content Delivery Networks</span>
+          <time datetime="2026-01-16">January 16, 2026</time>
+          <span class="author-tag">Arpit Bhayani System Design Breakdown</span>
+        </div>
+        <h1>Giphy CDN Architecture: Serving 10 Billion GIFs Daily at Petabyte Scale</h1>
+        <p class="lead-text">
+          Distributing over 10 billion animated loops every single day to millions of users across iMessage, WhatsApp, Slack, and Instagram requires solving massive bandwidth physics. Discover how Giphy re-engineered media delivery: replacing legacy GIF formats with MP4/WebM transcoding, deploying multi-CDN Real User Monitoring (RUM) Anycast routing, and utilizing tiered origin shield caching to slash egress costs by 90%.
+        </p>
+      </header>
+
+      <section id="gif-problem">
+        <h2>1. The Inherent Inefficiency of the GIF Format</h2>
+        <p>
+          The Graphics Interchange Format (GIF) was created in 1987. It employs primitive LZW compression with an 8-bit palette (256 colors max) and contains zero temporal inter-frame compression.
+        </p>
+        <div class="note-box">
+          <p>
+            Because every single frame in an animated GIF is stored as a full uncompressed raster bitmap:
+          </p>
+          <ul>
+            <li>A simple 3-second animated clip frequently balloons to <strong>10MB to 20MB</strong> in file size.</li>
+            <li>Serving 10 billion raw GIF files daily would require over <strong>100 Petabytes of daily egress bandwidth</strong>, costing tens of millions of dollars monthly and causing severe mobile network buffer stalls.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="transcoding-pipeline">
+        <h2>2. The Transcoding Engine: Modern Video Primitives</h2>
+        <p>
+          Giphy's foundational optimization is simple: <strong>never serve an actual GIF if a modern video format can be played</strong>. Giphy operates an automated asynchronous transcoding pipeline:
+        </p>
+
+        <div class="code-box">
+┌────────────────────────────────────────────────────────────────────────┐
+│                      GIPHY MEDIA TRANSCODING PIPELINE                  │
+├────────────────────────────────────────────────────────────────────────┤
+│ 1. INGESTION: User / Partner uploads raw animated GIF (e.g., 12MB)     │
+│ 2. FFMPEG WORKER CLUSTER (Kubernetes):                                 │
+│    • MP4 Container (H.264 / AVC1 codec) ──► 950 KB (92% reduction!)   │
+│    • WebM Container (VP9 codec)         ──► 620 KB (95% reduction!)   │
+│    • Animated WebP / AVIF (For stickers)──► 400 KB (97% reduction!)   │
+│ 3. SINK: Multi-region Amazon S3 / Google Cloud Storage Buckets         │
+└────────────────────────────────────────────────────────────────────────┘</div>
+        <p>
+          Client applications (iOS, Android, Web) detect their device video capabilities and request the optimized MP4 or WebM rendition via standard HTML5 <code>&lt;video loop autoplay muted playsinline&gt;</code> tags.
+        </p>
+      </section>
+
+      <section id="multi-cdn">
+        <h2>3. Multi-CDN Architecture &amp; RUM Anycast Routing</h2>
+        <p>
+          Relying on a single CDN vendor (e.g., Cloudflare, Fastly, or CloudFront) is a critical single point of failure. Major CDNs experience localized fiber cuts, BGP route flaps, or regional ISP peering disputes.
+        </p>
+        <p>
+          Giphy deploys a <strong>Multi-CDN Strategy</strong> managed by dynamic DNS and Real User Monitoring (RUM):
+        </p>
+        <div class="code-box">
+[ End User Mobile Device ]
+            │ 1. DNS Resolution (Latency-based Anycast)
+            ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                 RUM INTELLIGENCE ROUTER (Cedexis / NS1)                │
+│ • Continuously collects client telemetry (RTT, Throughput, Packet Loss)│
+│ • Directs User to lowest-latency CDN for their specific ISP / Country │
+└───────────────────┬───────────────────┬───────────────────┬────────────┘
+                    │                   │                   │
+                    ▼                   ▼                   ▼
+            [ Fastly CDN ]      [ Cloudflare CDN ]   [ AWS CloudFront ]</div>
+      </section>
+
+      <section id="origin-shielding">
+        <h2>4. Tiered Origin Shield Caching</h2>
+        <p>
+          When an edge CDN Point of Presence (POP) suffers a cache miss, forwarding the request directly to Giphy's backend S3 origin would trigger the <strong>Thundering Herd Problem</strong>:
+        </p>
+        <div class="note-box">
+          <h4>The Role of Origin Shielding:</h4>
+          <ul>
+            <li><strong>Edge POP Tier:</strong> Hundreds of localized edge nodes around the world cache trending GIFs close to end users.</li>
+            <li><strong>Origin Shield Tier:</strong> A centralized cluster of high-capacity CDN nodes deployed directly adjacent to Giphy's AWS storage regions.</li>
+            <li><strong>Cache Collapsing:</strong> If 10,000 edge nodes simultaneously request a trending meme, all requests collapse into a single request at the Origin Shield. The backend S3 origin experiences exactly <strong>1 fetch</strong>, shielding the infrastructure from collapse.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="content-addressing">
+        <h2>5. Content-Addressable Asset Fingerprinting</h2>
+        <p>
+          Giphy names media files using deterministic content-addressable identifiers:
+        </p>
+        <pre><code class="language-text">https://media.giphy.com/media/{asset_id}/giphy.mp4
+https://media.giphy.com/media/{asset_id}/giphy.webp
+https://media.giphy.com/media/{asset_id}/200w.mp4</code></pre>
+        <ul>
+          <li><strong>Immutable HTTP Headers:</strong> Assets are served with <code>Cache-Control: public, max-age=31536000, immutable</code>. Browser caches and intermediate CDN edges retain assets for up to a full year without revalidating.</li>
+          <li><strong>Zero 304 Not Modified Overhead:</strong> Eliminates millions of conditional <code>If-Modified-Since</code> round trips.</li>
+        </ul>
+      </section>
+
+      <section id="cache-coherence">
+        <h2>6. Cache Invalidation &amp; Purge Strategies</h2>
+        <p>
+          If a GIF is deleted due to DMCA copyright requests or trust &amp; safety violations, it must be expunged from the global CDN within seconds:
+        </p>
+        <ul>
+          <li><strong>Surrogate-Key (Soft Purge):</strong> Giphy tags all renditions of an asset with a common surrogate key (<code>Surrogate-Key: asset-12345</code>).</li>
+          <li><strong>Instant Multi-CDN Purge:</strong> When an admin removes an asset, an event is published to Kafka. Workers invoke the Fastly/Cloudflare purge APIs, invalidating all global edge caches within <strong>under 150 milliseconds</strong>.</li>
+        </ul>
+      </section>
+
+      <section id="bandwidth-economics">
+        <h2>7. Bandwidth Economics &amp; Egress Savings</h2>
+        <table class="comparison-table">
+          <thead>
+            <tr>
+              <th>Delivery Format</th>
+              <th>Average Size</th>
+              <th>Bandwidth per 10B Views</th>
+              <th>Estimated Daily Egress Cost</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Raw Animated GIF</strong></td>
+              <td>12.0 MB</td>
+              <td>120 Petabytes / day</td>
+              <td>Prohibitive (~$1.2M / day)</td>
+            </tr>
+            <tr>
+              <td><strong>Transcoded MP4 (H.264)</strong></td>
+              <td><strong>0.95 MB</strong></td>
+              <td><strong>9.5 Petabytes / day</strong></td>
+              <td><strong>92% Cost Reduction</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Transcoded WebM (VP9)</strong></td>
+              <td><strong>0.62 MB</strong></td>
+              <td><strong>6.2 Petabytes / day</strong></td>
+              <td><strong>95% Cost Reduction</strong></td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="key-takeaways">
+        <h2>8. Key Architectural Takeaways</h2>
+        <div class="note-box">
+          <ul>
+            <li><strong>Transcode Legacy Formats on Ingestion:</strong> Converting inefficient raster GIF animations into modern streaming video containers (MP4/WebM) slashes data payloads by over 90%.</li>
+            <li><strong>Deploy Multi-CDN Anycast Routing:</strong> Never stake platform availability on a single CDN vendor. Real-time RUM steering dynamically routes around regional telecom fiber outages.</li>
+            <li><strong>Shield Origins with Intermediate Cache Tiers:</strong> Edge cache misses must be collapsed at an Origin Shield before reaching storage buckets to prevent catastrophic thundering herds.</li>
+            <li><strong>Immutable Content-Addressing Eliminates Invalidation Churn:</strong> Giving immutable files unique deterministic URLs enables indefinite browser caching and eliminates costly 304 conditional checks.</li>
+          </ul>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-col">
+        <div class="footer-brand">
+          <div class="brand-icon">⚡</div>
+          <span class="footer-title">System Design Notes</span>
+        </div>
+        <p class="footer-desc">Production-grade architecture dissections, distributed systems engineering, and first-principles technical notes.</p>
+      </div>
+      <div class="footer-col">
+        <h5>CDN &amp; Media Architecture</h5>
+        <ul>
+          <li><a href="giphy-cdn-serving-10-billion-gifs.html">Giphy CDN Architecture</a></li>
+          <li><a href="airbnb-http-streaming-performance.html">Airbnb HTTP Streaming</a></li>
+          <li><a href="paypal-thundering-herd-cache-stampede.html">PayPal Thundering Herd</a></li>
+          <li><a href="atlassian-cache-invalidation.html">Atlassian Cache Invalidation</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>High-Scale Systems</h5>
+        <ul>
+          <li><a href="discord-data-platform-petabytes.html">Discord Data Platform</a></li>
+          <li><a href="twitter-search-earlybird-architecture.html">Twitter Earlybird Search</a></li>
+          <li><a href="shopify-ghostferry-live-shard-migration.html">Shopify Ghostferry Migration</a></li>
+          <li><a href="junodb-overview-paypal-kv-store.html">PayPal JunoDB Architecture</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>&copy; 2026 System Design Notes. Editorial &amp; Technical Analysis curated by Arpit Bhayani Architecture Synthesis.</p>
+    </div>
+  </footer>
+
+  <script src="../assets/js/main.js"></script>
+</body>
+</html>
