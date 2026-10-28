@@ -262,10 +262,10 @@ function initSearchAndFilter() {
 
 // Table of Contents Active ScrollSpy
 function initTableOfContents() {
-  const tocLinks = document.querySelectorAll('.toc-list a');
+  const tocLinks = document.querySelectorAll('.toc-list a, .toc a');
   if (tocLinks.length === 0) return;
 
-  const headings = Array.from(document.querySelectorAll('.prose h2, .prose h3'));
+  const headings = Array.from(document.querySelectorAll('.prose h2, .prose h3, .article-content h2, .article-content h3, .post-content h2, .post-content h3'));
   if (headings.length === 0) return;
 
   function updateActiveToc() {
