@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Razorpay Notification System Architecture: Multi-Channel Delivery, Dynamic Gateway Routing &amp; OTP Prioritization — System Design Notes</title>
+  <meta name="description" content="Technical deep dive into Razorpay's notification engine: multi-channel dispatch (SMS, WhatsApp, Email, Webhooks), sub-3s OTP priority queues, dynamic telecom vendor failover, and zero dropped alerts at fintech scale.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css">
+  <link rel="stylesheet" href="../blog-theme.css">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body class="blog-post-page">
+  <div id="progress" aria-hidden="true"></div>
+
+  <header class="site-header">
+    <div class="header-container">
+      <a class="site-name" href="../index.html">
+        <span class="brand-icon">⚡</span>
+        <span>System Design Notes</span>
+      </a>
+      <nav class="site-nav" aria-label="Main">
+        <a href="../index.html">All Notes</a>
+        <a href="../index.html#categories">Categories</a>
+        <a href="../Docs/Razorpay_Notification_System_Technical_Breakdown.pdf" class="nav-download-btn" target="_blank" download>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download PDF
+        </a>
+      </nav>
+      <div class="swatches" role="group" aria-label="Colour theme">
+        <button class="swatch" data-set-theme="light" style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+        <button class="swatch" data-set-theme="dark" style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+        <button class="swatch" data-set-theme="sepia" style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+      </div>
+    </div>
+  </header>
+
+  <div class="post-layout">
+    <aside class="post-sidebar">
+      <div class="sidebar-sticky">
+        <div class="sidebar-header">
+          <span class="badge-post">Notification Systems</span>
+          <span class="reading-time">23 min read</span>
+        </div>
+        <nav class="toc" aria-label="Table of Contents">
+          <h4>Table of Contents</h4>
+          <ul>
+            <li><a href="#notification-scale">1. The Scale of Payment Notifications</a></li>
+            <li><a href="#channel-sprawl">2. The Multi-Channel Notification Platform</a></li>
+            <li><a href="#priority-queues">3. Multi-Tier Priority Queues (OTPs vs. Batch)</a></li>
+            <li><a href="#vendor-routing">4. Dynamic Telecom Vendor Routing &amp; Failover</a></li>
+            <li><a href="#idempotency-engine">5. Distributed Idempotency &amp; Rate Limiting</a></li>
+            <li><a href="#dlr-tracking">6. Delivery Receipt (DLR) Reconcilers</a></li>
+            <li><a href="#comparative-analysis">7. Architectural Trade-offs</a></li>
+            <li><a href="#key-takeaways">8. Key Architectural Takeaways</a></li>
+          </ul>
+        </nav>
+        <div class="companion-box">
+          <div class="companion-title">Companion PDF</div>
+          <p>Download the verified 3-page technical breakdown for offline study and architecture review.</p>
+          <a href="../Docs/Razorpay_Notification_System_Technical_Breakdown.pdf" class="download-link" target="_blank" download>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Razorpay Notification PDF
+          </a>
+        </div>
+      </div>
+    </aside>
+
+    <main class="post-content">
+      <header class="post-header">
+        <div class="meta-row">
+          <span class="category-tag">Fintech Notifications</span>
+          <time datetime="2026-01-16">January 16, 2026</time>
+          <span class="author-tag">Arpit Bhayani System Design Breakdown</span>
+        </div>
+        <h1>Razorpay Notification System Architecture: Multi-Channel Delivery, Dynamic Gateway Routing &amp; OTP Prioritization</h1>
+        <p class="lead-text">
+          In financial payments, a delayed One-Time Password (OTP) or dropped transaction alert directly destroys conversion rates and merchant trust. Discover how Razorpay engineered its notification platform—processing hundreds of millions of daily messages across SMS, WhatsApp, Email, and Webhooks with sub-3-second OTP priority queues, dynamic telecom vendor failover, and zero duplicate alerts.
+        </p>
+      </header>
+
+      <section id="notification-scale">
+        <h2>1. The Scale of Payment Notifications</h2>
+        <p>
+          As India's leading full-stack financial payments infrastructure, Razorpay powers transactions for millions of businesses, from global e-commerce portals to local merchants. In this ecosystem, notifications are not secondary marketing tools—they are <strong>mission-critical payment infrastructure</strong>:
+        </p>
+        <div class="note-box">
+          <ul>
+            <li><strong>Two-Factor OTP Alerts:</strong> During bank checkout flows, an SMS/WhatsApp OTP must arrive within <strong>under 3 seconds</strong>. If an OTP takes 15 seconds to arrive, the user abandons the checkout window.</li>
+            <li><strong>Merchant Webhooks:</strong> Payment success callbacks must reach merchant order management servers reliably to trigger physical product fulfillment and order provisioning.</li>
+            <li><strong>Scale:</strong> Hundreds of millions of notifications dispatched daily across SMS, WhatsApp Business API, Email, Webhooks, and Mobile Push.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="channel-sprawl">
+        <h2>2. The Multi-Channel Notification Platform</h2>
+        <p>
+          Razorpay built a unified, multi-tenant notification platform that decouples upstream core payment services from the quirks and protocols of external delivery vendors:
+        </p>
+
+        <div class="code-box">
+[ Core Payment Service / Checkout Gateway ]
+                     │ REST / gRPC SendNotification(payload)
+                     ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                   RAZORPAY NOTIFICATION SERVICE (Go)                   │
+├────────────────────────────────────────────────────────────────────────┤
+│ • Template Compilation &amp; Localization (Mustache / Jinja engine)        │
+│ • Idempotency Verifier (Redis distributed locks • Deduplication Key)   │
+│ • Channel Selector (SMS, WhatsApp, Email, Webhook fallback)            │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │ Partitioned Events by Priority
+                                    ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                        APACHE KAFKA QUEUE TIERS                        │
+│ ├── Topic: notifications-p0-otp       ──► SLA: &lt; 3 Seconds            │
+│ ├── Topic: notifications-p1-receipts  ──► SLA: &lt; 1 Minute             │
+│ └── Topic: notifications-p2-batch     ──► SLA: &lt; 1 Hour               │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │ Stream Workers
+                                    ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                   INTELLIGENT VENDOR ROUTING ENGINE                    │
+│ Telemetry Tracking • Multi-Armed Bandit Vendor Selection • Health DLRs │
+└──────┬──────────────────────┬──────────────────────┬───────────────────┘
+       ▼                      ▼                      ▼                   ▼
+[ Telecom Vendor A ]   [ Telecom Vendor B ]   [ WhatsApp API ]    [ SendGrid / SES ]</div>
+      </section>
+
+      <section id="priority-queues">
+        <h2>3. Multi-Tier Priority Queues: Eliminating Head-of-Line Blocking</h2>
+        <p>
+          A common architectural failure in notification engines is a single shared queue. If a merchant triggers a batch marketing campaign sending 500,000 promotional emails, high-priority OTP messages queued behind the batch get delayed by minutes.
+        </p>
+        <div class="note-box">
+          <p>
+            Razorpay strictly segregates workloads into <strong>Three Priority Tiers</strong>:
+          </p>
+          <ul>
+            <li><strong>P0 (Critical Real-Time):</strong> Authentication OTPs, two-factor challenges, and fraud block alerts. Allocated dedicated, unthrottled Kafka partitions and worker pools. Target latency: <strong>&lt; 3 seconds</strong>.</li>
+            <li><strong>P1 (Transactional Operational):</strong> Payment successful receipts, refund confirmations, and webhook callbacks. Target latency: <strong>&lt; 30 seconds</strong>.</li>
+            <li><strong>P2 (Asynchronous Batch):</strong> Weekly merchant settlements, tax invoices, and promotional announcements. Throttled during peak daytime hours to protect telecom capacity.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="vendor-routing">
+        <h2>4. Dynamic Telecom Vendor Routing &amp; Failover</h2>
+        <p>
+          In emerging markets, telecommunication aggregators (e.g., Gupshup, ValueFirst, Karix, Airtel) suffer frequent degraded network states: localized fiber cuts, telecom switch buffer overflows, and regulatory filtering backlogs.
+        </p>
+        <p>
+          To maintain 99.99% delivery reliability, Razorpay implements <strong>Real-Time Dynamic Routing</strong>:
+        </p>
+        <ul>
+          <li><strong>Moving-Window Delivery Health:</strong> Workers track Delivery Receipts (DLRs) per telecom vendor over a rolling 60-second sliding window.</li>
+          <li><strong>Automated Circuit Breaker:</strong> If Vendor A's delivery success rate drops below 92% or average latency exceeds 4,000ms, the routing engine automatically trips a circuit breaker and reroutes 100% of P0 traffic to Vendor B in under 5 seconds.</li>
+          <li><strong>Traffic Shading &amp; Probing:</strong> A small canary stream (1% of traffic) continues probing degraded vendors until health metrics recover.</li>
+        </ul>
+      </section>
+
+      <section id="idempotency-engine">
+        <h2>5. Distributed Idempotency &amp; Rate Limiting</h2>
+        <p>
+          Sending duplicate payment alerts or multiple debit SMS messages causes consumer panic and flooded support lines. Razorpay enforces strict idempotency:
+        </p>
+        <pre><code class="language-go">// Distributed Idempotency Guard in Go
+func (s *NotificationService) Dispatch(ctx context.Context, req NotificationReq) error {
+    idempotencyKey := fmt.Sprintf("notif:%s:%s", req.Channel, req.IdempotencyID)
+
+    // Atomic Redis SETNX with 24-hour lease
+    ok, err := s.redis.SetNX(ctx, idempotencyKey, "PROCESSING", 24*time.Hour).Result()
+    if err != nil || !ok {
+        // Duplicate detected: safe short-circuit return
+        return ErrDuplicateNotification
+    }
+
+    // Process notification through Kafka priority pipeline
+    return s.kafkaProducer.Publish(req)
+}</code></pre>
+      </section>
+
+      <section id="dlr-tracking">
+        <h2>6. Delivery Receipt (DLR) Reconcilers</h2>
+        <p>
+          Telecom operators dispatch asynchronous HTTP webhooks containing Delivery Receipts (DLR) indicating whether a message was delivered, rejected, or expired on the cellular tower.
+        </p>
+        <ul>
+          <li><strong>Asynchronous Ingestion:</strong> DLR webhooks land on an auto-scaled edge gateway, queuing events into Kafka.</li>
+          <li><strong>Smart Fallback:</strong> If an SMS DLR indicates failure due to handset out of coverage or carrier spam filtering, the reconciler automatically initiates a fallback dispatch over WhatsApp or Email.</li>
+        </ul>
+      </section>
+
+      <section id="comparative-analysis">
+        <h2>7. Architecture Comparison: Standard vs. Fintech Notification</h2>
+        <table class="comparison-table">
+          <thead>
+            <tr>
+              <th>Vector</th>
+              <th>Standard SaaS App</th>
+              <th>Razorpay Fintech Engine</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Queueing Strategy</strong></td>
+              <td>Single shared FIFO queue (Celery/RabbitMQ)</td>
+              <td><strong>Strict multi-tier Kafka topics (P0, P1, P2)</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Vendor Management</strong></td>
+              <td>Single provider (Twilio or SendGrid)</td>
+              <td><strong>Multi-vendor Anycast with dynamic failover</strong></td>
+            </tr>
+            <tr>
+              <td><strong>OTP Delivery SLA</strong></td>
+              <td>Best effort (10s – 60s)</td>
+              <td><strong>Sub-3 seconds p95 guaranteed</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Idempotency</strong></td>
+              <td>Application-level best effort</td>
+              <td><strong>Distributed Redis SETNX with 24h lease</strong></td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="key-takeaways">
+        <h2>8. Key Architectural Takeaways</h2>
+        <div class="note-box">
+          <ul>
+            <li><strong>Separate Critical OTPs from Batch Traffic:</strong> Never share a single queue between time-sensitive authentication tokens and marketing campaigns. Head-of-line blocking destroys checkout conversion rates.</li>
+            <li><strong>Implement Dynamic Multi-Vendor Routing:</strong> Telecom providers suffer localized outages regularly. Continuously track real-time DLR latencies and automatically steer traffic to healthy carriers.</li>
+            <li><strong>Distributed Idempotency Prevents Customer Panic:</strong> Enforce atomic Redis locks on unique transaction IDs to guarantee consumers are never sent duplicate debit alerts.</li>
+            <li><strong>Leverage Smart Cross-Channel Fallbacks:</strong> If cellular SMS channels fail to deliver within 10 seconds, automatically re-route the alert via secondary channels like WhatsApp Business.</li>
+          </ul>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-col">
+        <div class="footer-brand">
+          <div class="brand-icon">⚡</div>
+          <span class="footer-title">System Design Notes</span>
+        </div>
+        <p class="footer-desc">Production-grade architecture dissections, distributed systems engineering, and first-principles technical notes.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Payment &amp; Notification</h5>
+        <ul>
+          <li><a href="razorpay-notification-system-architecture.html">Razorpay Notification Engine</a></li>
+          <li><a href="stripe-idempotent-api-design.html">Stripe Idempotent API Design</a></li>
+          <li><a href="gojek-phone-masking-security.html">Gojek Phone Masking</a></li>
+          <li><a href="uber-emergency-sos-service.html">Uber Emergency SOS Service</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>High-Scale Systems</h5>
+        <ul>
+          <li><a href="deliveroo-dynamodb-realtime-aggregation.html">Deliveroo Real-Time Aggregations</a></li>
+          <li><a href="giphy-cdn-serving-10-billion-gifs.html">Giphy CDN Architecture</a></li>
+          <li><a href="discord-data-platform-petabytes.html">Discord Data Platform</a></li>
+          <li><a href="junodb-overview-paypal-kv-store.html">PayPal JunoDB Architecture</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>&copy; 2026 System Design Notes. Editorial &amp; Technical Analysis curated by Arpit Bhayani Architecture Synthesis.</p>
+    </div>
+  </footer>
+
+  <script src="../assets/js/main.js"></script>
+</body>
+</html>

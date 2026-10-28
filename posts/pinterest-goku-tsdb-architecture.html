@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pinterest Goku TSDB Architecture: In-Memory Time Series Storage &amp; Gorilla Compression at Scale — System Design Notes</title>
+  <meta name="description" content="Technical deep dive into Pinterest's Goku TSDB: in-memory C++ time-series engine, Gorilla delta-of-delta and XOR floating-point compression, sub-50ms query aggregations, and replacing OpenTSDB.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css">
+  <link rel="stylesheet" href="../blog-theme.css">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body class="blog-post-page">
+  <div id="progress" aria-hidden="true"></div>
+
+  <header class="site-header">
+    <div class="header-container">
+      <a class="site-name" href="../index.html">
+        <span class="brand-icon">⚡</span>
+        <span>System Design Notes</span>
+      </a>
+      <nav class="site-nav" aria-label="Main">
+        <a href="../index.html">All Notes</a>
+        <a href="../index.html#categories">Categories</a>
+        <a href="../Docs/Pinterest_Goku_TSDB_Technical_Breakdown.pdf" class="nav-download-btn" target="_blank" download>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download PDF
+        </a>
+      </nav>
+      <div class="swatches" role="group" aria-label="Colour theme">
+        <button class="swatch" data-set-theme="light" style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+        <button class="swatch" data-set-theme="dark" style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+        <button class="swatch" data-set-theme="sepia" style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+      </div>
+    </div>
+  </header>
+
+  <div class="post-layout">
+    <aside class="post-sidebar">
+      <div class="sidebar-sticky">
+        <div class="sidebar-header">
+          <span class="badge-post">Time Series Engines</span>
+          <span class="reading-time">23 min read</span>
+        </div>
+        <nav class="toc" aria-label="Table of Contents">
+          <h4>Table of Contents</h4>
+          <ul>
+            <li><a href="#monitoring-scale">1. Telemetry Scale &amp; OpenTSDB Limits</a></li>
+            <li><a href="#gorilla-compression">2. Gorilla Compression Algorithms</a></li>
+            <li><a href="#goku-architecture">3. Goku In-Memory System Topology</a></li>
+            <li><a href="#inverted-index">4. Tag Inverted Indexes &amp; Bitmaps</a></li>
+            <li><a href="#query-execution">5. Sub-50ms Query Vector Execution</a></li>
+            <li><a href="#storage-tiering">6. Tiering &amp; S3 Block Persistence</a></li>
+            <li><a href="#performance-comparison">7. OpenTSDB vs. Pinterest Goku</a></li>
+            <li><a href="#key-takeaways">8. Key Architectural Takeaways</a></li>
+          </ul>
+        </nav>
+        <div class="companion-box">
+          <div class="companion-title">Companion PDF</div>
+          <p>Download the verified 3-page technical breakdown for offline study and architecture review.</p>
+          <a href="../Docs/Pinterest_Goku_TSDB_Technical_Breakdown.pdf" class="download-link" target="_blank" download>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Pinterest Goku TSDB PDF
+          </a>
+        </div>
+      </div>
+    </aside>
+
+    <main class="post-content">
+      <header class="post-header">
+        <div class="meta-row">
+          <span class="category-tag">Time Series &amp; Observability</span>
+          <time datetime="2026-01-16">January 16, 2026</time>
+          <span class="author-tag">Arpit Bhayani System Design Breakdown</span>
+        </div>
+        <h1>Pinterest Goku TSDB Architecture: In-Memory Time Series Storage &amp; Gorilla Compression at Scale</h1>
+        <p class="lead-text">
+          Monitoring billions of real-time metrics across thousands of microservices with sub-50ms dashboard query latencies breaks conventional disk-backed databases. Discover how Pinterest engineered Goku—a high-performance C++ in-memory time series database implementing Gorilla compression algorithms, inverted tag indexes, and tiered S3 archival to replace OpenTSDB and slash hardware costs by 75%.
+        </p>
+      </header>
+
+      <section id="monitoring-scale">
+        <h2>1. Telemetry Scale &amp; OpenTSDB Limits</h2>
+        <p>
+          Pinterest operates hundreds of millions of user boards, serving visual recommendations to over 450 million active pinners. Supporting this requires monitoring millions of time-series metrics per minute:
+        </p>
+        <div class="note-box">
+          <ul>
+            <li><strong>Scale:</strong> Ingesting over <strong>billions of metric data points per day</strong> across thousands of server hosts and application services.</li>
+            <li><strong>SLA Requirements:</strong> Alerting engines and real-time operational dashboards require sub-50ms query response times over 12-hour windows.</li>
+            <li><strong>The Failure of OpenTSDB:</strong> Pinterest previously relied on OpenTSDB backed by Apache HBase on HDFS. At scale, HBase suffered from severe JVM garbage collection freezes, heavy write amplification during compaction, and query aggregation latencies exceeding 5 to 10 seconds.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="gorilla-compression">
+        <h2>2. Gorilla Compression Algorithms: 12x Memory Reduction</h2>
+        <p>
+          To make storing billions of telemetry points entirely in RAM economically feasible, Goku implements the <strong>Facebook Gorilla Compression Algorithms</strong>:
+        </p>
+
+        <div class="note-box">
+          <h4>1. Timestamp Delta-of-Delta Compression</h4>
+          <p>
+            Metrics typically arrive at regular intervals (e.g., every 10 seconds). The delta between consecutive timestamps $D = T_i - T_{i-1}$ is nearly constant. By computing the <em>delta-of-delta</em> $D' = D_i - D_{i-1}$:
+          </p>
+          <ul>
+            <li>If $D' = 0$, store a single bit <code>'0'</code>!</li>
+            <li>If $-63 \le D' \le 64$, store <code>'10'</code> followed by 7 bits.</li>
+            <li>Compacts standard 8-byte (64-bit) Unix timestamps down to an average of <strong>1.37 bits per timestamp</strong>!</li>
+          </ul>
+
+          <h4>2. Floating-Point Value XOR Compression</h4>
+          <p>
+            Consecutive metric values (e.g. CPU% or memory usage) are often identical or change only in lower-order bits:
+          </p>
+          <ul>
+            <li>Compute bitwise XOR of current float with previous float: $X = V_i \oplus V_{i-1}$.</li>
+            <li>If $X = 0$, store a single bit <code>'0'</code>.</li>
+            <li>If $X \neq 0$, store variable-length bit-packed bits excluding redundant leading and trailing zeros.</li>
+            <li>Compacts 8-byte double precision floats down to an average of <strong>1.3 bytes per value</strong> (83% compression).</li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="goku-architecture">
+        <h2>3. Goku In-Memory System Topology</h2>
+        <p>
+          Goku is written in modern C++ to eliminate all JVM garbage collection pauses and provide bare-metal memory alignment:
+        </p>
+
+        <div class="code-box">
+[ Microservices / StatsD / Envoy Telemetry ]
+                     │ Kafka / Ingestion Pipeline
+                     ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                        GOKU INGESTION GATEWAY                          │
+│ Consistent Hashing by Series Hash • Envoy Dynamic Routing Shards      │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │ Partitioned Stream
+                                    ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                   GOKU IN-MEMORY STORAGE NODE (C++)                    │
+├────────────────────────────────────────────────────────────────────────┤
+│ • Inverted Tag Index: Fast bitmap intersection for tag queries         │
+│ • Gorilla Time-Series Store: Active 24-hr memory buffers               │
+│ • Direct SIMD Vectorized Aggregation Engine (SUM, AVG, P99)            │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │ Hourly Segment Snapshot
+                                    ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                    AMAZON S3 LONG-TERM ARCHIVAL                        │
+│ Compressed Read-Only Parquet / Custom Blocks for Historical Trends     │
+└────────────────────────────────────────────────────────────────────────┘</div>
+      </section>
+
+      <section id="inverted-index">
+        <h2>4. Tag Inverted Indexes &amp; Roaring Bitmaps</h2>
+        <p>
+          In modern telemetry, metrics are queried by multidimensional tags: <code>service=api AND host=ip-10-0-1-5 AND region=us-east-1</code>.
+        </p>
+        <ul>
+          <li><strong>Series ID Mapping:</strong> Every unique combination of metric name and tags is assigned a dense 32-bit integer <code>SeriesID</code>.</li>
+          <li><strong>Inverted Index with Roaring Bitmaps:</strong> Each tag key-value pair points to a Roaring Bitmap containing the SeriesIDs matching that tag.</li>
+          <li><strong>Bitwise AND Filtering:</strong> Querying multi-tag filters is reduced to sub-millisecond bitwise <code>AND</code> operations across bitmaps, retrieving thousands of matching time-series in under 1ms.</li>
+        </ul>
+      </section>
+
+      <section id="query-execution">
+        <h2>5. Sub-50ms Query Vector Execution</h2>
+        <p>
+          Goku's query engine is optimized for high-speed columnar data scans:
+        </p>
+        <ul>
+          <li><strong>SIMD Vectorization:</strong> Scanning and aggregating floating-point time slices (e.g. computing the 95th percentile CPU across 1,000 servers) utilizes AVX-512 vector instructions.</li>
+          <li><strong>Lock-Free Reader Concurrency:</strong> Time series segments are appended by a single ingestion worker and read lock-free via atomic length pointers, eliminating mutex contention.</li>
+        </ul>
+      </section>
+
+      <section id="storage-tiering">
+        <h2>6. Storage Tiering &amp; Long-Term S3 Archival</h2>
+        <p>
+          Telemetry value degrades exponentially over time. Pinterest implements a two-tiered persistence model:
+        </p>
+        <div class="note-box">
+          <ul>
+            <li><strong>Hot In-Memory Tier (0 to 24 Hours):</strong> Retains 1-second and 10-second high-resolution data in RAM for interactive real-time debugging and alerting. Sub-50ms latency.</li>
+            <li><strong>Cold S3 Tier (24 Hours to 1 Year):</strong> As segments age past 24 hours, background worker threads downsample data (roll up 10s intervals into 5-minute averages), pack compressed blocks, and upload them to Amazon S3.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="performance-comparison">
+        <h2>7. Architectural Comparison: OpenTSDB vs. Pinterest Goku</h2>
+        <table class="comparison-table">
+          <thead>
+            <tr>
+              <th>Feature / Metric</th>
+              <th>OpenTSDB (HBase / Java)</th>
+              <th>Pinterest Goku (C++ In-Memory)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Storage Medium</strong></td>
+              <td>Disk (HBase HDFS Tables)</td>
+              <td><strong>Pure In-Memory RAM + S3 Archival</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Compression</strong></td>
+              <td>Snappy / Gzip block compression</td>
+              <td><strong>Gorilla Delta-of-Delta + XOR Float (12x)</strong></td>
+            </tr>
+            <tr>
+              <td><strong>p99 Query Latency</strong></td>
+              <td>2,000ms – 10,000ms (Compaction stalls)</td>
+              <td><strong>Sub-50ms p99 across millions of points</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Infrastructure Footprint</strong></td>
+              <td>Hundreds of heavy HBase/HDFS nodes</td>
+              <td><strong>75% Server Fleet Reduction</strong></td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="key-takeaways">
+        <h2>8. Key Architectural Takeaways</h2>
+        <div class="note-box">
+          <ul>
+            <li><strong>In-Memory TSDBs Beat Disk Engines for Dashboards:</strong> Serving live operational telemetry from RAM eliminates disk seek bottlenecks and delivers deterministic sub-50ms queries.</li>
+            <li><strong>Gorilla Compression Makes RAM Affordable:</strong> Delta-of-delta timestamp encoding and floating-point XOR packing compress time-series data by over 12x, fitting billions of points into modest RAM pools.</li>
+            <li><strong>Bitmaps Accelerate Multi-Dimensional Tag Queries:</strong> Roaring Bitmaps transform complex metadata filtering into ultra-fast CPU bitwise operations.</li>
+            <li><strong>Tier Storage by Data Age:</strong> Keep raw high-resolution metrics in memory for 24 hours, downsample older data, and archive to inexpensive cloud object storage (S3) for historical analytics.</li>
+          </ul>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-col">
+        <div class="footer-brand">
+          <div class="brand-icon">⚡</div>
+          <span class="footer-title">System Design Notes</span>
+        </div>
+        <p class="footer-desc">Production-grade architecture dissections, distributed systems engineering, and first-principles technical notes.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Time Series &amp; Storage</h5>
+        <ul>
+          <li><a href="pinterest-goku-tsdb-architecture.html">Pinterest Goku TSDB</a></li>
+          <li><a href="deliveroo-dynamodb-realtime-aggregation.html">Deliveroo Real-Time Aggregations</a></li>
+          <li><a href="rockset-realtime-analytics-database-architecture.html">Rockset ALT Architecture</a></li>
+          <li><a href="bitcask-storage-engine.html">Bitcask Storage Engine</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Search &amp; Discovery</h5>
+        <ul>
+          <li><a href="flipkart-typeahead-search-architecture.html">Flipkart Typeahead Search</a></li>
+          <li><a href="twitter-search-earlybird-architecture.html">Twitter Earlybird Search</a></li>
+          <li><a href="yelp-nrtsearch-engine-architecture.html">Yelp nrtSearch Engine</a></li>
+          <li><a href="synonymic-query-expansion-search.html">Synonymic Query Expansion</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>&copy; 2026 System Design Notes. Editorial &amp; Technical Analysis curated by Arpit Bhayani Architecture Synthesis.</p>
+    </div>
+  </footer>
+
+  <script src="../assets/js/main.js"></script>
+</body>
+</html>

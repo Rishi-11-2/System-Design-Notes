@@ -839,6 +839,62 @@ const ARTICLES_DATA = [
     excerpt: "Technical deep dive into Dropbox's thumbnail generation architecture: serving tens of thousands of thumbnails per second, seccomp sandboxed image decoders, multi-tier caching, and asynchronous speculative generation.",
     tags: ["Dropbox", "Thumbnails", "Media Processing", "Sandboxing", "Seccomp", "Magic Pocket"],
     featured: true
+  },
+  {
+    id: "deliveroo-dynamodb-realtime-aggregation",
+    slug: "deliveroo-dynamodb-realtime-aggregation.html",
+    title: "Deliveroo Real-Time DynamoDB Aggregations: Sharded Counters & Stream-Processed Sliding Windows",
+    category: "Real-Time Aggregations",
+    categorySlug: "cloud-databases",
+    readTime: "22 min read",
+    date: "Jan 16, 2026",
+    badge: "Stream Aggregations",
+    pdfSource: "Docs/Deliveroo_DynamoDB_Realtime_Aggregation_Technical_Breakdown.pdf",
+    excerpt: "Technical deep dive into Deliveroo's real-time aggregation architecture: DynamoDB Streams CDC, sharded counters to eliminate write throttling, and bucket-tiled sliding windows with zero-cost TTL eviction.",
+    tags: ["Deliveroo", "DynamoDB", "DynamoDB Streams", "Sharded Counters", "Sliding Windows", "Real-Time Aggregations"],
+    featured: true
+  },
+  {
+    id: "razorpay-notification-system-architecture",
+    slug: "razorpay-notification-system-architecture.html",
+    title: "Razorpay Notification System Architecture: Multi-Channel Delivery, Dynamic Gateway Routing & OTP Prioritization",
+    category: "Fintech Notifications",
+    categorySlug: "case-studies",
+    readTime: "23 min read",
+    date: "Jan 16, 2026",
+    badge: "Fintech Infrastructure",
+    pdfSource: "Docs/Razorpay_Notification_System_Technical_Breakdown.pdf",
+    excerpt: "Technical deep dive into Razorpay's notification engine: multi-channel dispatch (SMS, WhatsApp, Email, Webhooks), sub-3s OTP priority queues, dynamic telecom vendor failover, and zero dropped alerts at fintech scale.",
+    tags: ["Razorpay", "Notifications", "Kafka", "Dynamic Routing", "Fintech", "Idempotency"],
+    featured: true
+  },
+  {
+    id: "flipkart-typeahead-search-architecture",
+    slug: "flipkart-typeahead-search-architecture.html",
+    title: "Flipkart Hyper-Personalized Typeahead Search Architecture: In-Memory FSTs & Real-Time Intent Ranking",
+    category: "Search Systems",
+    categorySlug: "case-studies",
+    readTime: "23 min read",
+    date: "Jan 16, 2026",
+    badge: "E-Commerce Search",
+    pdfSource: "Docs/Flipkart_Typeahead_Search_Technical_Breakdown.pdf",
+    excerpt: "Technical deep dive into Flipkart's hyper-personalized typeahead search engine: in-memory Finite State Transducers (FST), sub-15ms L1 candidate retrieval, real-time ML session personalization, and Big Billion Days scale.",
+    tags: ["Flipkart", "Typeahead", "Search", "FST", "Machine Learning", "Personalization"],
+    featured: true
+  },
+  {
+    id: "pinterest-goku-tsdb-architecture",
+    slug: "pinterest-goku-tsdb-architecture.html",
+    title: "Pinterest Goku TSDB Architecture: In-Memory Time Series Storage & Gorilla Compression at Scale",
+    category: "Time Series & Storage",
+    categorySlug: "cloud-databases",
+    readTime: "23 min read",
+    date: "Jan 16, 2026",
+    badge: "Time Series Engine",
+    pdfSource: "Docs/Pinterest_Goku_TSDB_Technical_Breakdown.pdf",
+    excerpt: "Technical deep dive into Pinterest's Goku TSDB: in-memory C++ time-series engine, Gorilla delta-of-delta and XOR floating-point compression, sub-50ms query aggregations, and replacing OpenTSDB.",
+    tags: ["Pinterest", "Goku", "TSDB", "Gorilla Compression", "Time Series", "In-Memory Database"],
+    featured: true
   }
 ];
 

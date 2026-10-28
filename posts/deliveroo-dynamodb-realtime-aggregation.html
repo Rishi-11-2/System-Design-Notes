@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Deliveroo Real-Time DynamoDB Aggregations: Sharded Counters &amp; Stream-Processed Sliding Windows — System Design Notes</title>
+  <meta name="description" content="Technical deep dive into Deliveroo's real-time aggregation architecture: DynamoDB Streams CDC, sharded counters to eliminate write throttling, and bucket-tiled sliding windows with zero-cost TTL eviction.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css">
+  <link rel="stylesheet" href="../blog-theme.css">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+  <!-- Mermaid for Architecture Diagrams -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body class="blog-post-page">
+  <div id="progress" aria-hidden="true"></div>
+
+  <header class="site-header">
+    <div class="header-container">
+      <a class="site-name" href="../index.html">
+        <span class="brand-icon">⚡</span>
+        <span>System Design Notes</span>
+      </a>
+      <nav class="site-nav" aria-label="Main">
+        <a href="../index.html">All Notes</a>
+        <a href="../index.html#categories">Categories</a>
+        <a href="../Docs/Deliveroo_DynamoDB_Realtime_Aggregation_Technical_Breakdown.pdf" class="nav-download-btn" target="_blank" download>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download PDF
+        </a>
+      </nav>
+      <div class="swatches" role="group" aria-label="Colour theme">
+        <button class="swatch" data-set-theme="light" style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+        <button class="swatch" data-set-theme="dark" style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+        <button class="swatch" data-set-theme="sepia" style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+      </div>
+    </div>
+  </header>
+
+  <div class="post-layout">
+    <aside class="post-sidebar">
+      <div class="sidebar-sticky">
+        <div class="sidebar-header">
+          <span class="badge-post">Real-Time Data</span>
+          <span class="reading-time">22 min read</span>
+        </div>
+        <nav class="toc" aria-label="Table of Contents">
+          <h4>Table of Contents</h4>
+          <ul>
+            <li><a href="#dispatch-challenge">1. The Logistics Dispatch Dilemma</a></li>
+            <li><a href="#dynamo-throttling">2. The Hot-Partition Write Ceiling</a></li>
+            <li><a href="#sharded-counters">3. Sharded Counters Architecture</a></li>
+            <li><a href="#bucket-tiling">4. Bucket Tiling &amp; Sliding Windows</a></li>
+            <li><a href="#streams-pipeline">5. DynamoDB Streams CDC Pipeline</a></li>
+            <li><a href="#ttl-cleanup">6. Zero-Cost TTL Expiration Mechanics</a></li>
+            <li><a href="#performance-slas">7. Latency SLAs &amp; Blast Radius</a></li>
+            <li><a href="#key-takeaways">8. Key Architectural Takeaways</a></li>
+          </ul>
+        </nav>
+        <div class="companion-box">
+          <div class="companion-title">Companion PDF</div>
+          <p>Download the verified 3-page technical breakdown for offline study and architecture review.</p>
+          <a href="../Docs/Deliveroo_DynamoDB_Realtime_Aggregation_Technical_Breakdown.pdf" class="download-link" target="_blank" download>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Deliveroo Aggregation PDF
+          </a>
+        </div>
+      </div>
+    </aside>
+
+    <main class="post-content">
+      <header class="post-header">
+        <div class="meta-row">
+          <span class="category-tag">Real-Time Aggregations</span>
+          <time datetime="2026-01-16">January 16, 2026</time>
+          <span class="author-tag">Arpit Bhayani System Design Breakdown</span>
+        </div>
+        <h1>Deliveroo Real-Time DynamoDB Aggregations: Sharded Counters &amp; Stream-Processed Sliding Windows</h1>
+        <p class="lead-text">
+          Calculating live restaurant kitchen loads and delivery zone capacity across thousands of restaurants in sub-5 milliseconds requires eliminating SQL <code>COUNT(*)</code> scans and DynamoDB hot partition write throttling. Discover how Deliveroo engineered real-time aggregations—combining sharded counters, bucket-tiled temporal windows, and DynamoDB Streams CDC with zero-cost TTL eviction.
+        </p>
+      </header>
+
+      <section id="dispatch-challenge">
+        <h2>1. The Logistics Dispatch Dilemma</h2>
+        <p>
+          In an on-demand food logistics marketplace like Deliveroo, matching algorithms make critical decisions every second:
+        </p>
+        <div class="note-box">
+          <ul>
+            <li><strong>Kitchen Throttling:</strong> If Restaurant $R$ received more than 20 orders in the last 15 minutes, temporarily increase estimated delivery time or pause new orders to prevent kitchen meltdowns.</li>
+            <li><strong>Rider Balancing:</strong> How many active couriers are en route to Zone $Z$ within the trailing 10-minute window?</li>
+            <li><strong>Dynamic Delivery Fees:</strong> Surge fees dynamically adjust based on live order volume vs. active courier supply.</li>
+          </ul>
+        </div>
+        <p>
+          Executing queries like <code>SELECT COUNT(*) FROM orders WHERE restaurant_id = ? AND created_at >= NOW() - INTERVAL 15 MINUTE</code> across millions of orders locks database tables, inflates database CPU to 100%, and results in 500ms+ latency spikes that bring down matching dispatch loops.
+        </p>
+      </section>
+
+      <section id="dynamo-throttling">
+        <h2>2. The Hot-Partition Write Ceiling in DynamoDB</h2>
+        <p>
+          Migrating to Amazon DynamoDB provides horizontal scalability, but introduces strict partition throughput boundaries:
+        </p>
+        <div class="note-box">
+          <p>
+            DynamoDB strictly caps single-partition throughput at <strong>1,000 Write Capacity Units (WCU) per second</strong>.
+          </p>
+          <p>
+            If 2,000 orders or status updates per second hit a single trending restaurant or high-density delivery zone using <code>restaurant_id</code> as the partition key, DynamoDB rejects mutations with <code>ProvisionedThroughputExceededException</code>, causing failed orders and dropped telemetry.
+          </p>
+        </div>
+      </section>
+
+      <section id="sharded-counters">
+        <h2>3. Sharded Counters Architecture</h2>
+        <p>
+          To bypass the 1,000 WCU partition limit, Deliveroo implements <strong>Sharded Counters</strong>:
+        </p>
+
+        <div class="code-box">
+┌────────────────────────────────────────────────────────────────────────┐
+│                        SHARDED COUNTER WRITE PATH                      │
+├────────────────────────────────────────────────────────────────────────┤
+│ 1. New Order Placed for Restaurant R101                                │
+│ 2. Worker generates random integer: S = rand(0, M-1) (e.g., M = 10)    │
+│ 3. Atomic Increment in DynamoDB:                                       │
+│    UPDATE counters_table                                               │
+│    SET count = count + 1                                               │
+│    WHERE PK = "R101#2026-01-16T19:30" AND SK = "shard#3"              │
+└────────────────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────────────────┐
+│                        SHARDED COUNTER READ PATH                       │
+├────────────────────────────────────────────────────────────────────────┤
+│ 1. Query all M shards for the time bucket:                             │
+│    SELECT count FROM counters_table WHERE PK = "R101#2026-01-16T19:30" │
+│ 2. Parallel batch fetch returns M items in &lt; 4ms                       │
+│ 3. Total Count = SUM(shard[0] + shard[1] + ... + shard[M-1])          │
+└────────────────────────────────────────────────────────────────────────┘</div>
+        <p>
+          By spreading writes across $M = 10$ independent physical partitions, maximum write throughput scales linearly to <strong>10,000 WCU per second</strong> per restaurant, completely eliminating write throttling.
+        </p>
+      </section>
+
+      <section id="bucket-tiling">
+        <h2>4. Bucket Tiling &amp; Sliding Window Aggregations</h2>
+        <p>
+          Calculating rolling 15-minute windows without continuous re-computation is achieved through <strong>Bucket Tiling</strong>:
+        </p>
+        <ul>
+          <li><strong>Discrete Time Slices:</strong> The timeline is divided into fixed 1-minute discrete buckets: $T_0, T_1, T_2, \dots, T_{14}$.</li>
+          <li><strong>Rolling Window Sum:</strong> To compute the orders in the last 15 minutes, the application issues a single parallel batch read fetching the counts of the last 15 1-minute buckets and sums them in memory:
+            $$\text{TotalOrders}_{15m} = \sum_{i=0}^{14} \text{BucketCount}(T_{\text{now} - i})$$
+          </li>
+          <li><strong>Sub-5ms Execution:</strong> Because each bucket is a tiny pre-computed integer record, reading 15 items by primary key completes in under 4ms.</li>
+        </ul>
+      </section>
+
+      <section id="streams-pipeline">
+        <h2>5. DynamoDB Streams CDC Pipeline</h2>
+        <p>
+          Counters are updated asynchronously using event-driven Change Data Capture (CDC):
+        </p>
+        <div class="code-box">
+[ Order Service ] ──► [ Orders DynamoDB Table ]
+                                │
+                                ▼ (DynamoDB Streams / 24-hr log)
+┌────────────────────────────────────────────────────────────────────────┐
+│                   AGGREGATOR LAMBDA / FLINK WORKER                     │
+│ • Batches order lifecycle events (ACCEPTED, CANCELLED, DELIVERED)      │
+│ • Computes delta adjustments (+1 for new order, -1 for cancellation)   │
+│ • Flushes batched atomic increments to Sharded Aggregates Table        │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │ Atomic Increment UpdateItem
+                                    ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                   AGGREGATES DYNAMODB TABLE                            │
+│ PK: {restaurant_id}#{YYYY-MM-DD-HH:mm} | SK: {shard_id}                │
+│ Attributes: order_count, prep_time_sum, ttl_timestamp                  │
+└────────────────────────────────────────────────────────────────────────┘</div>
+      </section>
+
+      <section id="ttl-cleanup">
+        <h2>6. Zero-Cost TTL Expiration Mechanics</h2>
+        <p>
+          Generating millions of 1-minute bucket records daily would quickly bloat database storage costs and require expensive background deletion queries.
+        </p>
+        <div class="note-box">
+          <p>
+            Deliveroo leverages DynamoDB's native <strong>Time-to-Live (TTL)</strong>:
+          </p>
+          <ul>
+            <li>Every aggregate record is tagged with an attribute <code>ttl_timestamp = unix_epoch(now + 2 hours)</code>.</li>
+            <li>DynamoDB's internal background sweep identifies expired records and purges them automatically from storage.</li>
+            <li><strong>Zero Cost &amp; Zero WCU Consumption:</strong> Native TTL deletions consume 0 Write Capacity Units and carry zero financial cost, keeping the aggregations table lean and high-performing indefinitely.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="performance-slas">
+        <h2>7. Comparative Architectural Analysis</h2>
+        <table class="comparison-table">
+          <thead>
+            <tr>
+              <th>Aggregation Model</th>
+              <th>Query Latency</th>
+              <th>Write Scalability</th>
+              <th>Storage Overhead</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>On-Demand SQL Scan</strong></td>
+              <td>150ms – 1,200ms (Heavy lock contention)</td>
+              <td>Low (Locks order table)</td>
+              <td>Zero additional tables</td>
+            </tr>
+            <tr>
+              <td><strong>Redis In-Memory Sliding Window</strong></td>
+              <td>Sub-2ms</td>
+              <td>High (Limited by single-thread Redis core)</td>
+              <td>Expensive RAM cost; data loss on reboot</td>
+            </tr>
+            <tr>
+              <td><strong>Deliveroo Sharded DynamoDB</strong></td>
+              <td><strong>Sub-5ms p99</strong></td>
+              <td><strong>Unlimited (Linear scale via $M$ shards)</strong></td>
+              <td><strong>Minimal (Purged via zero-cost TTL)</strong></td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="key-takeaways">
+        <h2>8. Key Architectural Takeaways</h2>
+        <div class="note-box">
+          <ul>
+            <li><strong>Shard Hot Keys to Scale Past Partition Limits:</strong> When write traffic to an individual entity exceeds 1,000 WCU/sec, randomize writes across $M$ sub-shards and sum them on read.</li>
+            <li><strong>Tile Continuous Time into Discrete Buckets:</strong> Replace expensive sliding window range scans with discrete 1-minute bucket reads, summing the last $K$ buckets in memory in sub-5ms.</li>
+            <li><strong>Decouple Aggregation from Transaction Paths:</strong> Use CDC streams (DynamoDB Streams / Debezium) to update counters asynchronously, keeping user checkout latency isolated from analytical processing.</li>
+            <li><strong>Use Native TTLs for Automatic Data Pruning:</strong> Tag ephemeral temporal buckets with TTL timestamps to let cloud databases clean up expired state without paying for deletion write capacity.</li>
+          </ul>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-col">
+        <div class="footer-brand">
+          <div class="brand-icon">⚡</div>
+          <span class="footer-title">System Design Notes</span>
+        </div>
+        <p class="footer-desc">Production-grade architecture dissections, distributed systems engineering, and first-principles technical notes.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Real-Time Pipelines</h5>
+        <ul>
+          <li><a href="deliveroo-dynamodb-realtime-aggregation.html">Deliveroo Real-Time Aggregation</a></li>
+          <li><a href="slack-email-classification-pipeline.html">Slack Event Processing</a></li>
+          <li><a href="realtime-gaming-leaderboard-system-design.html">Gaming Leaderboards</a></li>
+          <li><a href="rockset-realtime-analytics-database-architecture.html">Rockset Real-Time Analytics</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Cloud &amp; Storage</h5>
+        <ul>
+          <li><a href="discord-data-platform-petabytes.html">Discord Data Platform</a></li>
+          <li><a href="reddit-metadata-store-aurora-postgres.html">Reddit Metadata Store</a></li>
+          <li><a href="junodb-horizontal-scaling-partitioning.html">JunoDB Horizontal Scaling</a></li>
+          <li><a href="dropbox-thumbnail-architecture.html">Dropbox Thumbnail Pipeline</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>&copy; 2026 System Design Notes. Editorial &amp; Technical Analysis curated by Arpit Bhayani Architecture Synthesis.</p>
+    </div>
+  </footer>
+
+  <script src="../assets/js/main.js"></script>
+</body>
+</html>
