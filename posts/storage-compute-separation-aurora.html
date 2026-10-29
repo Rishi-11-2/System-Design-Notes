@@ -8,9 +8,9 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../theme.css?v=3.2">
-  <link rel="stylesheet" href="../blog-theme.css?v=3.2">
-  <link rel="stylesheet" href="../assets/css/style.css?v=3.2">
+  <link rel="stylesheet" href="../theme.css?v=3.3">
+  <link rel="stylesheet" href="../blog-theme.css?v=3.3">
+  <link rel="stylesheet" href="../assets/css/style.css?v=3.3">
   <script>
     (function() {
       const saved = localStorage.getItem('theme');
@@ -116,35 +116,93 @@
 <p>This architecture was designed decades ago for on-premise servers with directly attached physical disks. When lifted and shifted into modern multi-tenant cloud environments, it encounters severe physical constraints:</p>
 
 <div class="diagram-wrapper">
-  <div class="mermaid">
-flowchart TD
-  subgraph MonolithicEC2["Monolithic Compute Node (AWS EC2)"]
-    direction TB
-    SQL["SQL Engine & Query Parser"]
-    Buffer["In-Memory Buffer Pool (16 KB Pages)"]
-    Tx["Transaction & Lock Manager"]
-    Doublewrite["Doublewrite Buffer"]
-    RedoLog["Redo Log Buffer (WAL)"]
-    BinLog["Binary Log (Replication)"]
-  end
+  <svg viewBox="0 0 740 450" class="arch-diagram" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Monolithic Write Amplification Storm">
+    <defs>
+      <marker id="arrow-blue-1" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="var(--primary, #2f5b8a)"/>
+      </marker>
+      <marker id="arrow-rose-1" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="var(--accent-rose, #a63a3a)"/>
+      </marker>
+      <filter id="diagram-shadow-1" x="-2%" y="-2%" width="104%" height="104%">
+        <feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-opacity="0.05"/>
+      </filter>
+    </defs>
 
-  subgraph NetworkPipe["Cloud Network Pipe (Saturation Bottleneck)"]
-    direction TB
-    P1["1. Full 16 KB Dirty Data Pages"]
-    P2["2. Doublewrite Pages (Duplicate 16 KB Writes)"]
-    P3["3. Redo Log Records (WAL)"]
-    P4["4. Binary Log Records (Binlog)"]
-  end
+    <!-- Box 1: Monolithic Compute -->
+    <rect x="15" y="15" width="710" height="118" rx="8" fill="var(--bg-secondary, #ecebe6)" stroke="var(--border-color, #dcdad3)" stroke-width="1.5"/>
+    <text x="32" y="38" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="13" font-weight="700" letter-spacing="0.02em">🖥️ MONOLITHIC COMPUTE NODE (AWS EC2)</text>
+    <text x="545" y="38" fill="var(--text-muted, #62676c)" font-family="var(--font-mono)" font-size="11">Trad. Relational Engine</text>
 
-  subgraph DumbStorage["Dumb Block Storage Tier (Mirrored EBS Volumes)"]
-    EBS1["EBS Volume 1 (AZ A)"]
-    EBS2["EBS Volume 2 (AZ B - Mirrored)"]
-  end
+    <g transform="translate(30, 50)">
+      <rect x="0" y="0" width="128" height="66" rx="6" fill="var(--bg-card, #ffffff)" stroke="var(--primary, #2f5b8a)" stroke-width="1.5" filter="url(#diagram-shadow-1)"/>
+      <text x="64" y="28" text-anchor="middle" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="12" font-weight="600">SQL Parser</text>
+      <text x="64" y="46" text-anchor="middle" fill="var(--text-muted, #62676c)" font-family="var(--font-sans)" font-size="10.5">Query Execution</text>
 
-  MonolithicEC2 --> NetworkPipe
-  NetworkPipe --> EBS1
-  NetworkPipe --> EBS2
-  </div>
+      <rect x="138" y="0" width="132" height="66" rx="6" fill="var(--bg-card, #ffffff)" stroke="var(--primary, #2f5b8a)" stroke-width="1.5" filter="url(#diagram-shadow-1)"/>
+      <text x="204" y="28" text-anchor="middle" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="12" font-weight="600">Buffer Pool</text>
+      <text x="204" y="46" text-anchor="middle" fill="var(--text-muted, #62676c)" font-family="var(--font-mono)" font-size="10.5">16 KB Data Pages</text>
+
+      <rect x="280" y="0" width="128" height="66" rx="6" fill="var(--bg-card, #ffffff)" stroke="var(--primary, #2f5b8a)" stroke-width="1.5" filter="url(#diagram-shadow-1)"/>
+      <text x="344" y="28" text-anchor="middle" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="12" font-weight="600">Redo Log (WAL)</text>
+      <text x="344" y="46" text-anchor="middle" fill="var(--text-muted, #62676c)" font-family="var(--font-sans)" font-size="10.5">Crash Recovery</text>
+
+      <rect x="418" y="0" width="128" height="66" rx="6" fill="var(--bg-card, #ffffff)" stroke="var(--primary, #2f5b8a)" stroke-width="1.5" filter="url(#diagram-shadow-1)"/>
+      <text x="482" y="28" text-anchor="middle" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="12" font-weight="600">Binary Log</text>
+      <text x="482" y="46" text-anchor="middle" fill="var(--text-muted, #62676c)" font-family="var(--font-sans)" font-size="10.5">Replica Streaming</text>
+
+      <rect x="556" y="0" width="124" height="66" rx="6" fill="var(--bg-card, #ffffff)" stroke="var(--primary, #2f5b8a)" stroke-width="1.5" filter="url(#diagram-shadow-1)"/>
+      <text x="618" y="28" text-anchor="middle" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="12" font-weight="600">Doublewrite</text>
+      <text x="618" y="46" text-anchor="middle" fill="var(--text-muted, #62676c)" font-family="var(--font-sans)" font-size="10.5">Torn Page Safety</text>
+    </g>
+
+    <!-- Connecting Stream 1 -> 2 -->
+    <path d="M 370 133 L 370 160" stroke="var(--accent-rose, #a63a3a)" stroke-width="2.5" marker-end="url(#arrow-rose-1)"/>
+    <rect x="235" y="137" width="270" height="20" rx="10" fill="var(--bg-card, #ffffff)" stroke="var(--accent-rose, #a63a3a)" stroke-width="1"/>
+    <text x="370" y="151" text-anchor="middle" fill="var(--accent-rose, #a63a3a)" font-family="var(--font-mono)" font-size="10.5" font-weight="600">4 Redundant Network Streams</text>
+
+    <!-- Box 2: Network Bottleneck -->
+    <rect x="15" y="168" width="710" height="132" rx="8" fill="color-mix(in srgb, var(--accent-rose, #a63a3a) 8%, var(--bg-card, #ffffff))" stroke="var(--accent-rose, #a63a3a)" stroke-width="1.5"/>
+    <text x="32" y="190" fill="var(--accent-rose, #a63a3a)" font-family="var(--font-sans)" font-size="13" font-weight="700">⚠️ CLOUD NETWORK PIPE: 4X WRITE AMPLIFICATION BOTTLENECK</text>
+    <text x="545" y="190" fill="var(--accent-rose, #a63a3a)" font-family="var(--font-mono)" font-size="11">Bandwidth Saturated</text>
+
+    <g transform="translate(30, 202)">
+      <rect x="0" y="0" width="330" height="40" rx="5" fill="var(--bg-card, #ffffff)" stroke="var(--accent-rose, #a63a3a)" stroke-width="1"/>
+      <text x="14" y="24" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="11.5" font-weight="600">1. Full 16 KB Dirty Data Pages</text>
+      <text x="215" y="24" fill="var(--text-muted, #62676c)" font-family="var(--font-mono)" font-size="10.5">Heavy Random I/O</text>
+
+      <rect x="350" y="0" width="330" height="40" rx="5" fill="var(--bg-card, #ffffff)" stroke="var(--accent-rose, #a63a3a)" stroke-width="1"/>
+      <text x="364" y="24" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="11.5" font-weight="600">2. Doublewrite Pages</text>
+      <text x="520" y="24" fill="var(--text-muted, #62676c)" font-family="var(--font-mono)" font-size="10.5">Duplicate 16 KB Writes</text>
+
+      <rect x="0" y="48" width="330" height="40" rx="5" fill="var(--bg-card, #ffffff)" stroke="var(--accent-rose, #a63a3a)" stroke-width="1"/>
+      <text x="14" y="72" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="11.5" font-weight="600">3. Redo Log Records (WAL)</text>
+      <text x="215" y="72" fill="var(--text-muted, #62676c)" font-family="var(--font-mono)" font-size="10.5">Synchronous Flush</text>
+
+      <rect x="350" y="48" width="330" height="40" rx="5" fill="var(--bg-card, #ffffff)" stroke="var(--accent-rose, #a63a3a)" stroke-width="1"/>
+      <text x="364" y="72" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="11.5" font-weight="600">4. Binary Log Records</text>
+      <text x="520" y="72" fill="var(--text-muted, #62676c)" font-family="var(--font-mono)" font-size="10.5">Cross-AZ Replica Feed</text>
+    </g>
+
+    <!-- Connecting Stream 2 -> 3 -->
+    <path d="M 195 300 L 195 328" stroke="var(--primary, #2f5b8a)" stroke-width="2" marker-end="url(#arrow-blue-1)"/>
+    <path d="M 545 300 L 545 328" stroke="var(--primary, #2f5b8a)" stroke-width="2" marker-end="url(#arrow-blue-1)"/>
+
+    <!-- Box 3: Mirrored EBS Storage -->
+    <rect x="15" y="335" width="710" height="100" rx="8" fill="var(--bg-secondary, #ecebe6)" stroke="var(--border-color, #dcdad3)" stroke-width="1.5"/>
+    <text x="32" y="358" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="13" font-weight="700">💾 DUMB BLOCK STORAGE TIER (MIRRORED AMAZON EBS)</text>
+    <text x="535" y="358" fill="var(--text-muted, #62676c)" font-family="var(--font-mono)" font-size="11">Blind Block Protocol</text>
+
+    <g transform="translate(30, 368)">
+      <rect x="0" y="0" width="330" height="52" rx="6" fill="var(--bg-card, #ffffff)" stroke="var(--accent-emerald, #2a7e58)" stroke-width="1.5" filter="url(#diagram-shadow-1)"/>
+      <text x="16" y="25" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="12" font-weight="600">EBS Volume 1 (Availability Zone A)</text>
+      <text x="16" y="42" fill="var(--text-muted, #62676c)" font-family="var(--font-mono)" font-size="10.5">Primary Block Device · High IOPs Required</text>
+
+      <rect x="350" y="0" width="330" height="52" rx="6" fill="var(--bg-card, #ffffff)" stroke="var(--accent-emerald, #2a7e58)" stroke-width="1.5" filter="url(#diagram-shadow-1)"/>
+      <text x="366" y="25" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="12" font-weight="600">EBS Volume 2 (Availability Zone B)</text>
+      <text x="366" y="42" fill="var(--text-muted, #62676c)" font-family="var(--font-mono)" font-size="10.5">Mirrored Block Device · Sync Network Latency</text>
+    </g>
+  </svg>
   <div class="diagram-caption">Figure 1: The monolithic write amplification storm: every database transaction produces multiple redundant disk and network writes across Availability Zones.</div>
 </div>
 
@@ -217,29 +275,79 @@ flowchart TD
 <p>Decoupling compute from storage bifurcates the database engine into two specialized, independently scalable fleets.</p>
 
 <div class="diagram-wrapper">
-  <div class="mermaid">
-flowchart LR
-  subgraph ComputeLayer["Stateless Compute Instance (AWS EC2)"]
-    direction TB
-    SQLParser["SQL Parser & Optimizer"]
-    BufferCache["In-Memory Buffer Cache (Zero-IO Reads)"]
-    LSNGen["Monotonic LSN Generator"]
-    LogPusher["Redo Log Pusher (Async UDP/TCP)"]
-  end
+  <svg viewBox="0 0 740 460" class="arch-diagram" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Aurora Disaggregated Compute vs Storage Architecture">
+    <defs>
+      <marker id="arrow-blue-2" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="var(--primary, #2f5b8a)"/>
+      </marker>
+      <marker id="arrow-green-2" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="var(--accent-emerald, #2a7e58)"/>
+      </marker>
+      <filter id="diagram-shadow-2" x="-2%" y="-2%" width="104%" height="104%">
+        <feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-opacity="0.05"/>
+      </filter>
+    </defs>
 
-  subgraph StorageTier["Intelligent Storage Fleet (Multi-Tenant SSD Nodes)"]
-    direction TB
-    subgraph StorageNode["Storage Node Internal Pipeline"]
-      Step1["Step 1 (Fast Path): Append Redo Record to RAM & Disk -> ACK"]
-      Step2["Step 2 (Async): Coalesce Redo Records into 16 KB Pages"]
-      Step3["Step 3 (Async): Gossip Protocol Peer Repair"]
-      Step4["Step 4 (Async): Continuous Backup to Amazon S3"]
-    end
-  end
+    <!-- Box 1: Stateless Compute Instance -->
+    <rect x="15" y="15" width="710" height="118" rx="8" fill="var(--bg-secondary, #ecebe6)" stroke="var(--border-color, #dcdad3)" stroke-width="1.5"/>
+    <text x="32" y="38" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="13" font-weight="700" letter-spacing="0.02em">⚡ STATELESS COMPUTE INSTANCE (AWS EC2)</text>
+    <text x="535" y="38" fill="var(--primary, #2f5b8a)" font-family="var(--font-mono)" font-size="11" font-weight="600">Zero Disk Dependency</text>
 
-  ComputeLayer -->|"Sends Redo Log Records Only"| StorageNode
-  StorageNode -.->|"Immediate Quorum ACK (Fast Path)"| ComputeLayer
-  </div>
+    <g transform="translate(30, 50)">
+      <rect x="0" y="0" width="160" height="66" rx="6" fill="var(--bg-card, #ffffff)" stroke="var(--primary, #2f5b8a)" stroke-width="1.5" filter="url(#diagram-shadow-2)"/>
+      <text x="80" y="28" text-anchor="middle" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="12" font-weight="600">SQL Parser</text>
+      <text x="80" y="46" text-anchor="middle" fill="var(--text-muted, #62676c)" font-family="var(--font-sans)" font-size="10.5">&amp; Query Optimizer</text>
+
+      <rect x="172" y="0" width="172" height="66" rx="6" fill="var(--bg-card, #ffffff)" stroke="var(--primary, #2f5b8a)" stroke-width="1.5" filter="url(#diagram-shadow-2)"/>
+      <text x="258" y="28" text-anchor="middle" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="12" font-weight="600">In-Memory Buffer Cache</text>
+      <text x="258" y="46" text-anchor="middle" fill="var(--accent-emerald, #2a7e58)" font-family="var(--font-mono)" font-size="10.5" font-weight="600">Zero-I/O RAM Reads</text>
+
+      <rect x="356" y="0" width="160" height="66" rx="6" fill="var(--bg-card, #ffffff)" stroke="var(--primary, #2f5b8a)" stroke-width="1.5" filter="url(#diagram-shadow-2)"/>
+      <text x="436" y="28" text-anchor="middle" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="12" font-weight="600">LSN Generator</text>
+      <text x="436" y="46" text-anchor="middle" fill="var(--text-muted, #62676c)" font-family="var(--font-sans)" font-size="10.5">Monotonic Sequence</text>
+
+      <rect x="528" y="0" width="152" height="66" rx="6" fill="var(--bg-card, #ffffff)" stroke="var(--primary, #2f5b8a)" stroke-width="1.5" filter="url(#diagram-shadow-2)"/>
+      <text x="604" y="28" text-anchor="middle" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="12" font-weight="600">Redo Log Pusher</text>
+      <text x="604" y="46" text-anchor="middle" fill="var(--text-muted, #62676c)" font-family="var(--font-sans)" font-size="10.5">Parallel UDP/TCP Mesh</text>
+    </g>
+
+    <!-- Central Interaction Hub -->
+    <g transform="translate(30, 142)">
+      <path d="M 200 0 L 200 36" stroke="var(--primary, #2f5b8a)" stroke-width="2.5" marker-end="url(#arrow-blue-2)"/>
+      <rect x="215" y="6" width="280" height="26" rx="13" fill="color-mix(in srgb, var(--primary, #2f5b8a) 12%, var(--bg-card, #ffffff))" stroke="var(--primary, #2f5b8a)" stroke-width="1.2"/>
+      <text x="355" y="23" text-anchor="middle" fill="var(--primary, #2f5b8a)" font-family="var(--font-mono)" font-size="11" font-weight="700">🚀 REDO LOG RECORDS ONLY (NO DIRTY PAGES)</text>
+      <path d="M 510 36 L 510 0" stroke="var(--accent-emerald, #2a7e58)" stroke-width="2.5" stroke-dasharray="4,3" marker-end="url(#arrow-green-2)"/>
+      <text x="520" y="23" fill="var(--accent-emerald, #2a7e58)" font-family="var(--font-mono)" font-size="10.5" font-weight="700">⚡ Fast ACK (4/6 Quorum)</text>
+    </g>
+
+    <!-- Box 2: Intelligent Storage Fleet -->
+    <rect x="15" y="190" width="710" height="255" rx="8" fill="var(--bg-secondary, #ecebe6)" stroke="var(--border-color, #dcdad3)" stroke-width="1.5"/>
+    <text x="32" y="213" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="13" font-weight="700">💾 INTELLIGENT AURORA STORAGE FLEET (SSD TIER)</text>
+    <text x="515" y="213" fill="var(--accent-emerald, #2a7e58)" font-family="var(--font-mono)" font-size="11" font-weight="600">Asynchronous Decoupled Engine</text>
+
+    <!-- 4-Stage Pipeline Cards -->
+    <g transform="translate(30, 225)">
+      <rect x="0" y="0" width="680" height="46" rx="6" fill="color-mix(in srgb, var(--accent-emerald, #2a7e58) 10%, var(--bg-card, #ffffff))" stroke="var(--accent-emerald, #2a7e58)" stroke-width="1.5"/>
+      <rect x="8" y="8" width="135" height="30" rx="4" fill="var(--accent-emerald, #2a7e58)"/>
+      <text x="75" y="27" text-anchor="middle" fill="#ffffff" font-family="var(--font-mono)" font-size="11" font-weight="700">STEP 1: FAST PATH</text>
+      <text x="155" y="27" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="12" font-weight="600">Ingest Redo Record into RAM Queue &amp; Append to SSD Log Buffer ➔ <tspan fill="var(--accent-emerald, #2a7e58)">Instant 4/6 ACK</tspan></text>
+
+      <rect x="0" y="54" width="680" height="46" rx="6" fill="var(--bg-card, #ffffff)" stroke="var(--border-color, #dcdad3)" stroke-width="1.2" filter="url(#diagram-shadow-2)"/>
+      <rect x="8" y="62" width="135" height="30" rx="4" fill="var(--bg-secondary, #ecebe6)" stroke="var(--border-color, #dcdad3)" stroke-width="1"/>
+      <text x="75" y="81" text-anchor="middle" fill="var(--text-heading, #181b1d)" font-family="var(--font-mono)" font-size="11" font-weight="600">STEP 2 (ASYNC)</text>
+      <text x="155" y="81" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="12">Background Coalescer: Replays batches of Redo Deltas into 16 KB SSD Data Pages</text>
+
+      <rect x="0" y="108" width="680" height="46" rx="6" fill="var(--bg-card, #ffffff)" stroke="var(--border-color, #dcdad3)" stroke-width="1.2" filter="url(#diagram-shadow-2)"/>
+      <rect x="8" y="116" width="135" height="30" rx="4" fill="var(--bg-secondary, #ecebe6)" stroke="var(--border-color, #dcdad3)" stroke-width="1"/>
+      <text x="75" y="135" text-anchor="middle" fill="var(--text-heading, #181b1d)" font-family="var(--font-mono)" font-size="11" font-weight="600">STEP 3 (ASYNC)</text>
+      <text x="155" y="135" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="12">Gossip Protocol: Storage peers exchange missing LSNs across AZs for automatic self-healing</text>
+
+      <rect x="0" y="162" width="680" height="46" rx="6" fill="var(--bg-card, #ffffff)" stroke="var(--border-color, #dcdad3)" stroke-width="1.2" filter="url(#diagram-shadow-2)"/>
+      <rect x="8" y="170" width="135" height="30" rx="4" fill="var(--bg-secondary, #ecebe6)" stroke="var(--border-color, #dcdad3)" stroke-width="1"/>
+      <text x="75" y="189" text-anchor="middle" fill="var(--text-heading, #181b1d)" font-family="var(--font-mono)" font-size="11" font-weight="600">STEP 4 (ASYNC)</text>
+      <text x="155" y="189" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="12">Continuous Backup: Streams cold log records and snapshots directly to Amazon S3</text>
+    </g>
+  </svg>
   <div class="diagram-caption">Figure 2: Architectural pipeline: Compute pushes only redo log records; storage handles asynchronous page coalescing and peer repair.</div>
 </div>
 
@@ -265,19 +373,85 @@ flowchart LR
 <p>If compute nodes never flush data pages to disk, how does the system serve reads?</p>
 
 <div class="diagram-wrapper">
-  <div class="mermaid">
-flowchart TD
-  Query["Incoming SELECT Query"] --> CacheCheck{"Is Page in<br/>Compute Buffer Cache?"}
-  CacheCheck -- "Cache Hit (95%+)" --> RAM["Serve immediately from local RAM<br/>(Zero Network I/O, Sub-microsecond)"]
-  CacheCheck -- "Cache Miss" --> FetchReq["Compute emits Page Fetch Request<br/>(Specifying Page ID + Target LSN)"]
-  
-  FetchReq --> StorageNode["Target Storage Node"]
-  StorageNode --> BasePage["1. Read latest base snapshot page from SSD"]
-  BasePage --> Replay["2. Replay all newer Redo Log deltas<br/>up to requested Target LSN"]
-  Replay --> ReturnPage["3. Return fully materialized 16 KB page to Compute"]
-  ReturnPage --> LoadRAM["Load into Compute Buffer Cache"]
-  LoadRAM --> RAM
-  </div>
+  <svg viewBox="0 0 740 450" class="arch-diagram" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Aurora Page Materialization and Read Path Mechanics">
+    <defs>
+      <marker id="arrow-blue-3" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="var(--primary, #2f5b8a)"/>
+      </marker>
+      <marker id="arrow-green-3" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="var(--accent-emerald, #2a7e58)"/>
+      </marker>
+      <marker id="arrow-amber-3" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="var(--accent-amber, #9e6b20)"/>
+      </marker>
+      <filter id="diagram-shadow-3" x="-2%" y="-2%" width="104%" height="104%">
+        <feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-opacity="0.05"/>
+      </filter>
+    </defs>
+
+    <!-- Query Dispatch Header -->
+    <rect x="15" y="15" width="710" height="52" rx="8" fill="var(--bg-secondary, #ecebe6)" stroke="var(--border-color, #dcdad3)" stroke-width="1.5"/>
+    <rect x="28" y="25" width="190" height="32" rx="5" fill="var(--bg-card, #ffffff)" stroke="var(--primary, #2f5b8a)" stroke-width="1.5"/>
+    <text x="123" y="46" text-anchor="middle" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="12" font-weight="700">🔍 Incoming SELECT Query</text>
+
+    <path d="M 220 41 L 275 41" stroke="var(--primary, #2f5b8a)" stroke-width="2" marker-end="url(#arrow-blue-3)"/>
+
+    <rect x="285" y="25" width="425" height="32" rx="5" fill="var(--bg-card, #ffffff)" stroke="var(--border-color, #dcdad3)" stroke-width="1"/>
+    <text x="300" y="45" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="12">Check Compute In-Memory Buffer Pool: <strong>Is requested Page in local RAM?</strong></text>
+
+    <!-- Left Column: Fast Path -->
+    <g transform="translate(15, 80)">
+      <rect x="0" y="0" width="345" height="350" rx="8" fill="color-mix(in srgb, var(--accent-emerald, #2a7e58) 8%, var(--bg-card, #ffffff))" stroke="var(--accent-emerald, #2a7e58)" stroke-width="1.5"/>
+      <rect x="16" y="16" width="313" height="32" rx="5" fill="var(--accent-emerald, #2a7e58)"/>
+      <text x="172" y="37" text-anchor="middle" fill="#ffffff" font-family="var(--font-sans)" font-size="12.5" font-weight="700">⚡ PATH A: BUFFER CACHE HIT (95%+)</text>
+
+      <g transform="translate(16, 62)">
+        <rect x="0" y="0" width="313" height="80" rx="6" fill="var(--bg-card, #ffffff)" stroke="var(--accent-emerald, #2a7e58)" stroke-width="1" filter="url(#diagram-shadow-3)"/>
+        <text x="14" y="26" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="12" font-weight="600">Serve Directly from Local RAM</text>
+        <text x="14" y="46" fill="var(--text-muted, #62676c)" font-family="var(--font-sans)" font-size="11">• Sub-microsecond response (&lt; 1µs)</text>
+        <text x="14" y="64" fill="var(--accent-emerald, #2a7e58)" font-family="var(--font-mono)" font-size="11" font-weight="600">• Zero Storage Network I/O Calls</text>
+
+        <path d="M 156 80 L 156 110" stroke="var(--accent-emerald, #2a7e58)" stroke-width="2" marker-end="url(#arrow-green-3)"/>
+
+        <rect x="0" y="118" width="313" height="65" rx="6" fill="var(--bg-card, #ffffff)" stroke="var(--accent-emerald, #2a7e58)" stroke-width="1" filter="url(#diagram-shadow-3)"/>
+        <text x="14" y="26" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="12" font-weight="600">Return Rows to Client Application</text>
+        <text x="14" y="46" fill="var(--text-muted, #62676c)" font-family="var(--font-sans)" font-size="11">Stateless compute scales reads across replicas</text>
+
+        <rect x="0" y="200" width="313" height="65" rx="6" fill="var(--bg-secondary, #ecebe6)" stroke="var(--border-color, #dcdad3)" stroke-width="1"/>
+        <text x="14" y="26" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="12" font-weight="700">Read Replica Scaling</text>
+        <text x="14" y="46" fill="var(--text-muted, #62676c)" font-family="var(--font-sans)" font-size="11">Up to 15 Read Replicas read same shared storage with near-zero replication lag.</text>
+      </g>
+    </g>
+
+    <!-- Right Column: Storage Reconstruction -->
+    <g transform="translate(380, 80)">
+      <rect x="0" y="0" width="345" height="350" rx="8" fill="var(--bg-secondary, #ecebe6)" stroke="var(--border-color, #dcdad3)" stroke-width="1.5"/>
+      <rect x="16" y="16" width="313" height="32" rx="5" fill="var(--primary, #2f5b8a)"/>
+      <text x="172" y="37" text-anchor="middle" fill="#ffffff" font-family="var(--font-sans)" font-size="12.5" font-weight="700">🔄 PATH B: STORAGE RECONSTRUCTION</text>
+
+      <g transform="translate(16, 56)">
+        <rect x="0" y="0" width="313" height="46" rx="5" fill="var(--bg-card, #ffffff)" stroke="var(--primary, #2f5b8a)" stroke-width="1" filter="url(#diagram-shadow-3)"/>
+        <text x="12" y="20" fill="var(--primary, #2f5b8a)" font-family="var(--font-mono)" font-size="10.5" font-weight="700">1. RPC TO STORAGE FLEET</text>
+        <text x="12" y="37" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="11.5">Compute emits request: (Page ID + Target LSN)</text>
+
+        <rect x="0" y="54" width="313" height="46" rx="5" fill="var(--bg-card, #ffffff)" stroke="var(--border-color, #dcdad3)" stroke-width="1" filter="url(#diagram-shadow-3)"/>
+        <text x="12" y="20" fill="var(--text-muted, #62676c)" font-family="var(--font-mono)" font-size="10.5" font-weight="700">2. LOAD BASE SNAPSHOT</text>
+        <text x="12" y="37" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="11.5">Storage Node reads latest 16 KB base page from SSD</text>
+
+        <rect x="0" y="108" width="313" height="46" rx="5" fill="var(--bg-card, #ffffff)" stroke="var(--border-color, #dcdad3)" stroke-width="1" filter="url(#diagram-shadow-3)"/>
+        <text x="12" y="20" fill="var(--accent-amber, #9e6b20)" font-family="var(--font-mono)" font-size="10.5" font-weight="700">3. IN-MEMORY DELTA REPLAY</text>
+        <text x="12" y="37" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="11.5">Replays Redo Log deltas up to requested Target LSN</text>
+
+        <rect x="0" y="162" width="313" height="46" rx="5" fill="var(--bg-card, #ffffff)" stroke="var(--border-color, #dcdad3)" stroke-width="1" filter="url(#diagram-shadow-3)"/>
+        <text x="12" y="20" fill="var(--accent-emerald, #2a7e58)" font-family="var(--font-mono)" font-size="10.5" font-weight="700">4. RETURN MATERIALIZED PAGE</text>
+        <text x="12" y="37" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="11.5">Fresh 16 KB page sent back over high-speed network</text>
+
+        <rect x="0" y="216" width="313" height="46" rx="5" fill="color-mix(in srgb, var(--primary, #2f5b8a) 10%, var(--bg-card, #ffffff))" stroke="var(--primary, #2f5b8a)" stroke-width="1"/>
+        <text x="12" y="20" fill="var(--primary, #2f5b8a)" font-family="var(--font-mono)" font-size="10.5" font-weight="700">5. CACHE IN COMPUTE RAM</text>
+        <text x="12" y="37" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="11.5">Page cached in Buffer Pool for subsequent zero-IO hits</text>
+      </g>
+    </g>
+  </svg>
   <div class="diagram-caption">Figure 3: Read path execution: local RAM buffer hit vs. storage-side on-demand page reconstruction.</div>
 </div>
 
@@ -299,28 +473,112 @@ flowchart TD
 <p>Aurora partitions the entire database storage volume into fixed <strong>10 GB segments</strong>. A set of six 10 GB segments replicated across three Availability Zones (2 copies per AZ) forms a <strong>Protection Group (PG)</strong>:</p>
 
 <div class="diagram-wrapper">
-  <div class="mermaid">
-flowchart LR
-  subgraph AZ1["Availability Zone A"]
-    Seg1["Segment A1 (10 GB)"]
-    Seg2["Segment A2 (10 GB)"]
-  end
-  subgraph AZ2["Availability Zone B"]
-    Seg3["Segment B1 (10 GB)"]
-    Seg4["Segment B2 (10 GB)"]
-  end
-  subgraph AZ3["Availability Zone C"]
-    Seg5["Segment C1 (10 GB)"]
-    Seg6["Segment C2 (10 GB)"]
-  end
+  <svg viewBox="0 0 740 450" class="arch-diagram" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Aurora 6-Way Storage Quorum and Protection Groups">
+    <defs>
+      <marker id="arrow-blue-4" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="var(--primary, #2f5b8a)"/>
+      </marker>
+      <filter id="diagram-shadow-4" x="-2%" y="-2%" width="104%" height="104%">
+        <feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-opacity="0.05"/>
+      </filter>
+    </defs>
 
-  Compute["Aurora Compute Node"] -->|"Write Quorum: Vw = 4/6 ACKs"| Seg1
-  Compute --> Seg2
-  Compute --> Seg3
-  Compute --> Seg4
-  Compute --> Seg5
-  Compute --> Seg6
-  </div>
+    <!-- Top Compute Box -->
+    <rect x="15" y="15" width="710" height="80" rx="8" fill="var(--bg-secondary, #ecebe6)" stroke="var(--border-color, #dcdad3)" stroke-width="1.5"/>
+    <rect x="28" y="25" width="280" height="60" rx="6" fill="var(--bg-card, #ffffff)" stroke="var(--primary, #2f5b8a)" stroke-width="1.5" filter="url(#diagram-shadow-4)"/>
+    <text x="42" y="48" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="13" font-weight="700">⚡ AURORA COMPUTE NODE</text>
+    <text x="42" y="68" fill="var(--text-muted, #62676c)" font-family="var(--font-mono)" font-size="11">Parallel Redo Log Broadcaster</text>
+
+    <!-- Quorum Rules Badges in Header -->
+    <g transform="translate(325, 25)">
+      <rect x="0" y="0" width="185" height="60" rx="6" fill="color-mix(in srgb, var(--accent-emerald, #2a7e58) 12%, var(--bg-card, #ffffff))" stroke="var(--accent-emerald, #2a7e58)" stroke-width="1.2"/>
+      <text x="14" y="24" fill="var(--accent-emerald, #2a7e58)" font-family="var(--font-mono)" font-size="10.5" font-weight="700">WRITE QUORUM: Vw = 4/6</text>
+      <text x="14" y="42" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="11.5">Requires 4 of 6 ACKs</text>
+      <text x="14" y="54" fill="var(--text-muted, #62676c)" font-family="var(--font-mono)" font-size="9.5">Write completes on 4th ACK</text>
+
+      <rect x="195" y="0" width="190" height="60" rx="6" fill="color-mix(in srgb, var(--primary, #2f5b8a) 12%, var(--bg-card, #ffffff))" stroke="var(--primary, #2f5b8a)" stroke-width="1.2"/>
+      <text x="14" y="24" fill="var(--primary, #2f5b8a)" font-family="var(--font-mono)" font-size="10.5" font-weight="700">READ QUORUM: Vr = 3/6</text>
+      <text x="14" y="42" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="11.5">Requires 3 of 6 Nodes</text>
+      <text x="14" y="54" fill="var(--text-muted, #62676c)" font-family="var(--font-mono)" font-size="9.5">Guarantees Vw + Vr &gt; 6 overlap</text>
+    </g>
+
+    <!-- 3 Availability Zones Grid -->
+    <g transform="translate(15, 110)">
+      <!-- AZ A -->
+      <rect x="0" y="0" width="226" height="200" rx="8" fill="var(--bg-secondary, #ecebe6)" stroke="var(--border-color, #dcdad3)" stroke-width="1.5"/>
+      <rect x="12" y="12" width="202" height="28" rx="4" fill="var(--bg-card, #ffffff)" stroke="var(--border-color, #dcdad3)" stroke-width="1"/>
+      <text x="113" y="31" text-anchor="middle" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="12" font-weight="700">Availability Zone A</text>
+
+      <g transform="translate(12, 50)">
+        <rect x="0" y="0" width="202" height="65" rx="6" fill="var(--bg-card, #ffffff)" stroke="var(--primary, #2f5b8a)" stroke-width="1.5" filter="url(#diagram-shadow-4)"/>
+        <text x="12" y="24" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="12" font-weight="600">Segment 1 (10 GB)</text>
+        <text x="12" y="42" fill="var(--text-muted, #62676c)" font-family="var(--font-mono)" font-size="10.5">Storage Node 1</text>
+        <text x="12" y="56" fill="var(--accent-emerald, #2a7e58)" font-family="var(--font-mono)" font-size="9.5">● Healthy / In Quorum</text>
+
+        <rect x="0" y="75" width="202" height="65" rx="6" fill="var(--bg-card, #ffffff)" stroke="var(--primary, #2f5b8a)" stroke-width="1.5" filter="url(#diagram-shadow-4)"/>
+        <text x="12" y="24" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="12" font-weight="600">Segment 2 (10 GB)</text>
+        <text x="12" y="42" fill="var(--text-muted, #62676c)" font-family="var(--font-mono)" font-size="10.5">Storage Node 2</text>
+        <text x="12" y="56" fill="var(--accent-emerald, #2a7e58)" font-family="var(--font-mono)" font-size="9.5">● Healthy / In Quorum</text>
+      </g>
+
+      <!-- AZ B -->
+      <rect x="242" y="0" width="226" height="200" rx="8" fill="var(--bg-secondary, #ecebe6)" stroke="var(--border-color, #dcdad3)" stroke-width="1.5"/>
+      <rect x="254" y="12" width="202" height="28" rx="4" fill="var(--bg-card, #ffffff)" stroke="var(--border-color, #dcdad3)" stroke-width="1"/>
+      <text x="355" y="31" text-anchor="middle" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="12" font-weight="700">Availability Zone B</text>
+
+      <g transform="translate(254, 50)">
+        <rect x="0" y="0" width="202" height="65" rx="6" fill="var(--bg-card, #ffffff)" stroke="var(--primary, #2f5b8a)" stroke-width="1.5" filter="url(#diagram-shadow-4)"/>
+        <text x="12" y="24" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="12" font-weight="600">Segment 3 (10 GB)</text>
+        <text x="12" y="42" fill="var(--text-muted, #62676c)" font-family="var(--font-mono)" font-size="10.5">Storage Node 3</text>
+        <text x="12" y="56" fill="var(--accent-emerald, #2a7e58)" font-family="var(--font-mono)" font-size="9.5">● Healthy / In Quorum</text>
+
+        <rect x="0" y="75" width="202" height="65" rx="6" fill="var(--bg-card, #ffffff)" stroke="var(--primary, #2f5b8a)" stroke-width="1.5" filter="url(#diagram-shadow-4)"/>
+        <text x="12" y="24" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="12" font-weight="600">Segment 4 (10 GB)</text>
+        <text x="12" y="42" fill="var(--text-muted, #62676c)" font-family="var(--font-mono)" font-size="10.5">Storage Node 4</text>
+        <text x="12" y="56" fill="var(--accent-emerald, #2a7e58)" font-family="var(--font-mono)" font-size="9.5">● Healthy / In Quorum</text>
+      </g>
+
+      <!-- AZ C -->
+      <rect x="484" y="0" width="226" height="200" rx="8" fill="var(--bg-secondary, #ecebe6)" stroke="var(--border-color, #dcdad3)" stroke-width="1.5"/>
+      <rect x="496" y="12" width="202" height="28" rx="4" fill="var(--bg-card, #ffffff)" stroke="var(--border-color, #dcdad3)" stroke-width="1"/>
+      <text x="597" y="31" text-anchor="middle" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="12" font-weight="700">Availability Zone C</text>
+
+      <g transform="translate(496, 50)">
+        <rect x="0" y="0" width="202" height="65" rx="6" fill="var(--bg-card, #ffffff)" stroke="var(--primary, #2f5b8a)" stroke-width="1.5" filter="url(#diagram-shadow-4)"/>
+        <text x="12" y="24" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="12" font-weight="600">Segment 5 (10 GB)</text>
+        <text x="12" y="42" fill="var(--text-muted, #62676c)" font-family="var(--font-mono)" font-size="10.5">Storage Node 5</text>
+        <text x="12" y="56" fill="var(--accent-emerald, #2a7e58)" font-family="var(--font-mono)" font-size="9.5">● Healthy / In Quorum</text>
+
+        <rect x="0" y="75" width="202" height="65" rx="6" fill="var(--bg-card, #ffffff)" stroke="var(--primary, #2f5b8a)" stroke-width="1.5" filter="url(#diagram-shadow-4)"/>
+        <text x="12" y="24" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="12" font-weight="600">Segment 6 (10 GB)</text>
+        <text x="12" y="42" fill="var(--text-muted, #62676c)" font-family="var(--font-mono)" font-size="10.5">Storage Node 6</text>
+        <text x="12" y="56" fill="var(--accent-emerald, #2a7e58)" font-family="var(--font-mono)" font-size="9.5">● Healthy / In Quorum</text>
+      </g>
+    </g>
+
+    <!-- Connecting Lines from Compute to AZs -->
+    <path d="M 128 95 L 128 110" stroke="var(--primary, #2f5b8a)" stroke-width="2" marker-end="url(#arrow-blue-4)"/>
+    <path d="M 370 95 L 370 110" stroke="var(--primary, #2f5b8a)" stroke-width="2" marker-end="url(#arrow-blue-4)"/>
+    <path d="M 612 95 L 612 110" stroke="var(--primary, #2f5b8a)" stroke-width="2" marker-end="url(#arrow-blue-4)"/>
+
+    <!-- Resilience Breakdown Footer -->
+    <g transform="translate(15, 325)">
+      <rect x="0" y="0" width="710" height="110" rx="8" fill="var(--bg-secondary, #ecebe6)" stroke="var(--border-color, #dcdad3)" stroke-width="1.5"/>
+      <text x="20" y="26" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="12.5" font-weight="700">🛡️ FAULT TOLERANCE &amp; DEGRADATION GUARANTEES</text>
+
+      <g transform="translate(20, 36)">
+        <rect x="0" y="0" width="325" height="62" rx="6" fill="var(--bg-card, #ffffff)" stroke="var(--accent-emerald, #2a7e58)" stroke-width="1" filter="url(#diagram-shadow-4)"/>
+        <text x="12" y="22" fill="var(--accent-emerald, #2a7e58)" font-family="var(--font-sans)" font-size="11.5" font-weight="700">Scenario 1: Complete AZ Outage (2 Nodes Lost)</text>
+        <text x="12" y="40" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="11">4 nodes survive across remaining 2 AZs.</text>
+        <text x="12" y="54" fill="var(--accent-emerald, #2a7e58)" font-family="var(--font-mono)" font-size="10.5" font-weight="600">➔ Full Read &amp; Write Availability Maintained</text>
+
+        <rect x="345" y="0" width="325" height="62" rx="6" fill="var(--bg-card, #ffffff)" stroke="var(--accent-amber, #9e6b20)" stroke-width="1" filter="url(#diagram-shadow-4)"/>
+        <text x="12" y="22" fill="var(--accent-amber, #9e6b20)" font-family="var(--font-sans)" font-size="11.5" font-weight="700">Scenario 2: AZ Outage + 1 Node Failure (3 Nodes Lost)</text>
+        <text x="12" y="40" fill="var(--text-heading, #181b1d)" font-family="var(--font-sans)" font-size="11">3 nodes survive. Write quorum unavailable.</text>
+        <text x="12" y="54" fill="var(--accent-amber, #9e6b20)" font-family="var(--font-mono)" font-size="10.5" font-weight="600">➔ Read-Only Mode (Vr = 3) / Zero Data Loss</text>
+      </g>
+    </g>
+  </svg>
   <div class="diagram-caption">Figure 4: Aurora's 6-way storage distribution across three Availability Zones enforcing 4/6 write quorum.</div>
 </div>
 
@@ -481,7 +739,7 @@ $$V_w + V_r > V \quad \text{and} \quad V_w > \frac{V}{2}$$
 
   <button id="back-to-top" class="back-to-top" aria-label="Back to top">↑</button>
 
-  <script src="../assets/js/articles-data.js?v=3.2"></script>
-  <script src="../assets/js/main.js?v=3.2"></script>
+  <script src="../assets/js/articles-data.js?v=3.3"></script>
+  <script src="../assets/js/main.js?v=3.3"></script>
 </body>
 </html>

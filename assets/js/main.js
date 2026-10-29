@@ -137,6 +137,11 @@ function applyTheme(theme) {
     toggleBtn.setAttribute('data-tooltip', themeTooltips[theme] || `Theme: ${theme}`);
     toggleBtn.setAttribute('aria-label', `Theme toggle: currently ${theme}`);
   }
+
+  // Re-synchronize Mermaid diagrams if present
+  if (typeof initMermaid === 'function') {
+    initMermaid(theme);
+  }
 }
 
 // Reading Progress Bar
@@ -341,51 +346,61 @@ function initBackToTop() {
   });
 }
 
-// Initialize Mermaid.js with Theme-Adaptive Palette (Light, Dark & Sepia)
-async function initMermaid() {
+// Initialize Mermaid.js with High-Contrast Theme-Adaptive Palette
+async function initMermaid(forcedTheme) {
   if (typeof mermaid !== 'undefined') {
     const root = document.documentElement;
     const prefersDark = (typeof window.matchMedia === 'function') 
       ? window.matchMedia('(prefers-color-scheme: dark)').matches 
       : false;
-    const currentTheme = root.dataset.theme || (prefersDark ? 'dark' : 'light');
+    const currentTheme = forcedTheme || root.dataset.theme || (prefersDark ? 'dark' : 'light');
     
     const isDark = currentTheme === 'dark';
-    const bkgColor = isDark ? '#222226' : (currentTheme === 'sepia' ? '#faf4e6' : '#ffffff');
-    const primaryCol = isDark ? '#7fb5b5' : (currentTheme === 'sepia' ? '#8a4b2a' : '#2f6f73');
-    const textCol = isDark ? '#d8d8d8' : (currentTheme === 'sepia' ? '#433422' : '#2b2b2b');
-    const borderCol = isDark ? '#333338' : (currentTheme === 'sepia' ? '#e0d3b8' : '#e6dfd3');
-    const lineCol = isDark ? '#7fb5b5' : (currentTheme === 'sepia' ? '#8a4b2a' : '#2f6f73');
+    const isSepia = currentTheme === 'sepia';
+
+    const bkgColor = isDark ? '#1a1f25' : (isSepia ? '#f5edd9' : '#ffffff');
+    const nodeBkg = isDark ? '#222933' : (isSepia ? '#faf4e6' : '#f8f9fa');
+    const primaryCol = isDark ? '#93b5df' : (isSepia ? '#46603c' : '#2f5b8a');
+    const textCol = isDark ? '#f0f3f6' : (isSepia ? '#3a3326' : '#181b1d');
+    const borderCol = isDark ? '#36404d' : (isSepia ? '#d8ccb0' : '#dcdad3');
+    const lineCol = isDark ? '#93b5df' : (isSepia ? '#46603c' : '#2f5b8a');
 
     mermaid.initialize({
       startOnLoad: false,
-      theme: isDark ? 'dark' : 'default',
+      theme: isDark ? 'dark' : 'base',
       themeVariables: {
         darkMode: isDark,
         background: bkgColor,
-        primaryColor: primaryCol,
+        mainBkg: nodeBkg,
+        nodeBorder: primaryCol,
+        nodeTextColor: textCol,
+        primaryColor: nodeBkg,
         primaryTextColor: textCol,
-        primaryBorderColor: borderCol,
+        primaryBorderColor: primaryCol,
         lineColor: lineCol,
-        secondaryColor: bkgColor,
+        secondaryColor: isDark ? '#121519' : (isSepia ? '#ede5d1' : '#f6f5f2'),
         tertiaryColor: bkgColor,
-        noteBkgColor: bkgColor,
-        noteTextColor: textCol,
-        noteBorderColor: borderCol,
-        actorBkg: bkgColor,
-        actorBorder: primaryCol,
-        actorTextColor: textCol,
-        actorLineColor: borderCol,
-        signalColor: primaryCol,
-        signalTextColor: textCol,
-        labelBoxBkgColor: bkgColor,
-        labelBoxBorderColor: borderCol,
-        labelTextColor: textCol,
-        loopTextColor: textCol,
-        altSectionBkgColor: bkgColor,
-        fontFamily: "'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif"
+        clusterBkg: isDark ? '#121519' : (isSepia ? '#ede5d1' : '#f6f5f2'),
+        clusterBorder: borderCol,
+        defaultLinkColor: lineCol,
+        titleColor: textCol,
+        edgeLabelBackground: bkgColor,
+        fontFamily: "'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif",
+        fontSize: "14px"
       }
     });
+
+    // Cache original Mermaid source for lossless re-renders on theme toggle
+    const diagrams = document.querySelectorAll('.mermaid');
+    diagrams.forEach(el => {
+      if (!el.dataset.mermaidSrc) {
+        el.dataset.mermaidSrc = el.textContent.trim();
+      } else if (forcedTheme) {
+        el.removeAttribute('data-processed');
+        el.innerHTML = el.dataset.mermaidSrc;
+      }
+    });
+
     try {
       await mermaid.run();
     } catch (err) {

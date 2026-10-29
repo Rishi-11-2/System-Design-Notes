@@ -1647,20 +1647,40 @@ pre code {
 }
 
 /* ==========================================================================
-   Mermaid Diagrams & Canvases
+   Architecture Diagrams & Visualizations (SVG & Mermaid)
    ========================================================================== */
 
 .diagram-container,
 .diagram-wrapper {
   background: var(--bg-card);
   border: 1px solid var(--border-color);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg, 8px);
   padding: 1.75rem 1.25rem;
-  margin: 1.75rem 0;
+  margin: 2.25rem 0;
   overflow-x: auto;
   text-align: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  transition: background-color 0.25s ease, border-color 0.25s ease;
 }
 
+.arch-diagram {
+  display: block;
+  width: 100%;
+  max-width: 740px;
+  height: auto;
+  margin: 0 auto;
+}
+
+.diagram-caption {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-top: 1rem;
+  text-align: center;
+  line-height: 1.5;
+}
+
+/* Universal High-Contrast Mermaid Rules */
 .mermaid {
   display: flex;
   justify-content: center;
@@ -1671,14 +1691,47 @@ pre code {
 .mermaid svg {
   max-width: 100%;
   height: auto;
+  font-family: var(--font-sans) !important;
 }
 
-.diagram-caption {
-  font-family: var(--font-mono);
-  font-size: 0.775rem;
-  color: var(--text-muted);
-  margin-top: 0.85rem;
-  text-align: center;
+.mermaid text,
+.mermaid .label,
+.mermaid .label text,
+.mermaid .node .label text,
+.mermaid .edgeLabel,
+.mermaid tspan {
+  fill: var(--text-main) !important;
+  color: var(--text-main) !important;
+  font-family: var(--font-sans) !important;
+  font-size: 0.85rem !important;
+}
+
+.mermaid .cluster-label text,
+.mermaid .cluster text {
+  fill: var(--text-heading) !important;
+  font-weight: 700 !important;
+  font-family: var(--font-sans) !important;
+}
+
+.mermaid .node rect,
+.mermaid .node circle,
+.mermaid .node polygon {
+  fill: var(--bg-card) !important;
+  stroke: var(--primary) !important;
+}
+
+.mermaid .cluster rect,
+.mermaid .subgraph rect {
+  fill: var(--bg-secondary) !important;
+  stroke: var(--border-color) !important;
+}
+
+.mermaid .edgePath path {
+  stroke: var(--primary) !important;
+}
+
+.mermaid marker path {
+  fill: var(--primary) !important;
 }
 
 /* ==========================================================================
