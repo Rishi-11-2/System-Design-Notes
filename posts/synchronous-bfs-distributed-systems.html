@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Synchronous Breadth-First Search (BFS) in Distributed Systems: Tree Construction &amp; Broadcast — System Design Notes</title>
+  <meta name="description" content="In-depth algorithmic analysis and proofs of Synchronous Distributed Breadth-First Search (BFS) based on Arpit Bhayani's lecture. Explores layer-by-layer exploration waves, parent-child arbitration, convergecast termination, and O(D) time / O(|E|) message bounds.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css?v=3.3">
+  <link rel="stylesheet" href="../blog-theme.css?v=3.3">
+  <link rel="stylesheet" href="../assets/css/style.css?v=3.3">
+  <script>
+    (function() {
+      const saved = localStorage.getItem('theme');
+      if (saved) document.documentElement.dataset.theme = saved;
+    })();
+  </script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+  <div id="progress" aria-hidden="true"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">← All Notes</a></li>
+        </ul>
+        <div class="swatches" role="group" aria-label="Colour theme">
+          <button class="swatch" data-set-theme="light"  style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+          <button class="swatch" data-set-theme="dark"   style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+          <button class="swatch" data-set-theme="sepia"  style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+        </div>
+        <button id="theme-toggle" class="btn-icon" data-tooltip="Toggle light/dark theme" aria-label="Toggle Theme">
+          <span class="theme-icon">☀️</span>
+        </button>
+        <a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="btn-icon" data-tooltip="View GitHub Repository" aria-label="GitHub Repository">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+          </svg>
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="article-page">
+    <div class="article-breadcrumbs">
+      <a href="../index.html">Home</a>
+      <span>/</span>
+      <a href="../index.html#distributed-algorithms">Distributed Algorithms</a>
+      <span>/</span>
+      <span>Synchronous BFS Algorithm</span>
+    </div>
+
+    <header class="article-header">
+      <span class="article-header-badge">Distributed Algorithms • Graph Traversal &amp; Spanning Trees</span>
+      <h1 class="article-header-title">Synchronous Breadth-First Search (BFS) in Distributed Systems: Tree Construction &amp; Broadcast</h1>
+      <div class="article-header-meta">
+        <span>📁 Category: Distributed Algorithms &amp; Network Spanning Trees</span>
+      </div>
+      <div class="article-header-actions">
+        <a href="../Docs/Synchronous_BFS_Distributed_Systems_Technical_Breakdown.pdf" target="_blank" download class="btn-secondary">
+          <span>📥 Download Technical PDF (3 Pages)</span>
+        </a>
+      </div>
+    </header>
+
+    <div class="article-container">
+      <article class="prose">
+        <div class="callout callout-note">
+          <div class="callout-title">📌 Primary Algorithmic Takeaway: Building the Backbone for Broadcast and Convergecast</div>
+          <p>In distributed networks, unconstrained message flooding leads to disastrous broadcast storms and exponential message duplication. To enable efficient, loop-free communication, distributed systems construct a <strong>Breadth-First Search (BFS) Spanning Tree</strong> rooted at a designated source node. Under synchronous execution, <strong>Distributed BFS</strong> builds shortest-path trees layer-by-layer in concentric expansion waves. Each node discovers its exact hop distance from the root, arbitrates parent-child relationships, and forms an optimal communication overlay. The construction terminates in strictly optimal time $\mathcal{O}(\text{depth}) \le \mathcal{O}(D)$ with $\mathcal{O}(|E|)$ messages, unlocking optimal <strong>Broadcast</strong> and <strong>Convergecast</strong> primitives for global aggregation.</p>
+        </div>
+
+        <h2 id="why-distributed-bfs">1. Why Distributed BFS? The Foundation of Network Overlays</h2>
+        <p>In centralized algorithms, running Breadth-First Search on a graph $G = (V, E)$ is trivial: an in-memory queue stores discovered vertices, achieving $O(|V| + |E|)$ runtime. In a distributed system, however, there is <strong>no central memory, no shared queue, and no global clock</strong>. Each node knows only its immediate adjacent neighbors.</p>
+
+        <p>Constructing a distributed BFS tree provides three indispensable capabilities:</p>
+        <ol>
+          <li><strong>Shortest Path Routing:</strong> Every node learns the minimum number of hops to reach the root node, establishing optimal routing tables.</li>
+          <li><strong>Loop-Free Broadcast:</strong> The root can broadcast data to all nodes across the tree without duplicate packet delivery or cycle amplification.</li>
+          <li><strong>Convergecast Aggregation:</strong> Leaf nodes can collect data (e.g. sensor readings, cluster heartbeats, distributed sum/max) and stream it upward to the root via parent links.</li>
+        </ol>
+
+        <h2 id="system-model">2. System Model &amp; Network Invariants</h2>
+        <ul>
+          <li><strong>Connected Undirected Graph:</strong> $G = (V, E)$ with $n = |V|$ nodes and $m = |E|$ edges.</li>
+          <li><strong>Designated Root:</strong> A distinguished root process $r \in V$ initiates the tree construction (often elected via algorithms like FloodMax or LCR).</li>
+          <li><strong>Synchronous Rounds:</strong> Execution advances in global lock-step rounds $1, 2, 3, \dots$. Messages sent in round $k$ arrive at round $k+1$.</li>
+          <li><strong>Local State per Node $u$:</strong>
+            <ul>
+              <li>$\text{parent}_u \in \mathcal{N}(u) \cup \{\text{nil}\}$: Pointer to $u$'s parent in the BFS tree.</li>
+              <li>$\text{children}_u \subseteq \mathcal{N}(u)$: Set of $u$'s verified child nodes.</li>
+              <li>$\text{dist}_u \in \mathbb{N} \cup \{\infty\}$: Shortest hop distance from root $r$.</li>
+            </ul>
+          </li>
+        </ul>
+
+        <div class="diagram-wrapper">
+          <svg class="arch-diagram" viewBox="0 0 740 340" width="100%" height="auto" xmlns="http://www.w3.org/2000/svg">
+            <rect x="10" y="10" width="720" height="320" rx="10" fill="var(--bg-card)" stroke="var(--border-color)" stroke-width="1.5"/>
+            <text x="370" y="38" text-anchor="middle" font-family="var(--sans)" font-size="15" font-weight="700" fill="var(--text-heading)">Synchronous BFS Wavefront &amp; Layered Tree Formation</text>
+
+            <!-- Layer 0 (Root) -->
+            <circle cx="370" cy="85" r="24" fill="var(--code-bg)" stroke="#28a745" stroke-width="2.5"/>
+            <text x="370" y="83" text-anchor="middle" font-family="var(--sans)" font-size="11" font-weight="700" fill="var(--text-heading)">Root r</text>
+            <text x="370" y="97" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="#28a745">dist=0</text>
+            <text x="70" y="90" font-family="var(--mono)" font-size="11" font-weight="700" fill="var(--primary)">Layer 0 (Round 0)</text>
+
+            <!-- Layer 1 -->
+            <circle cx="200" cy="175" r="22" fill="var(--code-bg)" stroke="var(--primary)" stroke-width="2"/>
+            <text x="200" y="173" text-anchor="middle" font-family="var(--sans)" font-size="10.5" font-weight="700" fill="var(--text-heading)">Node A</text>
+            <text x="200" y="186" text-anchor="middle" font-family="var(--mono)" font-size="9" fill="var(--primary)">dist=1</text>
+
+            <circle cx="540" cy="175" r="22" fill="var(--code-bg)" stroke="var(--primary)" stroke-width="2"/>
+            <text x="540" y="173" text-anchor="middle" font-family="var(--sans)" font-size="10.5" font-weight="700" fill="var(--text-heading)">Node B</text>
+            <text x="540" y="186" text-anchor="middle" font-family="var(--mono)" font-size="9" fill="var(--primary)">dist=1</text>
+            <text x="70" y="180" font-family="var(--mono)" font-size="11" font-weight="700" fill="var(--primary)">Layer 1 (Round 1)</text>
+
+            <!-- Layer 2 -->
+            <circle cx="120" cy="265" r="22" fill="var(--code-bg)" stroke="var(--border-color)" stroke-width="1.8"/>
+            <text x="120" y="263" text-anchor="middle" font-family="var(--sans)" font-size="10" font-weight="700" fill="var(--text-heading)">Node C</text>
+            <text x="120" y="276" text-anchor="middle" font-family="var(--mono)" font-size="9" fill="var(--text-muted)">dist=2</text>
+
+            <circle cx="280" cy="265" r="22" fill="var(--code-bg)" stroke="var(--border-color)" stroke-width="1.8"/>
+            <text x="280" y="263" text-anchor="middle" font-family="var(--sans)" font-size="10" font-weight="700" fill="var(--text-heading)">Node D</text>
+            <text x="280" y="276" text-anchor="middle" font-family="var(--mono)" font-size="9" fill="var(--text-muted)">dist=2</text>
+
+            <circle cx="620" cy="265" r="22" fill="var(--code-bg)" stroke="var(--border-color)" stroke-width="1.8"/>
+            <text x="620" y="263" text-anchor="middle" font-family="var(--sans)" font-size="10" font-weight="700" fill="var(--text-heading)">Node E</text>
+            <text x="620" y="276" text-anchor="middle" font-family="var(--mono)" font-size="9" fill="var(--text-muted)">dist=2</text>
+            <text x="70" y="270" font-family="var(--mono)" font-size="11" font-weight="700" fill="var(--primary)">Layer 2 (Round 2)</text>
+
+            <!-- Tree Edges (Thick Solid) -->
+            <line x1="352" y1="98" x2="218" y2="162" stroke="#28a745" stroke-width="2.5"/>
+            <line x1="388" y1="98" x2="522" y2="162" stroke="#28a745" stroke-width="2.5"/>
+            <line x1="185" y1="192" x2="135" y2="248" stroke="#28a745" stroke-width="2.5"/>
+            <line x1="215" y1="192" x2="265" y2="248" stroke="#28a745" stroke-width="2.5"/>
+            <line x1="555" y1="192" x2="605" y2="248" stroke="#28a745" stroke-width="2.5"/>
+
+            <!-- Cross-layer Non-Tree Edges (Dashed) -->
+            <line x1="222" y1="175" x2="518" y2="175" stroke="var(--border-color)" stroke-width="1.5" stroke-dasharray="4"/>
+            <line x1="302" y1="265" x2="598" y2="265" stroke="var(--border-color)" stroke-width="1.5" stroke-dasharray="4"/>
+            <line x1="525" y1="190" x2="295" y2="250" stroke="var(--border-color)" stroke-width="1.5" stroke-dasharray="4"/>
+
+            <text x="370" y="168" text-anchor="middle" font-family="var(--sans)" font-size="9.5" fill="var(--text-muted)">Cross Edge (Rejected)</text>
+          </svg>
+        </div>
+
+        <h2 id="protocol-mechanics">3. Protocol Mechanics: The Wavefront &amp; Parent Arbitration</h2>
+        <p>The construction proceeds via exploration waves moving outward from the root round by round:</p>
+
+        <h3 id="phase-1-initiation">Phase 1: Root Wave Initiation</h3>
+        <ul>
+          <li>At round 1, root $r$ sets $\text{dist}_r \gets 0, \text{parent}_r \gets \text{self}$.</li>
+          <li>Root broadcasts an exploration token: <code>SEARCH(dist = 0)</code> to all neighbors $\mathcal{N}(r)$.</li>
+        </ul>
+
+        <h3 id="phase-2-layer-discovery">Phase 2: Layer Discovery &amp; Parent Selection</h3>
+        <p>When an unvisited node $u$ ($\text{dist}_u = \infty$) receives <code>SEARCH</code> invitations from neighbors in round $k$:</p>
+        <ol>
+          <li>Node $u$ realizes it belongs to <strong>Layer $k$</strong> and sets $\text{dist}_u \gets k$.</li>
+          <li><strong>Parent Arbitration:</strong> If node $u$ receives <code>SEARCH</code> from multiple layer-$(k-1)$ neighbors simultaneously, it selects exactly one neighbor as its parent using a deterministic tie-breaking rule (e.g. smallest UID):
+          $$\text{parent}_u \gets \arg\min_{v \in \text{senders}} \text{UID}(v)$$
+          </li>
+          <li>Node $u$ sends a <code>PARENT_CONFIRM</code> message to the selected parent.</li>
+          <li>Node $u$ sends <code>REJECT</code> messages to all other contender neighbors.</li>
+        </ol>
+
+        <h3 id="phase-3-subsequent-forwarding">Phase 3: Outward Propagation</h3>
+        <p>In round $k+1$, node $u$ broadcasts <code>SEARCH(dist = k)</code> to all its neighbors $\mathcal{N}(u) \setminus \{\text{parent}_u\}$ to discover Layer $k+1$. Any neighbor that has already been visited ignores the search token.</p>
+
+        <h2 id="convergecast-termination">4. Convergecast &amp; Global Termination</h2>
+        <p>A central challenge in distributed graph traversal is <strong>Global Termination Detection</strong>: <em>How does the root know when the tree construction has completely reached every node in the graph?</em></p>
+
+        <p>Without centralized knowledge of graph size $n$, termination is achieved via an inward <strong>Convergecast Wave</strong> starting from the tree leaves:</p>
+        <ol>
+          <li><strong>Leaf Identification:</strong> A node $u$ in layer $k$ discovers it is a leaf when all its non-parent neighbors reject its search token (meaning they are already in the tree or at the same layer).</li>
+          <li><strong>Inward Acknowledgments:</strong> Once a leaf node confirms it has no children, it sends a <code>COMPLETED</code> convergecast token to its parent.</li>
+          <li><strong>Parent Aggregation:</strong> An intermediate node waits until it has received <code>COMPLETED</code> tokens from <em>all its registered children</em>. Once all children report completion, the parent forwards <code>COMPLETED</code> to its own parent.</li>
+          <li><strong>Root Finalization:</strong> When root $r$ receives <code>COMPLETED</code> tokens from all its direct children, it knows with mathematical certainty that the entire graph is traversed. The BFS tree is fully established!</li>
+        </ol>
+
+        <h2 id="formal-complexity-proof">5. Complexity Analysis &amp; Optimality Bounds</h2>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-title">Time Complexity: $\mathcal{O}(D)$ Rounds</div>
+            <p>The outward search wave takes $\text{depth}(T)$ rounds, where $\text{depth}(T) \le D = \text{diam}(G)$. The inward convergecast wave takes $\text{depth}(T)$ rounds. Total rounds: $T_{\text{total}} = 2 \cdot \text{depth}(T) \le 2D = \mathcal{O}(D)$.</p>
+          </div>
+          <div class="card">
+            <div class="card-title">Message Complexity: $\mathcal{O}(|E|)$ Messages</div>
+            <p>Across each edge $\{u, v\} \in E$, search, parent confirmation, and reject messages are exchanged a constant number of times ($\le 4$ messages per edge). Total messages: $M \le 4|E| = \mathcal{O}(|E|)$.</p>
+          </div>
+        </div>
+
+        <h2 id="applications-in-production">6. Production Applications of Distributed BFS</h2>
+        <ul>
+          <li><strong>Global Aggregation Engines:</strong> Computing cluster-wide metrics (such as total available RAM, maximum CPU load, or active connections across thousands of Kubernetes worker pods) using the convergecast tree in $\mathcal{O}(D)$ time.</li>
+          <li><strong>Publish-Subscribe Dissemination:</strong> Delivering real-time topic updates across distributed brokers (such as Apache Kafka inter-broker controller replication) along tree branches without packet loops.</li>
+          <li><strong>Failure-Resilient Overlay Networks:</strong> Establishing minimum-latency multicast trees across geographically dispersed data centers.</li>
+        </ul>
+
+        <h2 id="engineering-takeaways">7. Systems Engineering Takeaways</h2>
+        <ol>
+          <li><strong>Tree Overlays Tame Broadcast Storms:</strong> Flooding an arbitrary mesh graph with unconstrained messages generates $O(|E|)$ redundant packets per broadcast. Constructing a BFS tree reduces steady-state broadcast traffic to exactly $n-1$ messages.</li>
+          <li><strong>Parent Arbitration Prevents Cycles:</strong> Strict layer synchrony guarantees that cycles can never form in the parent-child graph: a node in layer $k$ only accepts parents from layer $k-1$.</li>
+          <li><strong>Convergecast Provides Clean Termination:</strong> In asynchronous or synchronous systems, never rely on arbitrary sleep timers for completion. Use leaf-to-root convergecast acknowledgments to guarantee execution correctness.</li>
+        </ol>
+      </article>
+
+      <aside class="toc-sidebar">
+        <div class="toc-title">Table of Contents</div>
+        <ul class="toc-list">
+          <li><a href="#why-distributed-bfs">1. Why Distributed BFS?</a></li>
+          <li><a href="#system-model">2. System Model &amp; Invariants</a></li>
+          <li><a href="#protocol-mechanics">3. Protocol Mechanics (Wavefront)</a></li>
+          <li><a href="#phase-2-layer-discovery">Parent Arbitration</a></li>
+          <li><a href="#convergecast-termination">4. Convergecast Termination</a></li>
+          <li><a href="#formal-complexity-proof">5. Complexity &amp; Bounds</a></li>
+          <li><a href="#applications-in-production">6. Production Applications</a></li>
+          <li><a href="#engineering-takeaways">7. Systems Engineering Takeaways</a></li>
+        </ul>
+
+        <div class="companion-box" style="margin-top: 1.25rem;">
+          <div class="companion-title">Companion PDF</div>
+          <p>Download the verified 3-page technical breakdown for offline study and architecture review.</p>
+          <a href="../Docs/Synchronous_BFS_Distributed_Systems_Technical_Breakdown.pdf" class="download-link" target="_blank" download>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Distributed BFS PDF
+          </a>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-container">
+      <div class="footer-col">
+        <div class="footer-brand">
+          <div class="brand-icon">⚡</div>
+          <span>System Design Notes</span>
+        </div>
+        <p class="footer-tagline">Curated engineering notes, production architecture dissections, and distributed systems research papers.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Distributed Algorithms</h5>
+        <ul>
+          <li><a href="two-phase-commit-distributed-transactions.html">Two-Phase Commit Protocol</a></li>
+          <li><a href="implementing-two-phase-commit-distributed-system.html">Implementing 2PC &amp; WAL</a></li>
+          <li><a href="lcr-leader-election-algorithm.html">LCR Ring Leader Election</a></li>
+          <li><a href="hs-leader-election-algorithm.html">HS Bidirectional Leader Election</a></li>
+          <li><a href="timeslice-leader-election-algorithm.html">TimeSlice O(n) Leader Election</a></li>
+          <li><a href="floodmax-leader-election-algorithm.html">FloodMax General Graph Election</a></li>
+          <li><a href="synchronous-bfs-distributed-systems.html">Synchronous Distributed BFS</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Repository</h5>
+        <ul>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank">GitHub Repository</a></li>
+          <li><a href="../Docs/System_Design_Notes.pdf" target="_blank">Complete Notes (184 Pages)</a></li>
+          <li><a href="../Docs/Synchronous_BFS_Distributed_Systems_Technical_Breakdown.pdf" target="_blank">Synchronous BFS PDF (3 Pages)</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>Released under MIT License • Open Source Engineering Notes</p>
+    </div>
+  </footer>
+
+  <script src="../assets/js/main.js?v=3.3"></script>
+</body>
+</html>

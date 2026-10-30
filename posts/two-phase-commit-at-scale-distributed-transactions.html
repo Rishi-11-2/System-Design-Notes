@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Two-Phase Commit at Scale: Powering Distributed Transactions in Modern Engines — System Design Notes</title>
+  <meta name="description" content="Production architectural breakdown of Two-Phase Commit (2PC) at scale in modern distributed databases like Google Spanner, CockroachDB, and TiDB. Details 2PC over Paxos/Raft, TrueTime linearizability, transaction records, and parallel commits.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css?v=3.3">
+  <link rel="stylesheet" href="../blog-theme.css?v=3.3">
+  <link rel="stylesheet" href="../assets/css/style.css?v=3.3">
+  <script>
+    (function() {
+      const saved = localStorage.getItem('theme');
+      if (saved) document.documentElement.dataset.theme = saved;
+    })();
+  </script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+  <div id="progress" aria-hidden="true"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">Articles</a></li>
+          <li><a href="../index.html#categories">Categories</a></li>
+          <li><a href="../index.html#pdf-library">PDF Library</a></li>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="github-nav-link">GitHub</a></li>
+        </ul>
+        <button id="theme-toggle" class="theme-toggle-btn" aria-label="Toggle theme">
+          <svg class="sun-icon" viewBox="0 0 24 24" width="18" height="18"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+          <svg class="moon-icon" viewBox="0 0 24 24" width="18" height="18"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <main class="post-container">
+    <div class="breadcrumb">
+      <a href="../index.html">Home</a>
+      <span class="separator">/</span>
+      <a href="../index.html#categories">Distributed Algorithms</a>
+      <span class="separator">/</span>
+      <span class="current">2PC at Scale in Distributed Systems</span>
+    </div>
+
+    <header class="article-header">
+      <div class="badge-row">
+        <span class="badge badge-consensus">Distributed Transactions</span>
+        <span class="badge badge-theory">Modern Architectures</span>
+        <span class="badge badge-accent">2PC over Paxos/Raft</span>
+        <span class="badge badge-rounds">Google Spanner TrueTime</span>
+      </div>
+      <h1 class="article-title">Two-Phase Commit at Scale: Powering Distributed Transactions in Modern Engines</h1>
+      <p class="article-subtitle">How hyperscale databases eliminate the classic single-coordinator bottleneck by nesting Two-Phase Commit atop replicated Paxos groups, achieving cross-shard ACID with TrueTime linearizability.</p>
+      <div class="article-meta">
+        <span class="meta-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> 25 min read</span>
+        <span class="meta-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> Arpit Bhayani Distributed Systems Series</span>
+        <span class="meta-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> Verified 3-Page Companion PDF</span>
+      </div>
+      <div class="pdf-action-banner">
+        <a href="../Docs/Two_Phase_Commit_At_Scale_Distributed_Transactions_Technical_Breakdown.pdf" class="pdf-btn" target="_blank" download>
+          <span>📥 Download Technical PDF (3 Pages)</span>
+        </a>
+      </div>
+    </header>
+
+    <div class="article-container">
+      <article class="prose">
+        <div class="callout callout-note">
+          <div class="callout-title">📌 Production Architecture Takeaway: 2PC at the Transaction Layer, Paxos at the Storage Layer</div>
+          <p>Textbook Two-Phase Commit (2PC) is notoriously criticized for its <strong>Coordinator Blocking Problem</strong>: if the centralized coordinator crashes after participants vote <code>YES</code>, locks are held indefinitely and the cluster stalls. Modern distributed SQL databases—such as <strong>Google Spanner</strong>, <strong>CockroachDB</strong>, and <strong>TiDB</strong>—solve this architectural vulnerability by combining 2PC with consensus replication. In these systems, <strong>every participant and the coordinator itself is not an individual physical node, but a highly available Paxos or Raft consensus group</strong>. If any leader dies, consensus automatically elects a replacement leader within milliseconds, allowing 2PC to complete safely without blocking.</p>
+        </div>
+
+        <h2 id="limitations-of-classic-2pc">1. The Limitations of Textbook 2PC at Scale</h2>
+        <p>In classical distributed systems literature (Gray 1978), 2PC coordinates atomic execution across distinct physical nodes using a single Transaction Coordinator (TC) and a set of Cohort Participants (CPs). While semantically sound, this design suffers from fatal operational flaws at internet scale:</p>
+
+        <ul>
+          <li><strong>The Blocking State:</strong> When a participant sends a <code>VOTE_COMMIT</code> message, it surrenders autonomy. If the TC crashes before sending <code>GLOBAL_COMMIT</code> or <code>GLOBAL_ABORT</code>, the participant must hold exclusive locks indefinitely. Concurrent reads and writes on those rows are blocked, causing cascading latency spikes throughout the cluster.</li>
+          <li><strong>Single Point of Failure (SPOF):</strong> A bare coordinator represents an existential availability risk. Traditional crash-recovery requires synchronous disk flushes (WAL) and manual recovery heuristics.</li>
+          <li><strong>Compounding Failure Probabilities:</strong> If an atomic transaction spans $k$ independent shards, each with availability $A$, the probability that the entire 2PC completes successfully drops exponentially as $A^k$. In clusters with thousands of shards, cross-shard 2PC on bare nodes becomes practically unusable.</li>
+        </ul>
+
+        <h2 id="the-two-tier-architecture">2. The Two-Tier Architecture: 2PC over Paxos/Raft</h2>
+        <p>Modern distributed databases decouple the <em>transaction atomicity problem</em> from the <em>node availability problem</em>. They introduce a clean, two-tier layered architecture:</p>
+
+        <div class="mermaid-diagram-wrapper">
+          <svg viewBox="0 0 860 410" width="100%" height="auto" xmlns="http://www.w3.org/2000/svg" style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; font-family: var(--sans);">
+            <rect width="860" height="410" fill="var(--bg-card)" rx="8"/>
+            <text x="430" y="30" text-anchor="middle" font-size="16" font-weight="700" fill="var(--text-heading)">Modern Distributed 2PC: Nested Paxos/Raft Consensus Groups</text>
+            <text x="430" y="50" text-anchor="middle" font-size="12" fill="var(--text-muted)">Cross-Shard Atomicity (Layer 2: 2PC) atop Replicated High-Availability Shards (Layer 1: Paxos)</text>
+
+            <!-- Client -->
+            <rect x="50" y="100" width="140" height="46" rx="6" fill="var(--accent)" fill-opacity="0.15" stroke="var(--accent)" stroke-width="2"/>
+            <text x="120" y="128" text-anchor="middle" font-size="13" font-weight="700" fill="var(--text-heading)">Client App</text>
+
+            <!-- Arrows from Client to Coordinator Leader -->
+            <line x1="190" y1="123" x2="290" y2="123" stroke="var(--accent)" stroke-width="2"/>
+            <text x="240" y="115" text-anchor="middle" font-size="11" fill="var(--text-muted)">Begin Txn</text>
+
+            <!-- Coordinator Group (Paxos Group 1) -->
+            <rect x="290" y="80" width="220" height="150" rx="8" fill="var(--raised)" stroke="var(--accent)" stroke-width="2"/>
+            <text x="400" y="102" text-anchor="middle" font-size="12" font-weight="700" fill="var(--text-heading)">Coordinator Paxos Group</text>
+            <rect x="310" y="115" width="180" height="32" rx="4" fill="var(--accent)" stroke="none"/>
+            <text x="400" y="136" text-anchor="middle" font-size="11" font-weight="700" fill="#ffffff">Leader (Active TC)</text>
+            <rect x="310" y="155" width="85" height="28" rx="4" fill="var(--bg-card)" stroke="var(--border-color)" stroke-width="1"/>
+            <text x="352" y="173" text-anchor="middle" font-size="10" fill="var(--text-muted)">Follower A</text>
+            <rect x="405" y="155" width="85" height="28" rx="4" fill="var(--bg-card)" stroke="var(--border-color)" stroke-width="1"/>
+            <text x="447" y="173" text-anchor="middle" font-size="10" fill="var(--text-muted)">Follower B</text>
+            <text x="400" y="210" text-anchor="middle" font-size="9" fill="var(--text-muted)">Txn Record Replicated via Quorum</text>
+
+            <!-- Arrows from Coordinator to Shard Groups -->
+            <path d="M 510 130 L 600 130" stroke="var(--border-color)" stroke-width="2"/>
+            <line x1="600" y1="130" x2="600" y2="70" stroke="var(--border-color)" stroke-width="2"/>
+            <line x1="600" y1="130" x2="600" y2="280" stroke="var(--border-color)" stroke-width="2"/>
+            <line x1="600" y1="70" x2="640" y2="70" stroke="var(--accent)" stroke-width="2"/>
+            <line x1="600" y1="280" x2="640" y2="280" stroke="var(--accent)" stroke-width="2"/>
+
+            <!-- Shard A (Participant Paxos Group) -->
+            <rect x="640" y="25" width="190" height="120" rx="8" fill="var(--raised)" stroke="var(--border-color)" stroke-width="1.5"/>
+            <text x="735" y="45" text-anchor="middle" font-size="12" font-weight="700" fill="var(--text-heading)">Shard A (Cohort Group)</text>
+            <rect x="655" y="55" width="160" height="26" rx="4" fill="var(--bg-card)" stroke="var(--accent)" stroke-width="1"/>
+            <text x="735" y="72" text-anchor="middle" font-size="10" font-weight="600">Leader (Cohort Manager)</text>
+            <rect x="655" y="88" width="75" height="24" rx="3" fill="var(--bg-card)" stroke="var(--border-color)" stroke-width="1"/>
+            <text x="692" y="104" text-anchor="middle" font-size="9">Follower</text>
+            <rect x="740" y="88" width="75" height="24" rx="3" fill="var(--bg-card)" stroke="var(--border-color)" stroke-width="1"/>
+            <text x="777" y="104" text-anchor="middle" font-size="9">Follower</text>
+
+            <!-- Shard B (Participant Paxos Group) -->
+            <rect x="640" y="225" width="190" height="120" rx="8" fill="var(--raised)" stroke="var(--border-color)" stroke-width="1.5"/>
+            <text x="735" y="245" text-anchor="middle" font-size="12" font-weight="700" fill="var(--text-heading)">Shard B (Cohort Group)</text>
+            <rect x="655" y="255" width="160" height="26" rx="4" fill="var(--bg-card)" stroke="var(--accent)" stroke-width="1"/>
+            <text x="735" y="272" text-anchor="middle" font-size="10" font-weight="600">Leader (Cohort Manager)</text>
+            <rect x="655" y="288" width="75" height="24" rx="3" fill="var(--bg-card)" stroke="var(--border-color)" stroke-width="1"/>
+            <text x="692" y="304" text-anchor="middle" font-size="9">Follower</text>
+            <rect x="740" y="288" width="75" height="24" rx="3" fill="var(--bg-card)" stroke="var(--border-color)" stroke-width="1"/>
+            <text x="777" y="304" text-anchor="middle" font-size="9">Follower</text>
+
+            <!-- Architectural Legend -->
+            <rect x="50" y="280" width="500" height="100" rx="6" fill="var(--raised)" stroke="var(--border-color)" stroke-width="1"/>
+            <text x="70" y="305" font-size="12" font-weight="700" fill="var(--accent)">Why This Eliminates Blocking Failures:</text>
+            <text x="70" y="325" font-size="11" fill="var(--text-heading)">1. If the Coordinator Leader dies, its Paxos followers elect a new leader instantly.</text>
+            <text x="70" y="343" font-size="11" fill="var(--text-heading)">2. The new leader inspects the replicated Transaction Record and finishes 2PC.</text>
+            <text x="70" y="361" font-size="11" fill="var(--text-muted)">3. Participants never remain stuck in Prepared state awaiting a dead node.</text>
+          </svg>
+        </div>
+
+        <h2 id="google-spanner-truetime">3. Google Spanner: TrueTime &amp; External Consistency</h2>
+        <p>Google Spanner combined 2PC with its proprietary <strong>TrueTime API</strong> to achieve <em>External Consistency</em> (strict serializability across global data centers without cross-region locks for reads):</p>
+
+        <div class="callout callout-note">
+          <div class="callout-title">📐 The TrueTime Invariant and Commit Wait</div>
+          <p>The TrueTime API represents the current global wall-clock time not as a discrete scalar, but as an uncertainty interval $[t.\text{earliest}, t.\text{latest}]$ with guaranteed bound $\epsilon$ (typically $1 \text{ ms} \le \epsilon \le 7 \text{ ms}$ via atomic clocks and GPS receivers in each data center):</p>
+          $$t.\text{latest} - t.\text{earliest} \le 2\epsilon$$
+          <p><strong>The Commit Wait Rule:</strong> When transaction $T_1$ commits at coordinator $C$, $C$ assigns it a commit timestamp $s \ge t.\text{latest}$. The coordinator then deliberately delays releasing locks until:</p>
+          $$t.\text{earliest} > s$$
+          <p>By pausing execution for $2\epsilon$, Spanner guarantees that any transaction $T_2$ initiated strictly after $T_1$ will receive timestamp $s_2 > s_1$. Thus, reads can be serviced from local Paxos replicas at timestamp $s$ without acquiring any locks or contacting the coordinator!</p>
+        </div>
+
+        <h2 id="parallel-commits-optimization">4. CockroachDB &amp; TiDB: Pipelined &amp; Parallel Commits</h2>
+        <p>Classical 2PC requires 2 round-trip times (RTTs): 1 RTT for <code>Prepare</code>, and 1 RTT for <code>Commit</code>. In geo-distributed deployments where cross-region RTT is 50–100 ms, 2PC latency is prohibitively high. Modern engines use <strong>Parallel Commits</strong> to slash consensus overhead:</p>
+
+        <ol>
+          <li><strong>Staging Transaction Record:</strong> The coordinator writes a transaction record with status <code>STAGING</code> listing all participating shards.</li>
+          <li><strong>Pipelining Prepare and Commit:</strong> The coordinator sends write intents and prepares concurrently with the staging record write.</li>
+          <li><strong>Implicit Commit:</strong> Once all participants acknowledge successful preparation and the staging record is durable, the transaction is <em>implicitly committed</em>. The client receives a success response immediately (in 1 RTT instead of 2).</li>
+          <li><strong>Asynchronous Cleanup:</strong> The coordinator resolves write intents and flips the transaction record to <code>COMMITTED</code> asynchronously in the background.</li>
+        </ol>
+
+        <h2 id="step-by-step-lifecycle">5. End-to-End Modern 2PC Transaction Lifecycle</h2>
+        <pre><code class="language-python">class ModernDistributedTransactionManager:
+    """
+    Conceptual architecture of 2PC over Paxos Groups with Staging Transaction Records
+    """
+    def __init__(self, paxos_cluster):
+        self.paxos = paxos_cluster
+
+    def execute_cross_shard_txn(self, txn_id: str, participant_shards: list, mutations: dict):
+        # Step 1: Create STAGING record in Coordinator Paxos Group
+        txn_record = {
+            "txn_id": txn_id,
+            "status": "STAGING",
+            "participants": participant_shards,
+            "commit_ts": None
+        }
+        self.paxos.replicate_log(f"txn_record_{txn_id}", txn_record)
+
+        # Step 2: Phase 1 - Broadcast PREPARE to all Cohort Paxos Groups
+        prepare_votes = {}
+        for shard in participant_shards:
+            # Each cohort leader verifies local constraints, acquires row locks,
+            # and replicates PREPARED intent into its local Paxos group
+            prepare_votes[shard] = shard.prepare(txn_id, mutations[shard])
+
+        # Step 3: Evaluate Quorum Votes
+        if all(vote == "VOTE_COMMIT" for vote in prepare_votes.values()):
+            # Phase 2: Assign Commit Timestamp via TrueTime
+            commit_ts = self.get_truetime_commit_ts()
+            txn_record["status"] = "COMMITTED"
+            txn_record["commit_ts"] = commit_ts
+            self.paxos.replicate_log(f"txn_record_{txn_id}", txn_record)
+
+            # Asynchronously notify cohort Paxos leaders to convert intents to durable data
+            for shard in participant_shards:
+                shard.async_commit(txn_id, commit_ts)
+            return True, commit_ts
+        else:
+            # Abort: Mark record ABORTED and release locks across cohorts
+            txn_record["status"] = "ABORTED"
+            self.paxos.replicate_log(f"txn_record_{txn_id}", txn_record)
+            for shard in participant_shards:
+                shard.async_abort(txn_id)
+            return False, None
+</code></pre>
+
+        <h2 id="modern-engine-comparison">6. Comparative Analysis of Production Distributed Engines</h2>
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>System</th>
+                <th>Storage Layer Consensus</th>
+                <th>Transaction Layer Protocol</th>
+                <th>Clock &amp; Ordering Mechanism</th>
+                <th>Commit Latency Optimization</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Google Spanner</strong></td>
+                <td>Multi-Paxos (per split)</td>
+                <td>2PC over Paxos Leaders</td>
+                <td>TrueTime API (GPS + Atomic Clocks, $\epsilon \approx 1-7\text{ms}$)</td>
+                <td>Commit-Wait + Read-Only Replicas</td>
+              </tr>
+              <tr>
+                <td><strong>CockroachDB</strong></td>
+                <td>Multi-Raft (per range)</td>
+                <td>2PC over Raft Range Leases</td>
+                <td>Hybrid Logical Clocks (HLC)</td>
+                <td>Parallel Commits (1 RTT write)</td>
+              </tr>
+              <tr>
+                <td><strong>TiDB (TiKV)</strong></td>
+                <td>Multi-Raft (per region)</td>
+                <td>Percolator (Decentralized 2PC)</td>
+                <td>Placement Driver (Centralized TSO)</td>
+                <td>Async Commit + 1-Phase Optimization</td>
+              </tr>
+              <tr>
+                <td><strong>YugabyteDB</strong></td>
+                <td>Multi-Raft (per tablet)</td>
+                <td>2PC with Transaction Status Tablets</td>
+                <td>Hybrid Logical Clocks (HLC)</td>
+                <td>Pipelined Raft Commits</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="engineering-takeaways">7. Systems Engineering Takeaways</h2>
+        <ol>
+          <li><strong>Never Run Bare 2PC in Production:</strong> Classical 2PC without consensus replication on the coordinator is a ticking time bomb. The moment the single coordinator host suffers a hardware fault or network partition mid-transaction, surviving cohorts lock up. Always replicate the coordinator state via Paxos or Raft.</li>
+          <li><strong>Decouple Reads from Writes:</strong> Spanner’s greatest insight was recognizing that read transactions vastly outnumber write transactions. By spending 2PC overhead strictly on writes and pairing it with TrueTime, reads execute lock-free across follower replicas without touching the coordinator.</li>
+          <li><strong>Minimize Cross-Shard Span:</strong> Even with 2PC over Paxos, every additional shard added to a transaction increases commit latency and lock contention. Production schemas must partition data so that high-frequency transactions touch only a single shard (converting 2PC into a fast 1PC Paxos write).</li>
+        </ol>
+      </article>
+
+      <aside class="toc-sidebar">
+        <div class="toc-title">Table of Contents</div>
+        <ul class="toc-list">
+          <li><a href="#limitations-of-classic-2pc">1. Limitations of Classic 2PC</a></li>
+          <li><a href="#the-two-tier-architecture">2. Two-Tier Architecture: 2PC over Paxos</a></li>
+          <li><a href="#google-spanner-truetime">3. Spanner: TrueTime &amp; External Consistency</a></li>
+          <li><a href="#parallel-commits-optimization">4. CockroachDB &amp; TiDB: Parallel Commits</a></li>
+          <li><a href="#step-by-step-lifecycle">5. End-to-End Modern Lifecycle</a></li>
+          <li><a href="#modern-engine-comparison">6. Comparative Analysis</a></li>
+          <li><a href="#engineering-takeaways">7. Systems Engineering Takeaways</a></li>
+        </ul>
+
+        <div class="companion-box" style="margin-top: 1.25rem;">
+          <div class="companion-title">Companion PDF</div>
+          <p>Download the verified 3-page technical breakdown for offline study and architecture review.</p>
+          <a href="../Docs/Two_Phase_Commit_At_Scale_Distributed_Transactions_Technical_Breakdown.pdf" class="download-link" target="_blank" download>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            2PC at Scale PDF
+          </a>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-container">
+      <div class="footer-col">
+        <div class="footer-brand">
+          <div class="brand-icon">⚡</div>
+          <span>System Design Notes</span>
+        </div>
+        <p class="footer-tagline">Curated engineering notes, production architecture dissections, and distributed systems research papers.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Distributed Algorithms</h5>
+        <ul>
+          <li><a href="two-phase-commit-distributed-transactions.html">Two-Phase Commit Protocol</a></li>
+          <li><a href="implementing-two-phase-commit-distributed-system.html">Implementing 2PC &amp; WAL</a></li>
+          <li><a href="two-phase-commit-at-scale-distributed-transactions.html">2PC at Scale &amp; Paxos</a></li>
+          <li><a href="exponential-information-gathering-crash-consensus.html">EIG Crash Consensus</a></li>
+          <li><a href="exponential-information-gathering-byzantine-agreement.html">EIG Byzantine Agreement</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Repository</h5>
+        <ul>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank">GitHub Repository</a></li>
+          <li><a href="../Docs/System_Design_Notes.pdf" target="_blank">Complete Notes (184 Pages)</a></li>
+          <li><a href="../Docs/Two_Phase_Commit_At_Scale_Distributed_Transactions_Technical_Breakdown.pdf" target="_blank">2PC at Scale PDF (3 Pages)</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>Released under MIT License • Open Source Engineering Notes</p>
+    </div>
+  </footer>
+
+  <script src="../assets/js/main.js?v=3.3"></script>
+</body>
+</html>

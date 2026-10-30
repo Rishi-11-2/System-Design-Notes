@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Unsolvable Distributed Consensus &amp; The Two Generals' Problem: Formal Proofs — System Design Notes</title>
+  <meta name="description" content="In-depth analysis and formal impossibility proof of the Two Generals' Problem based on Arpit Bhayani's lecture. Explores common knowledge failure over lossy links, mathematical induction proofs, and pragmatic engineering mitigations (TCP 3-way handshake, timeouts, idempotency).">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css?v=3.3">
+  <link rel="stylesheet" href="../blog-theme.css?v=3.3">
+  <link rel="stylesheet" href="../assets/css/style.css?v=3.3">
+  <script>
+    (function() {
+      const saved = localStorage.getItem('theme');
+      if (saved) document.documentElement.dataset.theme = saved;
+    })();
+  </script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+  <div id="progress" aria-hidden="true"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">← All Notes</a></li>
+        </ul>
+        <div class="swatches" role="group" aria-label="Colour theme">
+          <button class="swatch" data-set-theme="light"  style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+          <button class="swatch" data-set-theme="dark"   style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+          <button class="swatch" data-set-theme="sepia"  style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+        </div>
+        <button id="theme-toggle" class="btn-icon" data-tooltip="Toggle light/dark theme" aria-label="Toggle Theme">
+          <span class="theme-icon">☀️</span>
+        </button>
+        <a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="btn-icon" data-tooltip="View GitHub Repository" aria-label="GitHub Repository">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+          </svg>
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="article-page">
+    <div class="article-breadcrumbs">
+      <a href="../index.html">Home</a>
+      <span>/</span>
+      <a href="../index.html#distributed-algorithms">Distributed Algorithms</a>
+      <span>/</span>
+      <span>Two Generals' Consensus Impossibility</span>
+    </div>
+
+    <header class="article-header">
+      <span class="article-header-badge">Distributed Algorithms • Impossibility Proofs</span>
+      <h1 class="article-header-title">Unsolvable Distributed Consensus &amp; The Two Generals' Problem: Formal Impossibility Proof</h1>
+      <div class="article-header-meta">
+        <span>📁 Category: Distributed Algorithms &amp; Consensus Impossibility</span>
+      </div>
+      <div class="article-header-actions">
+        <a href="../Docs/Two_Generals_Unsolvable_Distributed_Consensus_Technical_Breakdown.pdf" target="_blank" download class="btn-secondary">
+          <span>📥 Download Technical PDF (3 Pages)</span>
+        </a>
+      </div>
+    </header>
+
+    <div class="article-container">
+      <article class="prose">
+        <div class="callout callout-note">
+          <div class="callout-title">📌 Primary Theoretical Takeaway: The Impossibility of Common Knowledge</div>
+          <p>The <strong>Two Generals' Problem</strong> was the very first distributed computing dilemma mathematically proven to be <strong>impossible to solve</strong>. First formulated by Jim Gray in 1978, it proves that two autonomous entities communicating over an unreliable communication channel with packet loss can never reach guaranteed consensus on a mutual action. No finite sequence of acknowledgments, confirmations, or handshake rounds can ever establish <strong>Common Knowledge</strong>—the recursive state where General 1 knows that General 2 knows that General 1 knows they will attack. Every modern networking protocol (including the TCP 3-way handshake and 2PC) is constrained by this mathematical law, relying on pragmatic engineering trade-offs (timeouts, idempotency, and leases) rather than impossible deterministic guarantees.</p>
+        </div>
+
+        <h2 id="the-classic-parable">1. The Classic Parable of Two Generals</h2>
+        <p>Two generals ($G_1$ and $G_2$) lead separate armies camped on two adjacent hills. Between the hills lies an enemy fortress situated in a deep valley:</p>
+
+        <ul>
+          <li><strong>The Military Objective:</strong> The generals wish to capture the fortress.</li>
+          <li><strong>The Coordination Constraint:</strong> If both armies attack simultaneously at the exact same hour $H$, the fortress will fall and the generals will win. If only one army attacks while the other remains in camp, the attacking army will be outnumbered and utterly destroyed.</li>
+          <li><strong>The Unreliable Channel:</strong> The generals cannot communicate via line of sight. They can only send foot messengers through the valley. However, the valley is controlled by the enemy; any messenger may be intercepted, captured, or killed with unknown probability $p_{\text{loss}} > 0$.</li>
+        </ul>
+
+        <p>The question: <em>Can the generals design an exchange of messages that guarantees both armies attack simultaneously?</em></p>
+
+        <div class="diagram-wrapper">
+          <svg class="arch-diagram" viewBox="0 0 740 320" width="100%" height="auto" xmlns="http://www.w3.org/2000/svg">
+            <rect x="10" y="10" width="720" height="300" rx="10" fill="var(--bg-card)" stroke="var(--border-color)" stroke-width="1.5"/>
+            <text x="370" y="38" text-anchor="middle" font-family="var(--sans)" font-size="15" font-weight="700" fill="var(--text-heading)">The Two Generals' Problem: Unreliable Channel Dilemma</text>
+
+            <!-- General 1 (Hill A) -->
+            <rect x="50" y="80" width="180" height="110" rx="8" fill="var(--code-bg)" stroke="var(--primary)" stroke-width="2"/>
+            <text x="140" y="108" text-anchor="middle" font-family="var(--sans)" font-size="13" font-weight="700" fill="var(--text-heading)">General 1 (G1)</text>
+            <text x="140" y="130" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="var(--primary)">Camp on Hill A</text>
+            <text x="140" y="152" text-anchor="middle" font-family="var(--sans)" font-size="10" fill="var(--text-muted)">Must attack ONLY IF G2 attacks</text>
+            <text x="140" y="170" text-anchor="middle" font-family="var(--sans)" font-size="9.5" fill="#dc3545">Solo Attack = Slaughter</text>
+
+            <!-- General 2 (Hill B) -->
+            <rect x="510" y="80" width="180" height="110" rx="8" fill="var(--code-bg)" stroke="var(--primary)" stroke-width="2"/>
+            <text x="600" y="108" text-anchor="middle" font-family="var(--sans)" font-size="13" font-weight="700" fill="var(--text-heading)">General 2 (G2)</text>
+            <text x="600" y="130" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="var(--primary)">Camp on Hill B</text>
+            <text x="600" y="152" text-anchor="middle" font-family="var(--sans)" font-size="10" fill="var(--text-muted)">Must attack ONLY IF G1 attacks</text>
+            <text x="600" y="170" text-anchor="middle" font-family="var(--sans)" font-size="9.5" fill="#dc3545">Solo Attack = Slaughter</text>
+
+            <!-- Valley Enemy Fortress -->
+            <rect x="290" y="115" width="160" height="85" rx="6" fill="var(--tint)" stroke="#dc3545" stroke-width="1.8"/>
+            <text x="370" y="142" text-anchor="middle" font-family="var(--sans)" font-size="12" font-weight="700" fill="#dc3545">Enemy Fortress</text>
+            <text x="370" y="162" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--text-muted)">Intercepts Messengers</text>
+            <text x="370" y="180" text-anchor="middle" font-family="var(--sans)" font-size="9.5" fill="#dc3545">Lossy Unreliable Link</text>
+
+            <!-- Outward Messenger Arrow -->
+            <path d="M 230 110 L 290 135" fill="none" stroke="var(--primary)" stroke-width="2" marker-end="url(#arrow)"/>
+            <path d="M 450 135 L 510 110" fill="none" stroke="var(--primary)" stroke-width="2" marker-end="url(#arrow)"/>
+            <text x="370" y="95" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--primary)">m1: "Attack at dawn?"</text>
+
+            <!-- ACK Messenger Arrow -->
+            <path d="M 510 170 L 450 160" fill="none" stroke="#28a745" stroke-width="2" stroke-dasharray="3" marker-end="url(#arrow-green)"/>
+            <path d="M 290 160 L 230 170" fill="none" stroke="#28a745" stroke-width="2" stroke-dasharray="3" marker-end="url(#arrow-green)"/>
+            <text x="370" y="222" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="#28a745">m2: "ACK. Attack confirmed!"</text>
+
+            <!-- Bottom Callout -->
+            <rect x="50" y="245" width="640" height="45" rx="5" fill="var(--bg-card)" stroke="var(--border-color)" stroke-width="1.2"/>
+            <text x="370" y="265" text-anchor="middle" font-family="var(--sans)" font-size="10.5" fill="var(--text-heading)">G2 will not attack without knowing G1 received m2. G1 must send ACK m3.</text>
+            <text x="370" y="280" text-anchor="middle" font-family="var(--sans)" font-size="10" fill="#dc3545">&infin; Infinite Regress: The sender of the last message is never certain it arrived!</text>
+
+            <defs>
+              <marker id="arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--primary)"/>
+              </marker>
+              <marker id="arrow-green" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="#28a745"/>
+              </marker>
+            </defs>
+          </svg>
+        </div>
+
+        <h2 id="the-infinite-regress">2. The Infinite Regress of Acknowledgments</h2>
+        <p>Let us attempt to build a protocol naively:</p>
+        <ol>
+          <li>$G_1$ sends messenger $m_1$: <em>"Let us attack tomorrow at 06:00."</em></li>
+          <li>Does $G_1$ attack? <strong>No!</strong> $G_1$ has no idea whether $m_1$ made it through the enemy valley or was captured. If $m_1$ was captured, $G_2$ remains in camp, and $G_1$ will die alone. $G_1$ must wait for an acknowledgment.</li>
+          <li>Messenger $m_1$ miraculously reaches $G_2$. $G_2$ agrees and sends messenger $m_2$: <em>"I received your message. I will attack at 06:00."</em></li>
+          <li>Does $G_2$ attack? <strong>No!</strong> $G_2$ knows that $G_1$ will only attack if $G_1$ receives $m_2$! If $m_2$ is captured in the valley, $G_1$ will remain in camp. If $G_2$ attacks without confirmation that $m_2$ arrived, $G_2$ will die alone!</li>
+          <li>Therefore, $G_2$ requires $G_1$ to send an acknowledgment of the acknowledgment: $m_3$: <em>"I received your ACK of my proposal."</em></li>
+          <li>Now does $G_1$ attack? <strong>No!</strong> $G_1$ is in the exact same predicament regarding $m_3$.</li>
+        </ol>
+
+        <p>This creates an <strong>infinite regress</strong>: every acknowledgment requires an acknowledgment of itself. The sender of the final message can never know with certainty whether that final message arrived.</p>
+
+        <h2 id="formal-impossibility-proof">3. Formal Mathematical Impossibility Proof</h2>
+        <p>We prove formally by mathematical induction that <strong>no deterministic protocol can solve the Two Generals' Problem over an unreliable network</strong>.</p>
+
+        <h3 id="formal-definitions">Formal Model Definitions</h3>
+        <ul>
+          <li>Let a protocol $P$ be a deterministic distributed algorithm executed by $G_1$ and $G_2$.</li>
+          <li>A message sequence $M = \langle m_1, m_2, \dots, m_k \rangle$ represents a successful execution of $P$ where all $k$ messages cross the valley successfully, causing both generals to output decision $\text{ATTACK}$.</li>
+          <li>The channel is unreliable: any message $m_i$ transmitted can be independently dropped by an adversarial scheduler.</li>
+          <li><strong>Correctness Condition:</strong> A valid protocol must satisfy:
+            <ol>
+              <li><strong>Agreement:</strong> Both generals output the exact same decision ($D_1 = D_2 \in \{\text{ATTACK}, \text{RETREAT}\}$).</li>
+              <li><strong>Non-triviality:</strong> If no messages are lost and both propose attack, both output $\text{ATTACK}$. If all messages are lost, neither attacks.</li>
+            </ol>
+          </li>
+        </ul>
+
+        <h3 id="the-proof-steps">The Proof by Contradiction &amp; Induction</h3>
+        <p><strong>Step 1:</strong> Assume for the sake of contradiction that a correct deterministic protocol $P$ exists.</p>
+        <p><strong>Step 2:</strong> Among all possible valid message executions of $P$, choose the execution $M^* = \langle m_1, m_2, \dots, m_k \rangle$ that has the <strong>minimum number of messages $k \ge 1$</strong> required to reach the $\text{ATTACK}$ agreement.</p>
+        <p><strong>Step 3:</strong> Now consider an alternate execution $M'$ in which the first $k-1$ messages $\langle m_1, \dots, m_{k-1} \rangle$ are delivered successfully, but the <strong>last message $m_k$ is captured and dropped</strong> by the enemy.</p>
+        <p><strong>Step 4:</strong> Analyze the state of the sender of $m_k$ (say, $G_1$):</p>
+        <ul>
+          <li>$G_1$ transmitted $m_k$. Because $m_k$ was the final message in the minimal protocol $M^*$, $G_1$ does not expect any reply message $m_{k+1}$.</li>
+          <li>Therefore, $G_1$ cannot distinguish between execution $M^*$ (where $m_k$ arrived at $G_2$) and execution $M'$ (where $m_k$ was dropped)!</li>
+          <li>$G_1$'s internal state, history, and memory are <strong>identical</strong> in both executions.</li>
+          <li>Because $G_1$ is deterministic, it must make the exact same decision in $M'$ that it makes in $M^*$: $G_1$ must decide to $\text{ATTACK}$.</li>
+        </ul>
+
+        <p><strong>Step 5:</strong> Analyze the agreement requirement:</p>
+        <ul>
+          <li>Since $P$ guarantees agreement in all executions, General $G_2$ must also decide to $\text{ATTACK}$ in execution $M'$.</li>
+          <li>Thus, protocol $P$ successfully reached consensus on $\text{ATTACK}$ in execution $M'$, which used only <strong>$k - 1$ messages</strong>!</li>
+        </ul>
+
+        <p><strong>Step 6:</strong> Contradiction!</p>
+        <ul>
+          <li>This directly contradicts our assumption that $M^*$ was the minimal execution of length $k$.</li>
+          <li>By repeating this inductive argument, the message count can be reduced from $k$ to $k-1$, to $k-2$, all the way down to $k = 0$.</li>
+          <li>However, with $k = 0$ messages, neither general knows whether the other camp even exists, making consensus impossible by non-triviality.</li>
+        </ul>
+
+        <p>Therefore, our original assumption must be false: <strong>no deterministic protocol can ever guarantee consensus over an unreliable channel.</strong> $\blacksquare$</p>
+
+        <h2 id="common-knowledge">4. Epistemic Logic: The Concept of Common Knowledge</h2>
+        <p>The Two Generals' Problem reveals a profound insight from <strong>Epistemic Logic</strong> (the mathematical study of knowledge):</p>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-title">Shared Knowledge (First-Order)</div>
+            <p>General 1 knows the attack plan ($K_1 p$), and General 2 knows the attack plan ($K_2 p$). However, $G_1$ does not know whether $G_2$ knows ($K_1 K_2 p$ is false).</p>
+          </div>
+          <div class="card">
+            <div class="card-title">Common Knowledge (Infinite Depth)</div>
+            <p>A proposition $p$ is Common Knowledge ($C p$) if everyone knows $p$, everyone knows that everyone knows $p$, ad infinitum: $C p \iff K_1 p \land K_2 p \land K_1 K_2 p \land K_2 K_1 p \land \dots$</p>
+          </div>
+        </div>
+
+        <p>Halpern and Moses (1990) proved mathematically that <strong>Common Knowledge cannot be attained in any system with unconstrained message loss or unbounded transmission delay</strong>. Every message transmitted adds one level of epistemic depth ($K_1 K_2 K_1 \dots$), but infinite depth can never be achieved in finite time.</p>
+
+        <h2 id="practical-engineering-mitigations">5. Real-World Systems &amp; Engineering Mitigations</h2>
+        <p>If distributed consensus over lossy networks is mathematically impossible, how does the Internet function? Why does TCP work? How do distributed databases execute transactions?</p>
+
+        <p>Real-world engineering resolves this impossibility by <strong>relaxing the deterministic guarantee</strong>:</p>
+
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Production Technology</th>
+                <th>Underlying Compromise</th>
+                <th>How it Bypasses Two Generals' Impossibility</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>TCP 3-Way Handshake (SYN, SYN-ACK, ACK)</strong></td>
+                <td>Abandons infinite certainty</td>
+                <td>Client considers connection established on sending <code>ACK</code>. If <code>ACK</code> is lost, server retransmits <code>SYN-ACK</code>. If connection fails, socket times out with <code>ETIMEDOUT</code>.</td>
+              </tr>
+              <tr>
+                <td><strong>Two-Phase Commit (2PC)</strong></td>
+                <td>Assumes Coordinator survives or recovers</td>
+                <td>Cohorts block indefinitely if Coordinator dies. The system sacrifices availability (blocking) to preserve consistency.</td>
+              </tr>
+              <tr>
+                <td><strong>At-Least-Once Delivery + Idempotency</strong></td>
+                <td>Accepts message duplicates</td>
+                <td>Client retransmits until ACK arrives; recipient utilizes unique <strong>Idempotency Keys</strong> to deduplicate side effects.</td>
+              </tr>
+              <tr>
+                <td><strong>Timeouts &amp; Distributed Leases</strong></td>
+                <td>Trades latency for safety</td>
+                <td>Nodes hold authority only for bounded lease windows (e.g. 5 seconds). If renewal fails, lease expires unilaterally.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="engineering-takeaways">6. Systems Engineering Takeaways</h2>
+        <ol>
+          <li><strong>Never Seek Absolute Proof in Distributed Networks:</strong> Packet loss ensures that absolute certainty cannot exist across physical network links. Always build systems around timeouts, retries, and bounded degradation.</li>
+          <li><strong>Idempotency is the True Antidote:</strong> Since the sender can never know whether an unacknowledged mutation succeeded or failed on the receiver, the sender <em>must retransmit</em>. Therefore, every production API mutative endpoint must be strictly idempotent.</li>
+          <li><strong>Consensus Requires Quorums, Not Unanimity:</strong> Modern consensus algorithms (Paxos, Raft) bypass the Two Generals' impossibility by operating across $2f+1$ nodes where consensus requires only a <strong>Majority Quorum ($f+1$)</strong>, tolerating the complete failure or lossiness of up to $f$ individual links and nodes.</li>
+        </ol>
+      </article>
+
+      <aside class="toc-sidebar">
+        <div class="toc-title">Table of Contents</div>
+        <ul class="toc-list">
+          <li><a href="#the-classic-parable">1. The Two Generals Parable</a></li>
+          <li><a href="#the-infinite-regress">2. Infinite Regress of ACKs</a></li>
+          <li><a href="#formal-impossibility-proof">3. Formal Impossibility Proof</a></li>
+          <li><a href="#common-knowledge">4. Epistemic Common Knowledge</a></li>
+          <li><a href="#practical-engineering-mitigations">5. Real-World Mitigations</a></li>
+          <li><a href="#engineering-takeaways">6. Systems Engineering Takeaways</a></li>
+        </ul>
+
+        <div class="companion-box" style="margin-top: 1.25rem;">
+          <div class="companion-title">Companion PDF</div>
+          <p>Download the verified 3-page technical breakdown for offline study and architecture review.</p>
+          <a href="../Docs/Two_Generals_Unsolvable_Distributed_Consensus_Technical_Breakdown.pdf" class="download-link" target="_blank" download>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Two Generals PDF
+          </a>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-container">
+      <div class="footer-col">
+        <div class="footer-brand">
+          <div class="brand-icon">⚡</div>
+          <span>System Design Notes</span>
+        </div>
+        <p class="footer-tagline">Curated engineering notes, production architecture dissections, and distributed systems research papers.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Distributed Algorithms</h5>
+        <ul>
+          <li><a href="two-phase-commit-distributed-transactions.html">Two-Phase Commit Protocol</a></li>
+          <li><a href="implementing-two-phase-commit-distributed-system.html">Implementing 2PC &amp; WAL</a></li>
+          <li><a href="lcr-leader-election-algorithm.html">LCR Ring Leader Election</a></li>
+          <li><a href="hs-leader-election-algorithm.html">HS Bidirectional Leader Election</a></li>
+          <li><a href="timeslice-leader-election-algorithm.html">TimeSlice O(n) Leader Election</a></li>
+          <li><a href="two-generals-unsolvable-distributed-consensus.html">Two Generals' Consensus</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Repository</h5>
+        <ul>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank">GitHub Repository</a></li>
+          <li><a href="../Docs/System_Design_Notes.pdf" target="_blank">Complete Notes (184 Pages)</a></li>
+          <li><a href="../Docs/Two_Generals_Unsolvable_Distributed_Consensus_Technical_Breakdown.pdf" target="_blank">Two Generals PDF (3 Pages)</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>Released under MIT License • Open Source Engineering Notes</p>
+    </div>
+  </footer>
+
+  <script src="../assets/js/main.js?v=3.3"></script>
+</body>
+</html>

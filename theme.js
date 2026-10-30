@@ -26,9 +26,9 @@
   });
   mark();
 
-  /* ---- Contents rail: built from the h2 headings of a note ---- */
-  var note = document.querySelector("article.note, article");
-  var main = document.querySelector("main");
+  /* ---- Contents rail: built from the h2 headings of a note (only on reading-main pages) ---- */
+  var note = document.querySelector("main.reading-main article.note");
+  var main = document.querySelector("main.reading-main");
   if (!note || !main) return;
 
   var headings = Array.prototype.slice.call(note.querySelectorAll("h2"));

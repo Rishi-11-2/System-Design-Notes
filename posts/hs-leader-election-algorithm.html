@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hirschberg-Sinclair (HS) Algorithm: O(n log n) Leader Election in Bidirectional Rings — System Design Notes</title>
+  <meta name="description" content="In-depth algorithmic analysis and formal proof of the Hirschberg-Sinclair (HS) leader election algorithm in bidirectional rings based on Arpit Bhayani's lecture. Features doubling-hop phases (2^k), outbound/inbound token mechanics, and worst-case O(n log n) complexity derivation.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css?v=3.3">
+  <link rel="stylesheet" href="../blog-theme.css?v=3.3">
+  <link rel="stylesheet" href="../assets/css/style.css?v=3.3">
+  <script>
+    (function() {
+      const saved = localStorage.getItem('theme');
+      if (saved) document.documentElement.dataset.theme = saved;
+    })();
+  </script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+  <div id="progress" aria-hidden="true"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">← All Notes</a></li>
+        </ul>
+        <div class="swatches" role="group" aria-label="Colour theme">
+          <button class="swatch" data-set-theme="light"  style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+          <button class="swatch" data-set-theme="dark"   style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+          <button class="swatch" data-set-theme="sepia"  style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+        </div>
+        <button id="theme-toggle" class="btn-icon" data-tooltip="Toggle light/dark theme" aria-label="Toggle Theme">
+          <span class="theme-icon">☀️</span>
+        </button>
+        <a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="btn-icon" data-tooltip="View GitHub Repository" aria-label="GitHub Repository">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+          </svg>
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="article-page">
+    <div class="article-breadcrumbs">
+      <a href="../index.html">Home</a>
+      <span>/</span>
+      <a href="../index.html#distributed-algorithms">Distributed Algorithms</a>
+      <span>/</span>
+      <span>Hirschberg-Sinclair (HS) Algorithm</span>
+    </div>
+
+    <header class="article-header">
+      <span class="article-header-badge">Distributed Algorithms • Leader Election</span>
+      <h1 class="article-header-title">Hirschberg-Sinclair (HS) Algorithm: $\mathcal{O}(n \log n)$ Leader Election in Bidirectional Rings</h1>
+      <div class="article-header-meta">
+        <span>📁 Category: Distributed Algorithms &amp; Ring Consensus</span>
+      </div>
+      <div class="article-header-actions">
+        <a href="../Docs/HS_Leader_Election_Algorithm_Technical_Breakdown.pdf" target="_blank" download class="btn-secondary">
+          <span>📥 Download Technical PDF (3 Pages)</span>
+        </a>
+      </div>
+    </header>
+
+    <div class="article-container">
+      <article class="prose">
+        <div class="callout callout-note">
+          <div class="callout-title">📌 Primary Algorithmic Takeaway: Overcoming Quadratic Worst Cases via Doubling Hops</div>
+          <p>The classical LeLann-Chang-Roberts (LCR) algorithm operates on unidirectional rings but suffers an adversarial worst-case message complexity of $\Theta(n^2)$ when node IDs are arranged in reverse order. In 1980, D.S. Hirschberg and J.B. Sinclair proved that by utilizing <strong>bidirectional channels</strong>, a leader election algorithm can restrict worst-case message volume to strictly $\mathcal{O}(n \log n)$. The <strong>Hirschberg-Sinclair (HS)</strong> algorithm achieves this optimal bound through an exponential <strong>doubling-hop probing strategy</strong>: in phase $k$, candidate nodes send exploration tokens outward to distance $2^k$ in both directions. If and only if a candidate's token survives without encountering a larger UID in both directions, it receives acknowledgment tokens and advances to phase $k+1$.</p>
+        </div>
+
+        <h2 id="motivation-lcr-shortcoming">1. Motivation: Overcoming LCR's Quadratic Vulnerability</h2>
+        <p>In the LCR algorithm, a candidate node has no mechanism to limit how far its identifier travels; once sent clockwise, it continues traversing the network until it meets a larger identifier or completes the full ring. In an adversarial ring where identifiers decrease monotonically ($n, n-1, \dots, 2, 1$), node $n-1$ traverses $n-1$ hops, node $n-2$ traverses $n-2$ hops, culminating in $\sum k = \Theta(n^2)$ total messages.</p>
+
+        <p>The core insight of Hirschberg and Sinclair was that <em>nodes should not be permitted to send messages arbitrarily far around the ring in early rounds</em>. Instead, candidates must prove their dominance over small local neighborhoods first before being allowed to broadcast across wider sectors of the ring. By doubling the exploration radius at each phase ($1, 2, 4, 8, \dots, 2^k$), the vast majority of non-leader candidates are eliminated within tiny local hops, guaranteeing that very few nodes ever transmit messages across the global network.</p>
+
+        <h2 id="hs-system-model">2. System Model &amp; Bidirectional Ring Assumptions</h2>
+        <ul>
+          <li><strong>Bidirectional Ring:</strong> The network consists of $n$ processes $p_1, p_2, \dots, p_n$ arranged in a ring where each process can send and receive messages in <strong>both directions</strong> (Left / Counter-Clockwise and Right / Clockwise).</li>
+          <li><strong>Unique Identifiers:</strong> Each process $p_i$ holds a distinct identifier $\text{UID}(p_i) \in \mathcal{U}$.</li>
+          <li><strong>Uniform Knowledge:</strong> Processes do not know the value of $n$ (the ring size is unknown in advance).</li>
+          <li><strong>FIFO Channels:</strong> Communication channels deliver messages reliably and in order without message corruption.</li>
+        </ul>
+
+        <h2 id="protocol-mechanics">3. Protocol Mechanics: The Doubling-Hop Phases</h2>
+        <p>The HS algorithm proceeds in consecutive logical phases indexed by $k = 0, 1, 2, \dots$ until a leader is elected:</p>
+
+        <div class="diagram-wrapper">
+          <svg class="arch-diagram" viewBox="0 0 740 320" width="100%" height="auto" xmlns="http://www.w3.org/2000/svg">
+            <rect x="10" y="10" width="720" height="300" rx="10" fill="var(--bg-card)" stroke="var(--border-color)" stroke-width="1.5"/>
+            <text x="370" y="38" text-anchor="middle" font-family="var(--sans)" font-size="15" font-weight="700" fill="var(--text-heading)">HS Doubling-Hop Exploration: Phase k with Radius 2^k</text>
+
+            <!-- Center Candidate -->
+            <rect x="300" y="125" width="140" height="55" rx="6" fill="var(--code-bg)" stroke="var(--primary)" stroke-width="2"/>
+            <text x="370" y="150" text-anchor="middle" font-family="var(--sans)" font-size="12" font-weight="700" fill="var(--text-heading)">Candidate Node p</text>
+            <text x="370" y="168" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="var(--primary)">Phase k (Radius = 2^k)</text>
+
+            <!-- Left Boundary Node -->
+            <rect x="50" y="125" width="120" height="55" rx="6" fill="var(--bg-card)" stroke="var(--border-color)" stroke-width="1.4"/>
+            <text x="110" y="150" text-anchor="middle" font-family="var(--sans)" font-size="11.5" font-weight="700" fill="var(--text-heading)">Left Boundary</text>
+            <text x="110" y="168" text-anchor="middle" font-family="var(--sans)" font-size="10" fill="var(--text-muted)">Distance = 2^k</text>
+
+            <!-- Right Boundary Node -->
+            <rect x="570" y="125" width="120" height="55" rx="6" fill="var(--bg-card)" stroke="var(--border-color)" stroke-width="1.4"/>
+            <text x="630" y="150" text-anchor="middle" font-family="var(--sans)" font-size="11.5" font-weight="700" fill="var(--text-heading)">Right Boundary</text>
+            <text x="630" y="168" text-anchor="middle" font-family="var(--sans)" font-size="10" fill="var(--text-muted)">Distance = 2^k</text>
+
+            <!-- Outbound Tokens -->
+            <path d="M 300 140 L 175 140" fill="none" stroke="var(--primary)" stroke-width="2" marker-end="url(#arrow)"/>
+            <text x="235" y="132" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--primary)">OUT(v, 2^k)</text>
+
+            <path d="M 440 140 L 565 140" fill="none" stroke="var(--primary)" stroke-width="2" marker-end="url(#arrow)"/>
+            <text x="505" y="132" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--primary)">OUT(v, 2^k)</text>
+
+            <!-- Inbound Return Tokens -->
+            <path d="M 175 165 L 295 165" fill="none" stroke="#28a745" stroke-width="2" stroke-dasharray="4" marker-end="url(#arrow-green)"/>
+            <text x="235" y="180" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="#28a745">IN(v)</text>
+
+            <path d="M 565 165 L 445 165" fill="none" stroke="#28a745" stroke-width="2" stroke-dasharray="4" marker-end="url(#arrow-green)"/>
+            <text x="505" y="180" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="#28a745">IN(v)</text>
+
+            <!-- Phase progression explanation -->
+            <rect x="80" y="220" width="580" height="70" rx="6" fill="var(--tint)"/>
+            <text x="370" y="242" text-anchor="middle" font-family="var(--sans)" font-size="11.5" font-weight="700" fill="var(--accent)">PHASE ADVANCEMENT CONDITION</text>
+            <text x="370" y="262" text-anchor="middle" font-family="var(--sans)" font-size="10.5" fill="var(--text-heading)">Candidate advances to Phase k+1 if and only if BOTH Left and Right IN(v) tokens return.</text>
+            <text x="370" y="278" text-anchor="middle" font-family="var(--sans)" font-size="10" fill="var(--text-muted)">If any intermediate node has UID &gt; v: OUT token is swallowed. Candidate is eliminated.</text>
+
+            <defs>
+              <marker id="arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--primary)"/>
+              </marker>
+              <marker id="arrow-green" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="#28a745"/>
+              </marker>
+            </defs>
+          </svg>
+        </div>
+
+        <h3 id="message-types">Message Structure &amp; Token Types</h3>
+        <p>The HS algorithm uses two types of tokens:</p>
+        <ol>
+          <li><code>OUT(candidate_uid, direction, hop_counter)</code>: Transmitted outward from the candidate up to a maximum distance of $2^k$.</li>
+          <li><code>IN(candidate_uid, direction)</code>: Acknowledgment token reflected back to the candidate once the outbound token successfully reaches distance $2^k$.</li>
+        </ol>
+
+        <h3 id="node-processing-rules">Rules for Intermediate Nodes</h3>
+        <p>When an intermediate node $q$ receives an <code>OUT(v, dir, h)</code> token:</p>
+        <ul>
+          <li><strong>If $v > \text{UID}(q)$ :</strong>
+            <ul>
+              <li>If $h > 1$: Node $q$ decrements the hop counter ($h \gets h - 1$) and forwards <code>OUT(v, dir, h - 1)</code> in the same direction.</li>
+              <li>If $h = 1$: The token has successfully reached its maximum exploration boundary ($2^k$ hops). Node $q$ reverses the direction and sends an <code>IN(v, reverse_dir)</code> token back toward the candidate!</li>
+            </ul>
+          </li>
+          <li><strong>If $v < \text{UID}(q)$ :</strong> Node $q$ <strong>swallows (drops) the token</strong>. Candidate $v$ is permanently eliminated from advancing to subsequent phases.</li>
+          <li><strong>If $v = \text{UID}(q)$ :</strong> The outbound token traveled all the way around the ring and met its own originator! This means the exploration radius $2^k \ge n$. Process $q$ terminates the election and proclaims itself <code>LEADER</code>.</li>
+        </ul>
+
+        <h2 id="formal-complexity-proof">4. Formal Mathematical Proof of $\mathcal{O}(n \log n)$ Complexity</h2>
+        <p>We analyze the worst-case message complexity of the HS algorithm across all phases.</p>
+
+        <h3 id="maximum-phases">Lemma 1: Bound on Total Phases</h3>
+        <p>In each phase $k$, the exploration distance is $2^k$. The algorithm must terminate as soon as $2^k \ge \lfloor n / 2 \rfloor$ or $2^k \ge n$, because an outbound token from $\text{UID}_{\max}$ will encounter itself or span the entire ring.</p>
+        $$\text{Total Phases } K \le \lceil \log_2 n \rceil$$
+
+        <h3 id="candidate-survivors">Lemma 2: Maximum Surviving Candidates in Phase $k$</h3>
+        <p>For a candidate $p$ to survive phase $k-1$ and participate in phase $k$, its identifier $\text{UID}(p)$ must be strictly greater than all nodes located within distance $2^{k-1}$ in both directions.</p>
+        <p>Therefore, between any two surviving candidates in phase $k$, there must be a distance of at least $2^{k-1}$ nodes. Consequently, the maximum number of candidates that can possibly reach phase $k$ is strictly bounded by:</p>
+        $$N_k \le \frac{n}{2^{k-1} + 1} \le \frac{n}{2^{k-1}}$$
+
+        <h3 id="messages-per-phase">Lemma 3: Messages Consumed in Phase $k$</h3>
+        <p>In phase $k$, each active candidate sends tokens in two directions (Left and Right). An outbound token travels at most $2^k$ hops outward, and if successful, returns $2^k$ hops inward. Thus, a candidate generates at most:</p>
+        $$M_{\text{candidate}}(k) \le 2 \times (2^k \text{ outbound} + 2^k \text{ inbound}) = 4 \cdot 2^k \text{ messages}$$
+
+        <h3 id="total-summation">Theorem: Total Worst-Case Message Complexity</h3>
+        <p>Summing the messages across all phases $k = 0, 1, 2, \dots, \lceil \log_2 n \rceil$:</p>
+        $$M_{\text{total}} = \sum_{k=0}^{\lceil \log_2 n \rceil} N_k \cdot M_{\text{candidate}}(k)$$
+        $$M_{\text{total}} \le \sum_{k=0}^{\lceil \log_2 n \rceil} \left(\frac{n}{2^{k-1}}\right) \cdot \left(4 \cdot 2^k\right)$$
+        $$M_{\text{total}} \le \sum_{k=0}^{\lceil \log_2 n \rceil} n \cdot \frac{4 \cdot 2^k}{2^{k-1}} = \sum_{k=0}^{\lceil \log_2 n \rceil} 8n = 8n (\lceil \log_2 n \rceil + 1)$$
+        $$M_{\text{total}} = \mathcal{O}(n \log n)$$
+
+        <div class="callout callout-note">
+          <div class="callout-title">💡 Worst-Case Guarantee</div>
+          <p>Unlike LCR, which relies on randomized permutations to achieve $\Theta(n \log n)$ average performance and collapses to $\Theta(n^2)$ under adversarial ordering, <strong>Hirschberg-Sinclair guarantees $\mathcal{O}(n \log n)$ message complexity in every possible execution</strong>, regardless of how maliciously the node IDs are distributed around the ring!</p>
+        </div>
+
+        <h2 id="time-complexity">5. Time Complexity Analysis</h2>
+        <p>In a synchronous execution where each hop takes 1 round, in phase $k$, tokens travel $2^k$ hops out and $2^k$ hops back, taking $2 \cdot 2^k = 2^{k+1}$ rounds. The total time across all phases is:</p>
+        $$T_{\text{total}} = \sum_{k=0}^{\lceil \log_2 n \rceil} 2^{k+1} = 2 \sum_{k=0}^{\lceil \log_2 n \rceil} 2^k = 2 (2^{\lceil \log_2 n \rceil + 1} - 1) \le 4n = \mathcal{O}(n) \text{ rounds}$$
+
+        <p>Thus, the HS algorithm achieves both <strong>optimal message complexity $\mathcal{O}(n \log n)$</strong> and <strong>optimal time complexity $\mathcal{O}(n)$</strong> simultaneously.</p>
+
+        <h2 id="lcr-vs-hs">6. Architectural Comparison: LCR vs. HS</h2>
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Attribute</th>
+                <th>LCR Algorithm</th>
+                <th>Hirschberg-Sinclair (HS) Algorithm</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Communication Channels</strong></td>
+                <td>Unidirectional (Clockwise only)</td>
+                <td>Bidirectional (Clockwise &amp; Counter-Clockwise)</td>
+              </tr>
+              <tr>
+                <td><strong>Worst-Case Messages</strong></td>
+                <td>$\Theta(n^2)$ (Adversarial decreasing order)</td>
+                <td>$\mathcal{O}(n \log n)$ (Strictly bounded)</td>
+              </tr>
+              <tr>
+                <td><strong>Average-Case Messages</strong></td>
+                <td>$\Theta(n \log n)$ (Harmonic average)</td>
+                <td>$\Theta(n \log n)$</td>
+              </tr>
+              <tr>
+                <td><strong>Message Types</strong></td>
+                <td>Single type (Forwarding UID)</td>
+                <td>Dual type (<code>OUT</code> probe + <code>IN</code> acknowledgment)</td>
+              </tr>
+              <tr>
+                <td><strong>State per Node</strong></td>
+                <td>Minimal (only local UID and highest seen)</td>
+                <td>Phase counter $k$, left/right ack tracking flags</td>
+              </tr>
+              <tr>
+                <td><strong>Hardware Cost</strong></td>
+                <td>Cheaper (Simplex unidirectional links)</td>
+                <td>Requires full duplex / bidirectional transceivers</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="engineering-takeaways">7. Systems Engineering Takeaways</h2>
+        <ol>
+          <li><strong>The Power of Exponential Scoping:</strong> The doubling-hop technique ($2^k$) is a canonical paradigm in distributed systems. Similar exponential expansion patterns appear in <strong>Chord DHT routing tables</strong>, <strong>SkipLists</strong>, and <strong>Ethernet Exponential Backoff</strong>.</li>
+          <li><strong>Trading Directionality for Determinism:</strong> Enabling bidirectional message reflection transforms an unpredictable $O(n^2)$ protocol into a deterministically bounded $O(n \log n)$ engine.</li>
+          <li><strong>Fast Local Elimination:</strong> By forcing candidates to win local skirmishes at radius 1, 2, and 4 before contesting global rounds, over 75% of candidate processes are silenced before they consume more than a handful of network packets.</li>
+        </ol>
+      </article>
+
+      <aside class="toc-sidebar">
+        <div class="toc-title">Table of Contents</div>
+        <ul class="toc-list">
+          <li><a href="#motivation-lcr-shortcoming">1. Motivation &amp; LCR Shortcoming</a></li>
+          <li><a href="#hs-system-model">2. System Model &amp; Assumptions</a></li>
+          <li><a href="#protocol-mechanics">3. Protocol Mechanics (2^k Hops)</a></li>
+          <li><a href="#message-types">Message &amp; Token Types</a></li>
+          <li><a href="#formal-complexity-proof">4. O(n log n) Formal Proof</a></li>
+          <li><a href="#time-complexity">5. Time Complexity Analysis</a></li>
+          <li><a href="#lcr-vs-hs">6. LCR vs. HS Comparison</a></li>
+          <li><a href="#engineering-takeaways">7. Systems Engineering Takeaways</a></li>
+        </ul>
+
+        <div class="companion-box" style="margin-top: 1.25rem;">
+          <div class="companion-title">Companion PDF</div>
+          <p>Download the verified 3-page technical breakdown for offline study and architecture review.</p>
+          <a href="../Docs/HS_Leader_Election_Algorithm_Technical_Breakdown.pdf" class="download-link" target="_blank" download>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            HS Algorithm PDF
+          </a>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-container">
+      <div class="footer-col">
+        <div class="footer-brand">
+          <div class="brand-icon">⚡</div>
+          <span>System Design Notes</span>
+        </div>
+        <p class="footer-tagline">Curated engineering notes, production architecture dissections, and distributed systems research papers.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Distributed Algorithms</h5>
+        <ul>
+          <li><a href="two-phase-commit-distributed-transactions.html">Two-Phase Commit Protocol</a></li>
+          <li><a href="implementing-two-phase-commit-distributed-system.html">Implementing 2PC &amp; WAL</a></li>
+          <li><a href="lcr-leader-election-algorithm.html">LCR Ring Leader Election</a></li>
+          <li><a href="hs-leader-election-algorithm.html">HS Bidirectional Leader Election</a></li>
+          <li><a href="timeslice-leader-election-algorithm.html">TimeSlice O(n) Leader Election</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Repository</h5>
+        <ul>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank">GitHub Repository</a></li>
+          <li><a href="../Docs/System_Design_Notes.pdf" target="_blank">Complete Notes (184 Pages)</a></li>
+          <li><a href="../Docs/HS_Leader_Election_Algorithm_Technical_Breakdown.pdf" target="_blank">HS Algorithm PDF (3 Pages)</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>Released under MIT License • Open Source Engineering Notes</p>
+    </div>
+  </footer>
+
+  <script src="../assets/js/main.js?v=3.3"></script>
+</body>
+</html>

@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FloodMax Algorithm: Leader Election in General Graphs &amp; Network Diameter Bounds — System Design Notes</title>
+  <meta name="description" content="In-depth architectural breakdown and correctness proofs of the FloodMax leader election algorithm on general graphs based on Arpit Bhayani's lecture. Features synchronous flooding mechanics, diameter (D) termination bounds, and O(D * |E|) message complexity analysis.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css?v=3.3">
+  <link rel="stylesheet" href="../blog-theme.css?v=3.3">
+  <link rel="stylesheet" href="../assets/css/style.css?v=3.3">
+  <script>
+    (function() {
+      const saved = localStorage.getItem('theme');
+      if (saved) document.documentElement.dataset.theme = saved;
+    })();
+  </script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+  <div id="progress" aria-hidden="true"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">← All Notes</a></li>
+        </ul>
+        <div class="swatches" role="group" aria-label="Colour theme">
+          <button class="swatch" data-set-theme="light"  style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+          <button class="swatch" data-set-theme="dark"   style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+          <button class="swatch" data-set-theme="sepia"  style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+        </div>
+        <button id="theme-toggle" class="btn-icon" data-tooltip="Toggle light/dark theme" aria-label="Toggle Theme">
+          <span class="theme-icon">☀️</span>
+        </button>
+        <a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="btn-icon" data-tooltip="View GitHub Repository" aria-label="GitHub Repository">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+          </svg>
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="article-page">
+    <div class="article-breadcrumbs">
+      <a href="../index.html">Home</a>
+      <span>/</span>
+      <a href="../index.html#distributed-algorithms">Distributed Algorithms</a>
+      <span>/</span>
+      <span>FloodMax Leader Election Algorithm</span>
+    </div>
+
+    <header class="article-header">
+      <span class="article-header-badge">Distributed Algorithms • Leader Election</span>
+      <h1 class="article-header-title">FloodMax Algorithm: Leader Election in General Graphs &amp; Network Diameter Bounds</h1>
+      <div class="article-header-meta">
+        <span>📁 Category: Distributed Algorithms &amp; Graph Consensus</span>
+      </div>
+      <div class="article-header-actions">
+        <a href="../Docs/FloodMax_Leader_Election_Algorithm_Technical_Breakdown.pdf" target="_blank" download class="btn-secondary">
+          <span>📥 Download Technical PDF (3 Pages)</span>
+        </a>
+      </div>
+    </header>
+
+    <div class="article-container">
+      <article class="prose">
+        <div class="callout callout-note">
+          <div class="callout-title">📌 Primary Algorithmic Takeaway: Optimal Time Consensus on General Graphs</div>
+          <p>While ring algorithms (LCR, HS, TimeSlice) presuppose a rigid 2-regular circular topology, real-world data centers and distributed peer-to-peer clusters form arbitrary, irregular mesh graphs $G = (V, E)$. The <strong>FloodMax algorithm</strong> solves leader election on arbitrary connected topologies under synchronous network assumptions. By leveraging knowledge of the graph's <strong>Diameter ($D = \text{diam}(G)$)</strong>, every node floods the highest UID seen so far to its immediate neighbors. After exactly $D$ rounds, the true global maximum $\text{UID}_{\max}$ is mathematically guaranteed to have permeated every vertex in the graph, achieving election termination in strictly optimal time $\mathcal{O}(D)$ with message complexity bounded by $\mathcal{O}(D \cdot |E|)$.</p>
+        </div>
+
+        <h2 id="general-graph-challenge">1. Moving Beyond Ring Topologies: The General Graph Challenge</h2>
+        <p>In distributed algorithms, ring topologies are theoretical stepping stones. Real-world systems—such as database clusters, CDN edge routing meshes, and overlay networks—exhibit arbitrary graph topologies where vertices have varying degrees, bottlenecks, and multiple alternative paths. In a general graph:</p>
+        <ul>
+          <li>There is no natural "clockwise" direction or orientation.</li>
+          <li>A node only has visibility into its immediate adjacent neighbors $\mathcal{N}(u) = \{v \in V \mid (u, v) \in E\}$.</li>
+          <li>Messages sent along different paths experience different hop counts and delays.</li>
+        </ul>
+
+        <p>To break symmetry without central coordination, the system must establish a deterministic termination criterion: <em>How does a node know that it has seen all candidates in the entire network without knowing the graph topology?</em> The answer lies in the <strong>Network Diameter</strong>.</p>
+
+        <h2 id="system-model-diameter">2. System Model &amp; The Network Diameter ($D$)</h2>
+        <p>Let the distributed system be modeled as a connected undirected graph $G = (V, E)$ where:</p>
+        <ul>
+          <li>$n = |V|$ is the number of processing nodes.</li>
+          <li>$m = |E|$ is the number of bidirectional communication links.</li>
+          <li>Each node $u \in V$ possesses a unique identifier $\text{UID}(u) \in \mathcal{U}$.</li>
+        </ul>
+
+        <blockquote>
+          <strong>Definition (Graph Diameter):</strong> The distance $\text{dist}(u, v)$ between vertices $u$ and $v$ is the length of the shortest path connecting them. The <strong>Diameter</strong> of the graph, denoted $D = \text{diam}(G)$, is the maximum shortest-path distance between any pair of vertices in $V$:
+          $$D = \max_{u, v \in V} \text{dist}(u, v)$$
+        </blockquote>
+
+        <p>In the FloodMax algorithm, nodes do not need to know the complete graph structure $G$ or the total node count $n$. However, every node must know the <strong>Diameter $D$</strong> (or a known upper bound $\Delta \ge D$).</p>
+
+        <h2 id="protocol-mechanics">3. Protocol Mechanics: Synchronous Maximum Flooding</h2>
+        <p>The FloodMax algorithm operates over exactly $D$ synchronous rounds. Each process maintains a local state variable $\text{max\_uid}$, which tracks the highest identifier encountered so far.</p>
+
+        <div class="diagram-wrapper">
+          <svg class="arch-diagram" viewBox="0 0 740 330" width="100%" height="auto" xmlns="http://www.w3.org/2000/svg">
+            <rect x="10" y="10" width="720" height="310" rx="10" fill="var(--bg-card)" stroke="var(--border-color)" stroke-width="1.5"/>
+            <text x="370" y="38" text-anchor="middle" font-family="var(--sans)" font-size="15" font-weight="700" fill="var(--text-heading)">FloodMax Synchronous Wavefront Propagation on General Mesh</text>
+
+            <!-- Graph Nodes -->
+            <!-- Node A (UID=92, Leader) -->
+            <circle cx="80" cy="160" r="26" fill="var(--code-bg)" stroke="#28a745" stroke-width="2.5"/>
+            <text x="80" y="157" text-anchor="middle" font-family="var(--sans)" font-size="11" font-weight="700" fill="var(--text-heading)">Node A</text>
+            <text x="80" y="172" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="#28a745">UID=92★</text>
+
+            <!-- Node B (UID=45) -->
+            <circle cx="230" cy="90" r="24" fill="var(--code-bg)" stroke="var(--border-color)" stroke-width="1.5"/>
+            <text x="230" y="88" text-anchor="middle" font-family="var(--sans)" font-size="10.5" font-weight="700" fill="var(--text-heading)">Node B</text>
+            <text x="230" y="102" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--text-muted)">UID=45</text>
+
+            <!-- Node C (UID=14) -->
+            <circle cx="230" cy="230" r="24" fill="var(--code-bg)" stroke="var(--border-color)" stroke-width="1.5"/>
+            <text x="230" y="228" text-anchor="middle" font-family="var(--sans)" font-size="10.5" font-weight="700" fill="var(--text-heading)">Node C</text>
+            <text x="230" y="242" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--text-muted)">UID=14</text>
+
+            <!-- Node D (UID=78) -->
+            <circle cx="430" cy="90" r="24" fill="var(--code-bg)" stroke="var(--primary)" stroke-width="1.8"/>
+            <text x="430" y="88" text-anchor="middle" font-family="var(--sans)" font-size="10.5" font-weight="700" fill="var(--text-heading)">Node D</text>
+            <text x="430" y="102" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--primary)">UID=78</text>
+
+            <!-- Node E (UID=31) -->
+            <circle cx="430" cy="230" r="24" fill="var(--code-bg)" stroke="var(--border-color)" stroke-width="1.5"/>
+            <text x="430" y="228" text-anchor="middle" font-family="var(--sans)" font-size="10.5" font-weight="700" fill="var(--text-heading)">Node E</text>
+            <text x="430" y="242" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--text-muted)">UID=31</text>
+
+            <!-- Node F (UID=60, Furthest) -->
+            <circle cx="620" cy="160" r="26" fill="var(--code-bg)" stroke="var(--border-color)" stroke-width="1.8"/>
+            <text x="620" y="157" text-anchor="middle" font-family="var(--sans)" font-size="11" font-weight="700" fill="var(--text-heading)">Node F</text>
+            <text x="620" y="172" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--text-muted)">UID=60</text>
+
+            <!-- Graph Edges -->
+            <line x1="104" y1="150" x2="208" y2="102" stroke="var(--border-color)" stroke-width="1.8"/>
+            <line x1="104" y1="170" x2="208" y2="218" stroke="var(--border-color)" stroke-width="1.8"/>
+            <line x1="230" y1="114" x2="230" y2="206" stroke="var(--border-color)" stroke-width="1.8"/>
+            <line x1="254" y1="90" x2="406" y2="90" stroke="var(--border-color)" stroke-width="1.8"/>
+            <line x1="254" y1="230" x2="406" y2="230" stroke="var(--border-color)" stroke-width="1.8"/>
+            <line x1="454" y1="102" x2="596" y2="150" stroke="var(--border-color)" stroke-width="1.8"/>
+            <line x1="454" y1="218" x2="596" y2="170" stroke="var(--border-color)" stroke-width="1.8"/>
+
+            <!-- Propagation Wavefronts -->
+            <!-- Round 1 Wavefront -->
+            <path d="M 170 50 Q 150 160 170 270" fill="none" stroke="#28a745" stroke-width="2" stroke-dasharray="4"/>
+            <text x="175" y="42" font-family="var(--mono)" font-size="10" fill="#28a745">Round 1 (dist=1)</text>
+
+            <!-- Round 2 Wavefront -->
+            <path d="M 330 50 Q 310 160 330 270" fill="none" stroke="#28a745" stroke-width="2" stroke-dasharray="4"/>
+            <text x="335" y="42" font-family="var(--mono)" font-size="10" fill="#28a745">Round 2 (dist=2)</text>
+
+            <!-- Round 3 Wavefront (Diameter=3) -->
+            <path d="M 520 50 Q 500 160 520 270" fill="none" stroke="#28a745" stroke-width="2" stroke-dasharray="4"/>
+            <text x="525" y="42" font-family="var(--mono)" font-size="10" fill="#28a745">Round 3 = D (dist=3)</text>
+
+            <rect x="180" y="275" width="380" height="30" rx="4" fill="var(--tint)"/>
+            <text x="370" y="295" text-anchor="middle" font-family="var(--sans)" font-size="11" font-weight="700" fill="var(--accent)">After D = 3 rounds, UID=92 reaches Node F and dominates all nodes!</text>
+          </svg>
+        </div>
+
+        <h3 id="algorithmic-specification">Algorithmic Specification</h3>
+        <ol>
+          <li><strong>Initialization:</strong>
+            $$\text{max\_uid}_u \gets \text{UID}(u), \quad \text{round} \gets 1$$
+          </li>
+          <li><strong>Round 1:</strong>
+            <ul>
+              <li>Every node $u \in V$ broadcasts its own $\text{max\_uid}_u$ to all its adjacent neighbors $\mathcal{N}(u)$.</li>
+            </ul>
+          </li>
+          <li><strong>Rounds $r = 2, 3, \dots, D$:</strong>
+            <ul>
+              <li>Node $u$ receives messages $M_v$ from all neighbors $v \in \mathcal{N}(u)$.</li>
+              <li>Node $u$ computes the new maximum:
+              $$\text{max\_uid}_u \gets \max\left(\text{max\_uid}_u, \max_{v \in \mathcal{N}(u)} M_v\right)$$
+              </li>
+              <li>Node $u$ transmits its updated $\text{max\_uid}_u$ to all neighbors $\mathcal{N}(u)$.</li>
+            </ul>
+          </li>
+          <li><strong>Termination at Round $D$:</strong>
+            <ul>
+              <li>If $\text{max\_uid}_u = \text{UID}(u)$: Process $u$ declares itself <code>LEADER</code>.</li>
+              <li>If $\text{max\_uid}_u > \text{UID}(u)$: Process $u$ declares itself <code>FOLLOWER</code>, recognizing $\text{max\_uid}_u$ as the elected leader.</li>
+            </ul>
+          </li>
+        </ol>
+
+        <h2 id="formal-proof-correctness">4. Formal Mathematical Proof of Correctness</h2>
+        <p>Let $u^* \in V$ be the unique vertex possessing the maximum identifier in the entire network: $\text{UID}(u^*) = \max_{v \in V} \text{UID}(v)$.</p>
+
+        <h3 id="invariant-lemma">Lemma (Wavefront Propagation Invariant)</h3>
+        <p>For any round $r \in \{1, 2, \dots, D\}$ and for any vertex $w \in V$:</p>
+        $$\text{If } \text{dist}(u^*, w) \le r \implies \text{max\_uid}_w = \text{UID}(u^*) \text{ at the end of round } r$$
+
+        <h3 id="proof-by-induction">Proof by Mathematical Induction on Round $r$</h3>
+        <ul>
+          <li><strong>Base Case ($r = 1$):</strong> At round 1, $u^*$ sends its identifier $\text{UID}(u^*)$ to all immediate neighbors $w \in \mathcal{N}(u^*)$. For every such neighbor, $\text{dist}(u^*, w) = 1$. Upon receiving $\text{UID}(u^*)$, since $\text{UID}(u^*)$ is the global maximum, $\max(\text{UID}(w), \text{UID}(u^*)) = \text{UID}(u^*)$. Thus, $\text{max\_uid}_w = \text{UID}(u^*)$. The base case holds.</li>
+          <li><strong>Inductive Step:</strong> Assume the lemma holds for round $r-1 \ge 1$. Consider an arbitrary vertex $z \in V$ such that $\text{dist}(u^*, z) = r$. By the properties of shortest paths, there exists a neighbor $y \in \mathcal{N}(z)$ along a shortest path from $u^*$ to $z$ such that $\text{dist}(u^*, y) = r - 1$.
+          By the inductive hypothesis, at the end of round $r-1$, node $y$ has $\text{max\_uid}_y = \text{UID}(u^*)$.
+          In round $r$, node $y$ transmits $\text{UID}(u^*)$ to node $z$. Upon receiving this message, node $z$ sets $\text{max\_uid}_z \gets \max(\text{max\_uid}_z, \text{UID}(u^*)) = \text{UID}(u^*)$. The induction is complete.</li>
+        </ul>
+
+        <h3 id="theorem-uniqueness">Theorem (Uniqueness and Safety of Leader Election)</h3>
+        <p>By definition of the graph diameter $D = \max_{u, v} \text{dist}(u, v)$, the distance between the leader $u^*$ and every vertex in the graph is at most $D$:</p>
+        $$\forall v \in V: \text{dist}(u^*, v) \le D$$
+        <p>Therefore, by our propagation lemma, at the end of round $D$, every vertex $v \in V$ has $\text{max\_uid}_v = \text{UID}(u^*)$.</p>
+        <ul>
+          <li>For vertex $u^*$: $\text{max\_uid}_{u^*} = \text{UID}(u^*)$, so $u^*$ transitions to <code>LEADER</code>.</li>
+          <li>For all other vertices $v \neq u^*$: $\text{UID}(v) < \text{UID}(u^*) = \text{max\_uid}_v$, so no other node can claim leadership.</li>
+        </ul>
+        <p>Exactly one leader is elected, and every process terminates in agreed state. $\blacksquare$</p>
+
+        <h2 id="complexity-bounds">5. Complexity Analysis &amp; The Cost of Generality</h2>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-title">Time Complexity: Exactly $D$ Rounds</div>
+            <p>The time to elect a leader is strictly equal to the Diameter $D$ of the graph. This is <strong>time-optimal</strong>: in an arbitrary graph, no algorithm can elect a leader faster than the graph diameter, because information from the furthest node takes at least $D$ rounds to reach across the network.</p>
+          </div>
+          <div class="card">
+            <div class="card-title">Message Complexity: $\mathcal{O}(D \cdot |E|)$</div>
+            <p>In each round, every undirected edge $\{u, v\} \in E$ transmits at most 2 messages (one from $u \to v$ and one from $v \to u$). Across $D$ rounds, the total messages sent is bounded by: $M \le 2 D \cdot |E| = \mathcal{O}(D \cdot |E|)$.</p>
+          </div>
+        </div>
+
+        <h3 id="graph-special-cases">Complexity Across Graph Families</h3>
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Graph Family</th>
+                <th>Diameter $D$</th>
+                <th>Edges $|E|$</th>
+                <th>FloodMax Time</th>
+                <th>FloodMax Messages</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Clique / Complete Graph ($K_n$)</strong></td>
+                <td>$D = 1$</td>
+                <td>$\Theta(n^2)$</td>
+                <td>$1$ round</td>
+                <td>$\Theta(n^2)$</td>
+              </tr>
+              <tr>
+                <td><strong>Star Graph ($S_n$)</strong></td>
+                <td>$D = 2$</td>
+                <td>$n - 1$</td>
+                <td>$2$ rounds</td>
+                <td>$\Theta(n)$</td>
+              </tr>
+              <tr>
+                <td><strong>Ring Topology ($C_n$)</strong></td>
+                <td>$D = \lfloor n/2 \rfloor$</td>
+                <td>$n$</td>
+                <td>$\lfloor n/2 \rfloor$ rounds</td>
+                <td>$\Theta(n^2)$</td>
+              </tr>
+              <tr>
+                <td><strong>Linear Line Graph ($L_n$)</strong></td>
+                <td>$D = n - 1$</td>
+                <td>$n - 1$</td>
+                <td>$n - 1$ rounds</td>
+                <td>$\Theta(n^2)$</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="silencing-optimization">6. Production Optimization: FloodMax with Silencing</h2>
+        <p>In the naive FloodMax algorithm, every node broadcasts in every round, regardless of whether its $\text{max\_uid}$ changed. In production networks, this generates unnecessary packet storms.</p>
+        <p>We apply the <strong>Silencing Rule</strong>:</p>
+        <blockquote>
+          <strong>The Silencing Rule:</strong> In round $r \ge 2$, a node $u$ broadcasts to its neighbors <em>if and only if its local $\text{max\_uid}$ was strictly updated in the previous round</em>. If no higher identifier arrived, node $u$ remains completely silent.
+        </blockquote>
+        <p>This optimization preserves correctness (since an unchanged maximum has already been sent to all immediate neighbors) while drastically slashing message overhead in dense or clustered networks.</p>
+
+        <h2 id="engineering-takeaways">7. Systems Engineering Takeaways</h2>
+        <ol>
+          <li><strong>Diameter as a Synchronization Anchor:</strong> The diameter of a network represents the physical horizon of information propagation. If an algorithm must reach global consensus without acknowledgments, it must execute for at least $D$ rounds.</li>
+          <li><strong>Time-Message Inversion:</strong> Highly connected graphs (like Cliques) have tiny diameters ($D = 1$), electing leaders instantaneously in 1 round, but incur high edge traffic ($O(n^2)$ messages). Sparse graphs (like Lines) have large diameters ($D = n-1$), saving edge bandwidth but suffering high latency.</li>
+          <li><strong>Bounding $D$ Under Failure:</strong> When deploying diameter-based algorithms in production, systems must budget for node failures that can increase graph diameter (e.g. failure of an articulation point or bridge). Always supply an upper bound $\Delta \ge D$.</li>
+        </ol>
+      </article>
+
+      <aside class="toc-sidebar">
+        <div class="toc-title">Table of Contents</div>
+        <ul class="toc-list">
+          <li><a href="#general-graph-challenge">1. The General Graph Challenge</a></li>
+          <li><a href="#system-model-diameter">2. System Model &amp; Diameter D</a></li>
+          <li><a href="#protocol-mechanics">3. Protocol Mechanics (Flooding)</a></li>
+          <li><a href="#algorithmic-specification">Algorithmic Specification</a></li>
+          <li><a href="#formal-proof-correctness">4. Formal Correctness Proof</a></li>
+          <li><a href="#complexity-bounds">5. Complexity Analysis &amp; Bounds</a></li>
+          <li><a href="#silencing-optimization">6. Silencing Optimization</a></li>
+          <li><a href="#engineering-takeaways">7. Systems Engineering Takeaways</a></li>
+        </ul>
+
+        <div class="companion-box" style="margin-top: 1.25rem;">
+          <div class="companion-title">Companion PDF</div>
+          <p>Download the verified 3-page technical breakdown for offline study and architecture review.</p>
+          <a href="../Docs/FloodMax_Leader_Election_Algorithm_Technical_Breakdown.pdf" class="download-link" target="_blank" download>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            FloodMax Algorithm PDF
+          </a>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-container">
+      <div class="footer-col">
+        <div class="footer-brand">
+          <div class="brand-icon">⚡</div>
+          <span>System Design Notes</span>
+        </div>
+        <p class="footer-tagline">Curated engineering notes, production architecture dissections, and distributed systems research papers.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Distributed Algorithms</h5>
+        <ul>
+          <li><a href="two-phase-commit-distributed-transactions.html">Two-Phase Commit Protocol</a></li>
+          <li><a href="implementing-two-phase-commit-distributed-system.html">Implementing 2PC &amp; WAL</a></li>
+          <li><a href="lcr-leader-election-algorithm.html">LCR Ring Leader Election</a></li>
+          <li><a href="hs-leader-election-algorithm.html">HS Bidirectional Leader Election</a></li>
+          <li><a href="timeslice-leader-election-algorithm.html">TimeSlice O(n) Leader Election</a></li>
+          <li><a href="floodmax-leader-election-algorithm.html">FloodMax General Graph Election</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Repository</h5>
+        <ul>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank">GitHub Repository</a></li>
+          <li><a href="../Docs/System_Design_Notes.pdf" target="_blank">Complete Notes (184 Pages)</a></li>
+          <li><a href="../Docs/FloodMax_Leader_Election_Algorithm_Technical_Breakdown.pdf" target="_blank">FloodMax Algorithm PDF (3 Pages)</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>Released under MIT License • Open Source Engineering Notes</p>
+    </div>
+  </footer>
+
+  <script src="../assets/js/main.js?v=3.3"></script>
+</body>
+</html>

@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FloodSet Algorithm: Distributed Consensus Under Crash Faults &amp; f+1 Round Bounds — System Design Notes</title>
+  <meta name="description" content="Formal analysis, proofs, and architectural breakdown of the FloodSet consensus algorithm under crash-stop failures based on Arpit Bhayani's lecture. Features f+1 round lower bounds, clean-round pigeonhole analysis, set union mechanics, and consensus validity.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css?v=3.3">
+  <link rel="stylesheet" href="../blog-theme.css?v=3.3">
+  <link rel="stylesheet" href="../assets/css/style.css?v=3.3">
+  <script>
+    (function() {
+      const saved = localStorage.getItem('theme');
+      if (saved) document.documentElement.dataset.theme = saved;
+    })();
+  </script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+  <div id="progress" aria-hidden="true"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">← All Notes</a></li>
+        </ul>
+        <div class="swatches" role="group" aria-label="Colour theme">
+          <button class="swatch" data-set-theme="light"  style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+          <button class="swatch" data-set-theme="dark"   style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+          <button class="swatch" data-set-theme="sepia"  style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+        </div>
+        <button id="theme-toggle" class="btn-icon" data-tooltip="Toggle light/dark theme" aria-label="Toggle Theme">
+          <span class="theme-icon">☀️</span>
+        </button>
+        <a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="btn-icon" data-tooltip="View GitHub Repository" aria-label="GitHub Repository">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+          </svg>
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="article-page">
+    <div class="article-breadcrumbs">
+      <a href="../index.html">Home</a>
+      <span>/</span>
+      <a href="../index.html#distributed-algorithms">Distributed Algorithms</a>
+      <span>/</span>
+      <span>FloodSet Crash-Tolerant Consensus</span>
+    </div>
+
+    <header class="article-header">
+      <span class="article-header-badge">Distributed Algorithms • Fault-Tolerant Consensus</span>
+      <h1 class="article-header-title">FloodSet Algorithm: Distributed Consensus Under Crash Faults &amp; $f+1$ Round Bounds</h1>
+      <div class="article-header-meta">
+        <span>📁 Category: Distributed Algorithms &amp; Crash Fault Tolerance</span>
+      </div>
+      <div class="article-header-actions">
+        <a href="../Docs/FloodSet_Distributed_Consensus_Crash_Faults_Technical_Breakdown.pdf" target="_blank" download class="btn-secondary">
+          <span>📥 Download Technical PDF (3 Pages)</span>
+        </a>
+      </div>
+    </header>
+
+    <div class="article-container">
+      <article class="prose">
+        <div class="callout callout-note">
+          <div class="callout-title">📌 Primary Algorithmic Takeaway: Overcoming Node Crashes via the Clean-Round Principle</div>
+          <p>In distributed consensus, the <strong>Crash-Stop (Fail-Stop) failure model</strong> captures scenarios where server nodes can silently die at any arbitrary point in execution, including mid-broadcast while transmitting to a subset of peers. The <strong>FloodSet algorithm</strong> guarantees unanimous distributed consensus among all non-faulty processes in a synchronous network tolerating up to $f$ arbitrary node crashes. By executing for exactly <strong>$f + 1$ rounds</strong>, the protocol guarantees via the Pigeonhole Principle that at least one round experiences <em>zero crashes</em> (the "Clean Round"). During this clean round, all surviving processes synchronize their knowledge sets, guaranteeing unanimous decision agreement.</p>
+        </div>
+
+        <h2 id="consensus-under-crash-failures">1. The Distributed Consensus Problem Under Crash Failures</h2>
+        <p>In an environment of $n$ distinct processes, each node $p_i$ begins with an initial input value $v_i \in \{0, 1\}$. Nodes must execute an algorithm and irrevocably output a decision value $d_i \in \{0, 1\}$.</p>
+
+        <p>A valid distributed consensus protocol must strictly satisfy three properties:</p>
+        <ol>
+          <li><strong>Agreement:</strong> All non-faulty processes must decide on the exact same value:
+          $$\forall p_i, p_j \text{ (non-faulty)} \implies d_i = d_j$$
+          </li>
+          <li><strong>Validity:</strong> If all processes begin with the same initial input $v$, every non-faulty process must decide $v$. (This prevents trivial solutions like always deciding 0).</li>
+          <li><strong>Termination:</strong> Every non-faulty process must eventually decide and halt within a finite, bounded number of rounds.</li>
+        </ol>
+
+        <h2 id="the-f-plus-one-bound">2. Why Exactly $f + 1$ Rounds? The Clean-Round Principle</h2>
+        <p>A fundamental theorem in distributed computing (proven by Fischer and Lynch, 1982) states:</p>
+        <blockquote>
+          <strong>The $f+1$ Round Lower Bound:</strong> In a synchronous system of $n$ processes with up to $f$ crash failures ($f \le n - 2$), any deterministic consensus protocol requires at least $f + 1$ rounds in the worst case.
+        </blockquote>
+
+        <p>The intuition rests on the <strong>Pigeonhole Principle</strong>:</p>
+        <ul>
+          <li>An adversary has a budget of at most $f$ crash failures.</li>
+          <li>The adversary can deploy these crashes maliciously across rounds. In the worst case, the adversary crashes exactly 1 process per round.</li>
+          <li>In a protocol running for $f + 1$ rounds, there are $f + 1$ rounds but at most $f$ crashes.</li>
+          <li>Therefore, there <strong>must exist at least one round in which ZERO processes crash</strong>!</li>
+        </ul>
+        <p>This round is called the <strong>Clean Round</strong>. In this round, every message sent by every surviving node is received by every other surviving node, making their knowledge sets identical.</p>
+
+        <div class="diagram-wrapper">
+          <svg class="arch-diagram" viewBox="0 0 740 330" width="100%" height="auto" xmlns="http://www.w3.org/2000/svg">
+            <rect x="10" y="10" width="720" height="310" rx="10" fill="var(--bg-card)" stroke="var(--border-color)" stroke-width="1.5"/>
+            <text x="370" y="38" text-anchor="middle" font-family="var(--sans)" font-size="15" font-weight="700" fill="var(--text-heading)">FloodSet Consensus: The f+1 Rounds &amp; Clean Round Synchronization</text>
+
+            <!-- Round 1: Crash 1 -->
+            <rect x="35" y="70" width="150" height="150" rx="6" fill="var(--code-bg)" stroke="#dc3545" stroke-width="1.5"/>
+            <text x="110" y="95" text-anchor="middle" font-family="var(--sans)" font-size="12" font-weight="700" fill="#dc3545">Round 1</text>
+            <text x="110" y="118" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="var(--text-heading)">Node p1 Crashes</text>
+            <text x="110" y="138" text-anchor="middle" font-family="var(--sans)" font-size="9.5" fill="var(--text-muted)">Partial broadcast</text>
+            <text x="110" y="156" text-anchor="middle" font-family="var(--sans)" font-size="9.5" fill="var(--text-muted)">Only p2 gets value</text>
+            <rect x="50" y="175" width="120" height="30" rx="4" fill="var(--bg-card)"/>
+            <text x="110" y="195" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="#dc3545">Asymmetric sets</text>
+
+            <!-- Round 2: Crash 2 -->
+            <rect x="205" y="70" width="150" height="150" rx="6" fill="var(--code-bg)" stroke="#dc3545" stroke-width="1.5"/>
+            <text x="280" y="95" text-anchor="middle" font-family="var(--sans)" font-size="12" font-weight="700" fill="#dc3545">Round 2</text>
+            <text x="280" y="118" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="var(--text-heading)">Node p2 Crashes</text>
+            <text x="280" y="138" text-anchor="middle" font-family="var(--sans)" font-size="9.5" fill="var(--text-muted)">Mid-flight halt</text>
+            <text x="280" y="156" text-anchor="middle" font-family="var(--sans)" font-size="9.5" fill="var(--text-muted)">Only p3 gets update</text>
+            <rect x="220" y="175" width="120" height="30" rx="4" fill="var(--bg-card)"/>
+            <text x="280" y="195" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="#dc3545">Remaining budget=0</text>
+
+            <!-- Round 3: Clean Round -->
+            <rect x="375" y="70" width="165" height="150" rx="6" fill="var(--bg-card)" stroke="#28a745" stroke-width="2.2"/>
+            <text x="457" y="95" text-anchor="middle" font-family="var(--sans)" font-size="12.5" font-weight="700" fill="#28a745">Round 3 = f + 1</text>
+            <text x="457" y="118" text-anchor="middle" font-family="var(--mono)" font-size="11" font-weight="700" fill="#28a745">★ THE CLEAN ROUND</text>
+            <text x="457" y="138" text-anchor="middle" font-family="var(--sans)" font-size="10" fill="var(--text-heading)">Zero crashes occur</text>
+            <text x="457" y="156" text-anchor="middle" font-family="var(--sans)" font-size="9.5" fill="var(--text-muted)">All surviving nodes broadcast</text>
+            <rect x="390" y="175" width="135" height="30" rx="4" fill="var(--tint)"/>
+            <text x="457" y="195" text-anchor="middle" font-family="var(--mono)" font-size="10" font-weight="700" fill="var(--accent)">W_i becomes IDENTICAL</text>
+
+            <!-- Decision Box -->
+            <rect x="560" y="70" width="145" height="150" rx="6" fill="var(--code-bg)" stroke="var(--primary)" stroke-width="1.8"/>
+            <text x="632" y="95" text-anchor="middle" font-family="var(--sans)" font-size="12" font-weight="700" fill="var(--primary)">Decision Phase</text>
+            <text x="632" y="120" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--text-heading)">If |W_i| == 1:</text>
+            <text x="632" y="136" text-anchor="middle" font-family="var(--sans)" font-size="9.5" fill="#28a745">Decide v</text>
+            <text x="632" y="160" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--text-heading)">If |W_i| == 2:</text>
+            <text x="632" y="176" text-anchor="middle" font-family="var(--sans)" font-size="9.5" fill="var(--primary)">Decide fallback 0</text>
+            <text x="632" y="200" text-anchor="middle" font-family="var(--mono)" font-size="9.5" font-weight="700" fill="#28a745">AGREEMENT WON</text>
+
+            <!-- Bottom explanatory banner -->
+            <rect x="35" y="240" width="670" height="55" rx="6" fill="var(--tint)"/>
+            <text x="370" y="262" text-anchor="middle" font-family="var(--sans)" font-size="11.5" font-weight="700" fill="var(--accent)">Pigeonhole Principle: f crashes distributed across f+1 rounds implies &ge; 1 clean round.</text>
+            <text x="370" y="280" text-anchor="middle" font-family="var(--sans)" font-size="10.5" fill="var(--text-heading)">Once a clean round executes, all surviving nodes possess identical sets for all future rounds.</text>
+          </svg>
+        </div>
+
+        <h2 id="floodset-mechanics">3. The FloodSet Protocol Specification</h2>
+        <p>The state maintained by each process $p_i$ is a set $W_i \subseteq \{0, 1\}$ representing all input values that process $p_i$ has witnessed.</p>
+
+        <h3 id="step-by-step-algorithm">Step-by-Step Execution</h3>
+        <ol>
+          <li><strong>Initialization:</strong>
+            $$W_i \gets \{v_i\} \quad \text{where } v_i \in \{0, 1\} \text{ is } p_i\text{'s initial input}$$
+          </li>
+          <li><strong>Rounds $r = 1, 2, \dots, f + 1$:</strong>
+            <ul>
+              <li>Process $p_i$ broadcasts its set $W_i$ to all $n$ processes (including itself).</li>
+              <li>Process $p_i$ receives messages $M_j$ from all active, non-crashed processes $p_j$.</li>
+              <li>Process $p_i$ computes the union of all received sets:
+              $$W_i \gets W_i \cup \bigcup_{j \in \text{senders}} M_j$$
+              </li>
+            </ul>
+          </li>
+          <li><strong>Decision at Round $f + 1$:</strong>
+            <ul>
+              <li><strong>Case 1 ($|W_i| = 1$):</strong> If $W_i = \{v\}$, decide $v$. (Process $p_i$ only ever witnessed value $v$ throughout all rounds).</li>
+              <li><strong>Case 2 ($|W_i| = 2$):</strong> If $W_i = \{0, 1\}$, decide $0$ (the canonical deterministic fallback value).</li>
+            </ul>
+          </li>
+        </ol>
+
+        <h2 id="formal-correctness-proof">4. Formal Mathematical Proof of Correctness</h2>
+
+        <h3 id="validity-proof">1. Proof of Validity</h3>
+        <ul>
+          <li><strong>Case $v = 0$ everywhere:</strong> If all processes start with $v_i = 0$, every initial set is $W_i = \{0\}$. Since no node ever introduces $1$, the set union $W_i$ remains $\{0\}$ across all $f+1$ rounds. At termination, $|W_i| = 1$, so every non-faulty node decides $0$.</li>
+          <li><strong>Case $v = 1$ everywhere:</strong> If all processes start with $v_i = 1$, every initial set is $W_i = \{1\}$. The value $0$ is never injected. At round $f+1$, $W_i = \{1\}$, so every non-faulty node decides $1$.</li>
+        </ul>
+        <p>Validity holds in all executions. $\blacksquare$</p>
+
+        <h3 id="agreement-proof">2. Proof of Agreement</h3>
+        <p>We prove that at the end of round $f + 1$, all non-faulty processes possess <strong>identical sets</strong>: $W_i = W_j$.</p>
+
+        <ol>
+          <li>Since at most $f$ processes crash during the entire execution of $f + 1$ rounds, there exists at least one round $k \in \{1, 2, \dots, f + 1\}$ in which <strong>zero processes crash</strong>.</li>
+          <li>In this clean round $k$, every process that was alive at the beginning of round $k$ successfully broadcasts its set to all surviving processes.</li>
+          <li>Therefore, every process alive at the end of round $k$ computes the exact same union:
+          $$W_{\text{clean}} = \bigcup_{p \text{ alive in round } k} W_p$$
+          </li>
+          <li>Thus, for all processes $p_i, p_j$ alive at the end of round $k$:
+          $$W_i = W_j = W_{\text{clean}}$$
+          </li>
+          <li>In subsequent rounds $k+1, \dots, f+1$, every node only broadcasts subsets of $W_{\text{clean}}$. No node can ever learn any value outside $W_{\text{clean}}$.</li>
+          <li>Therefore, at the end of round $f + 1$, for all non-faulty processes $p_i, p_j$:
+          $$W_i = W_j$$
+          </li>
+          <li>Because their sets $W$ are identical, they evaluate the exact same decision rule and output the exact same decision value: $d_i = d_j$.</li>
+        </ol>
+        <p>Agreement is mathematically guaranteed. $\blacksquare$</p>
+
+        <h2 id="complexity-bounds">5. Complexity Analysis &amp; Bounds</h2>
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-title">Time Complexity: Strictly $f + 1$ Rounds</div>
+            <p>The algorithm terminates in exactly $f + 1$ rounds. Because of the Fischer-Lynch lower bound, no algorithm can guarantee consensus in $f$ rounds under crash failures. FloodSet is <strong>strictly time-optimal</strong>.</p>
+          </div>
+          <div class="card">
+            <div class="card-title">Message Complexity: $\mathcal{O}(n^2 (f + 1))$</div>
+            <p>In each round, every alive process broadcasts its set to all $n$ processes ($\le n^2$ messages per round). Across $f + 1$ rounds, total messages: $\mathcal{O}((f + 1) n^2)$ messages.</p>
+          </div>
+        </div>
+
+        <h2 id="floodset-vs-eig">6. Comparison: FloodSet vs. EIG vs. Paxos</h2>
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Consensus Algorithm</th>
+                <th>Failure Model</th>
+                <th>Network Model</th>
+                <th>Rounds to Terminate</th>
+                <th>Message Content</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>FloodSet</strong></td>
+                <td>Crash-Stop ($f < n$)</td>
+                <td>Synchronous</td>
+                <td>$f + 1$ rounds</td>
+                <td>Flat sets of values ($W \subseteq \{0, 1\}$)</td>
+              </tr>
+              <tr>
+                <td><strong>Exponential Info Gathering (EIG)</strong></td>
+                <td>Crash or Byzantine ($n \ge 3f+1$)</td>
+                <td>Synchronous</td>
+                <td>$f + 1$ rounds</td>
+                <td>Tree of paths ("who told whom what")</td>
+              </tr>
+              <tr>
+                <td><strong>Paxos / Raft</strong></td>
+                <td>Crash-Recovery (Quorum $f < n/2$)</td>
+                <td>Asynchronous (Partially Synchronous)</td>
+                <td>Unbounded in worst-case; 1–2 RTTs normally</td>
+                <td>Log entries, terms, ballot numbers</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="engineering-takeaways">7. Systems Engineering Takeaways</h2>
+        <ol>
+          <li><strong>The Price of Crash Tolerance is Latency:</strong> You cannot overcome $f$ crash faults in synchronous networks in fewer than $f+1$ rounds. If a system must tolerate 3 server crashes, it must budget for at least 4 communication rounds.</li>
+          <li><strong>Mid-Broadcast Crashes are the True Adversary:</strong> A node crashing before sending anything is harmless. The dangerous failure mode is a node dying halfway through broadcasting—sending to half the cluster and dying before reaching the other half. The $f+1$ round duration ensures the remaining nodes heal this divergence.</li>
+          <li><strong>Flat Sets Fail Under Byzantine Attacks:</strong> FloodSet relies on honest nodes only reporting values they witnessed. If a malicious Byzantine node lies about seeing both $\{0, 1\}$, it can force arbitrary fallback decisions. To handle Byzantine traitors, systems must upgrade from flat sets to <strong>EIG Trees</strong>.</li>
+        </ol>
+      </article>
+
+      <aside class="toc-sidebar">
+        <div class="toc-title">Table of Contents</div>
+        <ul class="toc-list">
+          <li><a href="#consensus-under-crash-failures">1. Consensus Under Crash Faults</a></li>
+          <li><a href="#the-f-plus-one-bound">2. The f+1 Bound &amp; Clean Round</a></li>
+          <li><a href="#floodset-mechanics">3. Protocol Mechanics (Set Union)</a></li>
+          <li><a href="#step-by-step-algorithm">Step-by-Step Algorithm</a></li>
+          <li><a href="#formal-correctness-proof">4. Formal Correctness Proof</a></li>
+          <li><a href="#complexity-bounds">5. Complexity Analysis &amp; Bounds</a></li>
+          <li><a href="#floodset-vs-eig">6. FloodSet vs. EIG vs. Paxos</a></li>
+          <li><a href="#engineering-takeaways">7. Systems Engineering Takeaways</a></li>
+        </ul>
+
+        <div class="companion-box" style="margin-top: 1.25rem;">
+          <div class="companion-title">Companion PDF</div>
+          <p>Download the verified 3-page technical breakdown for offline study and architecture review.</p>
+          <a href="../Docs/FloodSet_Distributed_Consensus_Crash_Faults_Technical_Breakdown.pdf" class="download-link" target="_blank" download>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            FloodSet Algorithm PDF
+          </a>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-container">
+      <div class="footer-col">
+        <div class="footer-brand">
+          <div class="brand-icon">⚡</div>
+          <span>System Design Notes</span>
+        </div>
+        <p class="footer-tagline">Curated engineering notes, production architecture dissections, and distributed systems research papers.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Distributed Algorithms</h5>
+        <ul>
+          <li><a href="two-phase-commit-distributed-transactions.html">Two-Phase Commit Protocol</a></li>
+          <li><a href="implementing-two-phase-commit-distributed-system.html">Implementing 2PC &amp; WAL</a></li>
+          <li><a href="lcr-leader-election-algorithm.html">LCR Ring Leader Election</a></li>
+          <li><a href="hs-leader-election-algorithm.html">HS Bidirectional Leader Election</a></li>
+          <li><a href="two-generals-unsolvable-distributed-consensus.html">Two Generals' Consensus</a></li>
+          <li><a href="floodset-distributed-consensus-crash-faults.html">FloodSet Consensus</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Repository</h5>
+        <ul>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank">GitHub Repository</a></li>
+          <li><a href="../Docs/System_Design_Notes.pdf" target="_blank">Complete Notes (184 Pages)</a></li>
+          <li><a href="../Docs/FloodSet_Distributed_Consensus_Crash_Faults_Technical_Breakdown.pdf" target="_blank">FloodSet Consensus PDF (3 Pages)</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>Released under MIT License • Open Source Engineering Notes</p>
+    </div>
+  </footer>
+
+  <script src="../assets/js/main.js?v=3.3"></script>
+</body>
+</html>

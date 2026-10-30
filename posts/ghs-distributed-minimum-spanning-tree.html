@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GHS Algorithm: Distributed Minimum Spanning Tree (MST) &amp; Applications — System Design Notes</title>
+  <meta name="description" content="Comprehensive architectural and algorithmic breakdown of the Gallager-Humblet-Spira (GHS) distributed Minimum Spanning Tree algorithm based on Arpit Bhayani's lecture. Features fragment level elevation, MWOE discovery, edge classification, and O(|V| log |V| + |E|) message complexity.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css?v=3.3">
+  <link rel="stylesheet" href="../blog-theme.css?v=3.3">
+  <link rel="stylesheet" href="../assets/css/style.css?v=3.3">
+  <script>
+    (function() {
+      const saved = localStorage.getItem('theme');
+      if (saved) document.documentElement.dataset.theme = saved;
+    })();
+  </script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+  <div id="progress" aria-hidden="true"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">← All Notes</a></li>
+        </ul>
+        <div class="swatches" role="group" aria-label="Colour theme">
+          <button class="swatch" data-set-theme="light"  style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+          <button class="swatch" data-set-theme="dark"   style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+          <button class="swatch" data-set-theme="sepia"  style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+        </div>
+        <button id="theme-toggle" class="btn-icon" data-tooltip="Toggle light/dark theme" aria-label="Toggle Theme">
+          <span class="theme-icon">☀️</span>
+        </button>
+        <a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="btn-icon" data-tooltip="View GitHub Repository" aria-label="GitHub Repository">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+          </svg>
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="article-page">
+    <div class="article-breadcrumbs">
+      <a href="../index.html">Home</a>
+      <span>/</span>
+      <a href="../index.html#distributed-algorithms">Distributed Algorithms</a>
+      <span>/</span>
+      <span>GHS Distributed Minimum Spanning Tree</span>
+    </div>
+
+    <header class="article-header">
+      <span class="article-header-badge">Distributed Algorithms • Spanning Trees &amp; Graph Consensus</span>
+      <h1 class="article-header-title">GHS Algorithm: Distributed Minimum Spanning Tree (MST) &amp; Applications</h1>
+      <div class="article-header-meta">
+        <span>📁 Category: Distributed Algorithms &amp; Network Topologies</span>
+      </div>
+      <div class="article-header-actions">
+        <a href="../Docs/GHS_Distributed_Minimum_Spanning_Tree_Technical_Breakdown.pdf" target="_blank" download class="btn-secondary">
+          <span>📥 Download Technical PDF (3 Pages)</span>
+        </a>
+      </div>
+    </header>
+
+    <div class="article-container">
+      <article class="prose">
+        <div class="callout callout-note">
+          <div class="callout-title">📌 Primary Algorithmic Takeaway: Decentralized Optimization via Fragment Merging</div>
+          <p>Constructing a Minimum Spanning Tree (MST) in a decentralized network is one of the crowning achievements of distributed computing theory. Centralized algorithms (Prim, Kruskal) require global edge queues, making them impossible to run directly on distributed hardware. In 1983, Robert Gallager, Pierre Humblet, and Philip Spira published the <strong>GHS Algorithm</strong> (awarded the Edsger W. Dijkstra Prize). GHS operates through autonomous, growing subtrees called <strong>Fragments</strong>. By iteratively identifying their <strong>Minimum Weight Outgoing Edge (MWOE)</strong> and merging across fragment levels ($0, 1, \dots, \log |V|$), GHS constructs the optimal global MST using only $\mathcal{O}(|V| \log |V| + |E|)$ messages, providing the theoretical foundation for Ethernet Spanning Tree Protocols (STP/RSTP).</p>
+        </div>
+
+        <h2 id="the-mst-problem">1. The Minimum Spanning Tree Problem in Distributed Networks</h2>
+        <p>Given a connected undirected network $G = (V, E)$ where each physical link has an associated communication cost (latency, tariff, or error rate) denoted by unique weights $w(e)$, a <strong>Spanning Tree</strong> is an acyclic connected subgraph $T = (V, E_T)$ that spans all $n = |V|$ nodes with exactly $n - 1$ edges. A <strong>Minimum Spanning Tree (MST)</strong> is a spanning tree that minimizes the total aggregate edge cost:</p>
+
+        $$w(T) = \sum_{e \in E_T} w(e)$$
+
+        <p>In real-world networks, an MST serves two critical architectural functions:</p>
+        <ol>
+          <li><strong>Loop-Free Broadcast Infrastructure:</strong> In Ethernet networks (Layer 2), packet loops create catastrophic <em>broadcast radiation storms</em> that saturate switch backplanes. An MST eliminates all topological cycles while maintaining full host reachability.</li>
+          <li><strong>Minimum Energy &amp; Cost Overlays:</strong> In wireless sensor networks and telecommunications backbones, routing along an MST minimizes total transmitter power consumption and operational bandwidth fees.</li>
+        </ol>
+
+        <h2 id="ghs-system-model">2. System Model &amp; Edge Classification</h2>
+        <ul>
+          <li><strong>Connected Graph:</strong> $G = (V, E)$ with $|V| = n$ vertices and $|E| = m$ edges.</li>
+          <li><strong>Unique Edge Weights:</strong> All edge weights $w(e)$ are strictly distinct. This mathematical property guarantees that the graph has a <strong>uniquely determined Minimum Spanning Tree</strong>.</li>
+          <li><strong>Asynchronous Message Delivery:</strong> Channels are reliable and FIFO, but message travel times are arbitrary and unpredictable.</li>
+        </ul>
+
+        <h3 id="edge-states">Edge States on Every Node</h3>
+        <p>Each node $u \in V$ categorizes every adjacent edge $e \in \mathcal{N}(u)$ into one of three dynamic states:</p>
+        <ul>
+          <li><code>BASIC</code>: Initial state. The edge is unexamined and unclassified.</li>
+          <li><code>BRANCH</code>: Confirmed tree edge. The edge is permanently accepted into the Minimum Spanning Tree.</li>
+          <li><code>REJECTED</code>: Internal non-tree edge. The edge connects two nodes that reside within the <em>same fragment</em>. It is discarded to prevent cycle formation.</li>
+        </ul>
+
+        <div class="diagram-wrapper">
+          <svg class="arch-diagram" viewBox="0 0 740 330" width="100%" height="auto" xmlns="http://www.w3.org/2000/svg">
+            <rect x="10" y="10" width="720" height="310" rx="10" fill="var(--bg-card)" stroke="var(--border-color)" stroke-width="1.5"/>
+            <text x="370" y="38" text-anchor="middle" font-family="var(--sans)" font-size="15" font-weight="700" fill="var(--text-heading)">GHS Fragment Merging &amp; Minimum Weight Outgoing Edge (MWOE)</text>
+
+            <!-- Fragment 1 (Left) -->
+            <rect x="50" y="70" width="260" height="180" rx="12" fill="var(--code-bg)" stroke="var(--primary)" stroke-width="1.5" stroke-dasharray="4"/>
+            <text x="180" y="95" text-anchor="middle" font-family="var(--sans)" font-size="12" font-weight="700" fill="var(--primary)">Fragment F1 (Level L=1)</text>
+
+            <circle cx="110" cy="140" r="18" fill="var(--bg-card)" stroke="var(--primary)" stroke-width="2"/>
+            <text x="110" y="144" text-anchor="middle" font-family="var(--sans)" font-size="10" font-weight="700" fill="var(--text-heading)">u1</text>
+
+            <circle cx="210" cy="190" r="18" fill="var(--bg-card)" stroke="var(--primary)" stroke-width="2"/>
+            <text x="210" y="194" text-anchor="middle" font-family="var(--sans)" font-size="10" font-weight="700" fill="var(--text-heading)">u2</text>
+
+            <!-- Internal Branch Edge -->
+            <line x1="126" y1="148" x2="194" y2="182" stroke="#28a745" stroke-width="3"/>
+            <text x="160" y="155" text-anchor="middle" font-family="var(--mono)" font-size="9" fill="#28a745">BRANCH (w=2)</text>
+
+            <!-- Fragment 2 (Right) -->
+            <rect x="430" y="70" width="260" height="180" rx="12" fill="var(--code-bg)" stroke="#28a745" stroke-width="1.5" stroke-dasharray="4"/>
+            <text x="560" y="95" text-anchor="middle" font-family="var(--sans)" font-size="12" font-weight="700" fill="#28a745">Fragment F2 (Level L=1)</text>
+
+            <circle cx="510" cy="190" r="18" fill="var(--bg-card)" stroke="#28a745" stroke-width="2"/>
+            <text x="510" y="194" text-anchor="middle" font-family="var(--sans)" font-size="10" font-weight="700" fill="var(--text-heading)">v1</text>
+
+            <circle cx="610" cy="140" r="18" fill="var(--bg-card)" stroke="#28a745" stroke-width="2"/>
+            <text x="610" y="144" text-anchor="middle" font-family="var(--sans)" font-size="10" font-weight="700" fill="var(--text-heading)">v2</text>
+
+            <!-- Internal Branch Edge -->
+            <line x1="526" y1="182" x2="594" y2="148" stroke="#28a745" stroke-width="3"/>
+            <text x="560" y="155" text-anchor="middle" font-family="var(--mono)" font-size="9" fill="#28a745">BRANCH (w=3)</text>
+
+            <!-- Connecting MWOE Edge between u2 and v1 -->
+            <line x1="228" y1="190" x2="492" y2="190" stroke="var(--primary)" stroke-width="3"/>
+            <text x="360" y="180" text-anchor="middle" font-family="var(--mono)" font-size="11" font-weight="700" fill="var(--primary)">MWOE: Edge (u2, v1) [w=4]</text>
+
+            <!-- Rejected Edge between u1 and v2 -->
+            <path d="M 125 130 Q 360 80 595 130" fill="none" stroke="#dc3545" stroke-width="1.5" stroke-dasharray="3"/>
+            <text x="360" y="95" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="#dc3545">REJECTED (Internal after merge, w=9)</text>
+
+            <!-- Bottom Banner -->
+            <rect x="50" y="265" width="640" height="35" rx="5" fill="var(--tint)"/>
+            <text x="370" y="287" text-anchor="middle" font-family="var(--sans)" font-size="11" font-weight="700" fill="var(--accent)">Co-Merge Rule: Both fragments agree on MWOE (w=4) &rArr; Elevate to Level L = 2!</text>
+          </svg>
+        </div>
+
+        <h2 id="cut-property-mwoe">3. The Cut Property &amp; MWOE Discovery</h2>
+        <p>The mathematical foundation of GHS is the fundamental <strong>Cut Property</strong> of Minimum Spanning Trees:</p>
+
+        <blockquote>
+          <strong>The Cut Property:</strong> Let $(S, V \setminus S)$ be any non-trivial cut (partition) of the vertex set $V$. If an edge $e = (u, v)$ is the <em>strictly minimum weight edge crossing the cut</em> (with $u \in S$ and $v \in V \setminus S$), then $e$ must belong to the Minimum Spanning Tree of $G$.
+        </blockquote>
+
+        <p>In GHS, every Fragment represents a partition set $S$. Therefore, if a fragment discovers its <strong>Minimum Weight Outgoing Edge (MWOE)</strong>—the cheapest edge leading to a node outside itself—that edge is mathematically guaranteed to be part of the global MST!</p>
+
+        <h3 id="how-nodes-find-mwoe">How a Fragment Finds its MWOE</h3>
+        <ol>
+          <li>The core edge of the fragment broadcasts a <code>FIND(Level, FragmentID)</code> wave downward along all <code>BRANCH</code> edges to all nodes in the fragment.</li>
+          <li>Each node $u$ inspects its incident <code>BASIC</code> edges in ascending order of weight. It sends a <code>TEST(Level, FragmentID)</code> message across the edge.</li>
+          <li>The recipient $v$ compares its own fragment ID with the sender's:
+            <ul>
+              <li>If $\text{FragmentID}_v = \text{FragmentID}_u$: Both nodes are in the same fragment! The edge is internal. Node $u$ marks the edge as <code>REJECTED</code> and tests its next cheapest edge.</li>
+              <li>If $\text{FragmentID}_v \neq \text{FragmentID}_u$ and $\text{Level}_v \ge \text{Level}_u$: The edge is confirmed to be an <strong>outgoing edge</strong>! Node $v$ replies <code>ACCEPT</code>.</li>
+              <li>If $\text{Level}_v < \text{Level}_u$: Node $v$ delays answering until its own fragment advances in level.</li>
+            </ul>
+          </li>
+          <li>Each node identifies its local minimum outgoing edge and sends a <code>REPORT(weight)</code> convergecast back up the tree to the core edge.</li>
+          <li>The core edge identifies the global MWOE for the entire fragment.</li>
+        </ol>
+
+        <h2 id="fragment-merging-rules">4. Fragment Level Elevation &amp; Merging Rules</h2>
+        <p>To avoid race conditions and control message volume, GHS assigns every fragment a <strong>Level</strong> $L \in \{0, 1, 2, \dots\}$. Nodes start at Level 0. When Fragment $F_1$ (at Level $L_1$) finds MWOE $e$ connecting to Fragment $F_2$ (at Level $L_2$):</p>
+
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Condition</th>
+                <th>Protocol Action</th>
+                <th>Level Transition</th>
+                <th>Resulting Topology</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Merge (Absorption): $L_1 < L_2$</strong></td>
+                <td>$F_1$ sends <code>CONNECT(L_1)</code> to $F_2$. Fragment $F_2$ immediately absorbs $F_1$.</td>
+                <td>Level remains $L_2$. $F_1$ adopts $F_2$'s FragmentID.</td>
+                <td>Smaller fragment is absorbed without incrementing the global level.</td>
+              </tr>
+              <tr>
+                <td><strong>Co-Merge (Combination): $L_1 = L_2$</strong></td>
+                <td>Both fragments discover that edge $e$ is their shared MWOE! Both send <code>CONNECT(L)</code> to each other across $e$.</td>
+                <td><strong>Level increments to $L + 1$!</strong> Edge $e$ becomes the new <strong>Core Edge</strong>.</td>
+                <td>Two equal fragments unite, doubling node count and advancing level.</td>
+              </tr>
+              <tr>
+                <td><strong>Wait / Postpone: $L_1 > L_2$</strong></td>
+                <td>$F_2$ delays processing $F_1$'s connect message until $F_2$'s level catches up.</td>
+                <td>No change until $F_2$ reaches $L_1$.</td>
+                <td>Prevents high-level fragments from being disrupted by lagging low-level fragments.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="complexity-analysis">5. Formal Proof of $\mathcal{O}(|V| \log |V| + |E|)$ Complexity</h2>
+
+        <h3 id="maximum-level-bound">Lemma 1: Bound on Maximum Level</h3>
+        <p>A fragment elevates from Level $L$ to $L + 1$ if and only if two fragments of Level $L$ combine. By induction, a fragment at Level $L$ must contain at least $2^L$ nodes:</p>
+        $$|V_F(L)| \ge 2^L \implies 2^L \le |V| \implies L_{\max} \le \lfloor \log_2 |V| \rfloor$$
+        <p>There are at most $\mathcal{O}(\log |V|)$ levels in any execution.</p>
+
+        <h3 id="messages-per-level">Lemma 2: Core Control Message Bound</h3>
+        <p>In each level $L$, a node participates in at most one <code>FIND</code> broadcast and one <code>REPORT</code> convergecast. Across all nodes, this generates at most $\mathcal{O}(|V|)$ messages per level. Summing across all $\mathcal{O}(\log |V|)$ levels yields:</p>
+        $$M_{\text{control}} \le \mathcal{O}(|V| \log |V|)$$
+
+        <h3 id="edge-test-bound">Lemma 3: Edge Testing and Rejection Bound</h3>
+        <p>Every edge in $G$ is tested with <code>TEST</code> and rejected with <code>REJECT</code> at most once per direction during the entire execution of the algorithm. Once an edge is marked <code>REJECTED</code>, it is never examined again. Thus, edge testing contributes at most:</p>
+        $$M_{\text{testing}} \le 2 |E| = \mathcal{O}(|E|)$$
+
+        <h3 id="theorem-total-messages">Theorem: Total Message Complexity</h3>
+        <p>Combining control and edge testing messages:</p>
+        $$M_{\text{total}} = M_{\text{control}} + M_{\text{testing}} = \mathcal{O}(|V| \log |V| + |E|)$$
+        <p>This is strictly optimal: any distributed algorithm must examine every edge at least once ($\Omega(|E|)$) and requires $\Omega(|V| \log |V|)$ messages for leader/component coordination.</p>
+
+        <h2 id="real-world-applications">6. Real-World Applications: Ethernet Spanning Tree Protocol (STP)</h2>
+        <p>The concepts pioneered by GHS form the direct intellectual heritage of <strong>IEEE 802.1D Spanning Tree Protocol (STP)</strong> and <strong>Rapid Spanning Tree Protocol (RSTP / 802.1w)</strong> used across all enterprise network switches:</p>
+
+        <ul>
+          <li><strong>Bridge Protocol Data Units (BPDUs):</strong> Switches elect a Root Bridge (analogous to the GHS core) and disable redundant switch ports (marking them as <code>REJECTED</code> / Blocking ports).</li>
+          <li><strong>Loop Prevention:</strong> STP converts a redundant physical mesh of network cables into a loop-free logical spanning tree, preventing Layer 2 broadcast storms while automatically unblocking standby links if a primary fiber cable is severed.</li>
+        </ul>
+
+        <h2 id="engineering-takeaways">7. Systems Engineering Takeaways</h2>
+        <ol>
+          <li><strong>Fragment-Based Parallelism:</strong> GHS achieves massive parallelism by allowing disconnected components to compute their own local MWOEs simultaneously without waiting for global consensus.</li>
+          <li><strong>Level Guards Prevent Deadlocks:</strong> The rule that higher-level fragments defer answering lower-level fragments prevents cyclical dependency chains and livelocks in asynchronous networks.</li>
+          <li><strong>Unique Weights Guarantee Determinism:</strong> When designing distributed algorithms that select minimum elements across partitions, ensure that tie-breaking rules (e.g. comparing tuple $(w(e), \text{UID}_u, \text{UID}_v)$) produce strict total ordering.</li>
+        </ol>
+      </article>
+
+      <aside class="toc-sidebar">
+        <div class="toc-title">Table of Contents</div>
+        <ul class="toc-list">
+          <li><a href="#the-mst-problem">1. The Minimum Spanning Tree Problem</a></li>
+          <li><a href="#ghs-system-model">2. System Model &amp; Edge States</a></li>
+          <li><a href="#cut-property-mwoe">3. Cut Property &amp; MWOE Discovery</a></li>
+          <li><a href="#how-nodes-find-mwoe">MWOE Search Waves</a></li>
+          <li><a href="#fragment-merging-rules">4. Fragment Level Merging Rules</a></li>
+          <li><a href="#complexity-analysis">5. O(|V| log |V| + |E|) Complexity</a></li>
+          <li><a href="#real-world-applications">6. Ethernet STP Applications</a></li>
+          <li><a href="#engineering-takeaways">7. Systems Engineering Takeaways</a></li>
+        </ul>
+
+        <div class="companion-box" style="margin-top: 1.25rem;">
+          <div class="companion-title">Companion PDF</div>
+          <p>Download the verified 3-page technical breakdown for offline study and architecture review.</p>
+          <a href="../Docs/GHS_Distributed_Minimum_Spanning_Tree_Technical_Breakdown.pdf" class="download-link" target="_blank" download>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            GHS Algorithm PDF
+          </a>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-container">
+      <div class="footer-col">
+        <div class="footer-brand">
+          <div class="brand-icon">⚡</div>
+          <span>System Design Notes</span>
+        </div>
+        <p class="footer-tagline">Curated engineering notes, production architecture dissections, and distributed systems research papers.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Distributed Algorithms</h5>
+        <ul>
+          <li><a href="two-phase-commit-distributed-transactions.html">Two-Phase Commit Protocol</a></li>
+          <li><a href="implementing-two-phase-commit-distributed-system.html">Implementing 2PC &amp; WAL</a></li>
+          <li><a href="lcr-leader-election-algorithm.html">LCR Ring Leader Election</a></li>
+          <li><a href="hs-leader-election-algorithm.html">HS Bidirectional Leader Election</a></li>
+          <li><a href="timeslice-leader-election-algorithm.html">TimeSlice O(n) Leader Election</a></li>
+          <li><a href="floodmax-leader-election-algorithm.html">FloodMax General Graph Election</a></li>
+          <li><a href="synchronous-bfs-distributed-systems.html">Synchronous Distributed BFS</a></li>
+          <li><a href="distributed-bellman-ford-shortest-path.html">Distributed Bellman-Ford</a></li>
+          <li><a href="ghs-distributed-minimum-spanning-tree.html">GHS Distributed MST</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Repository</h5>
+        <ul>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank">GitHub Repository</a></li>
+          <li><a href="../Docs/System_Design_Notes.pdf" target="_blank">Complete Notes (184 Pages)</a></li>
+          <li><a href="../Docs/GHS_Distributed_Minimum_Spanning_Tree_Technical_Breakdown.pdf" target="_blank">GHS Algorithm PDF (3 Pages)</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>Released under MIT License • Open Source Engineering Notes</p>
+    </div>
+  </footer>
+
+  <script src="../assets/js/main.js?v=3.3"></script>
+</body>
+</html>

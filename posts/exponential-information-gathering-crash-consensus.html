@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Exponential Information Gathering (EIG) Algorithm: Distributed Consensus Under Crash Faults — System Design Notes</title>
+  <meta name="description" content="Deep-dive analysis into the Exponential Information Gathering (EIG) algorithm for crash-stop consensus in synchronous networks. Covers the EIG tree data structure, f+1 round lower bound, provenance tracking, and consensus proofs.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css?v=3.3">
+  <link rel="stylesheet" href="../blog-theme.css?v=3.3">
+  <link rel="stylesheet" href="../assets/css/style.css?v=3.3">
+  <script>
+    (function() {
+      const saved = localStorage.getItem('theme');
+      if (saved) document.documentElement.dataset.theme = saved;
+    })();
+  </script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+  <div id="progress" aria-hidden="true"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">Articles</a></li>
+          <li><a href="../index.html#categories">Categories</a></li>
+          <li><a href="../index.html#pdf-library">PDF Library</a></li>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="github-nav-link">GitHub</a></li>
+        </ul>
+        <button id="theme-toggle" class="theme-toggle-btn" aria-label="Toggle theme">
+          <svg class="sun-icon" viewBox="0 0 24 24" width="18" height="18"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+          <svg class="moon-icon" viewBox="0 0 24 24" width="18" height="18"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <main class="post-container">
+    <div class="breadcrumb">
+      <a href="../index.html">Home</a>
+      <span class="separator">/</span>
+      <a href="../index.html#categories">Distributed Algorithms</a>
+      <span class="separator">/</span>
+      <span class="current">Exponential Information Gathering (Crash Faults)</span>
+    </div>
+
+    <header class="article-header">
+      <div class="badge-row">
+        <span class="badge badge-consensus">Distributed Consensus</span>
+        <span class="badge badge-theory">Synchronous Systems</span>
+        <span class="badge badge-accent">Crash Faults</span>
+        <span class="badge badge-rounds">f + 1 Bound</span>
+      </div>
+      <h1 class="article-title">Exponential Information Gathering (EIG): Distributed Consensus Under Crash Faults</h1>
+      <p class="article-subtitle">How path-labeled attribution trees eliminate asymmetric knowledge divergence in synchronous networks, establishing provable crash-stop consensus within exactly $f+1$ rounds.</p>
+      <div class="article-meta">
+        <span class="meta-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> 22 min read</span>
+        <span class="meta-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> Arpit Bhayani Distributed Systems Series</span>
+        <span class="meta-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> Verified 3-Page Companion PDF</span>
+      </div>
+      <div class="pdf-action-banner">
+        <a href="../Docs/Exponential_Information_Gathering_Crash_Consensus_Technical_Breakdown.pdf" class="pdf-btn" target="_blank" download>
+          <span>📥 Download Technical PDF (3 Pages)</span>
+        </a>
+      </div>
+    </header>
+
+    <div class="article-container">
+      <article class="prose">
+        <div class="callout callout-note">
+          <div class="callout-title">📌 Core Architectural Takeaway: Knowledge Provenance Over Flat Information Sets</div>
+          <p>While the <strong>FloodSet algorithm</strong> solves distributed crash consensus by unioning values into a flat set, it discards <em>provenance</em>—the chain of custody detailing <strong>who reported what to whom</strong>. The <strong>Exponential Information Gathering (EIG) algorithm</strong>, pioneered by Lynch, Fischer, and Moses, structures distributed knowledge into an <strong>attribution tree</strong> of depth $f + 1$. Each tree node represents an explicit transmission path. By preserving the exact causal trail of message transit, surviving nodes detect exactly when and where a process died mid-broadcast, enabling unanimous bottom-up consensus reduction even in worst-case cascading failure cascades.</p>
+        </div>
+
+        <h2 id="the-crash-consensus-challenge">1. The Crash Consensus Challenge &amp; Asymmetric Partitions</h2>
+        <p>In a synchronous distributed system of $n$ distinct processes $\mathcal{P} = \{p_1, p_2, \dots, p_n\}$, each process starts with an initial private value $v_i \in V$. The cluster must agree on a single common output decision subject to three classic conditions:</p>
+        <ul>
+          <li><strong>Agreement:</strong> All non-faulty processes decide on the identical output value $v^* \in V$.</li>
+          <li><strong>Validity:</strong> If all processes begin with the identical initial value $v$, then all non-faulty processes must decide $v$. If initial values differ, the decision must be in $V$.</li>
+          <li><strong>Termination:</strong> All non-faulty processes terminate and output a decision within a bounded number of communication rounds.</li>
+        </ul>
+
+        <p>The core difficulty under the <strong>Crash-Stop (Fail-Stop) model</strong> is the <em>mid-broadcast failure</em>. A node broadcasting its value $v_i$ to $n-1$ peers may abruptly crash after sending to a subset $S \subset \mathcal{P}$, leaving remaining peers in asymmetric states:</p>
+
+        <div class="callout callout-warning">
+          <div class="callout-title">⚠️ The Hazard of Asymmetric Crash Observation</div>
+          <p>Suppose $p_1$ crashes midway through Round 1 while sending $v_1 = 1$. Nodes $p_2, p_3$ receive $1$, but nodes $p_4, p_5$ receive nothing ($\bot$). If processes were to decide immediately at the end of Round 1, $p_2, p_3$ would see $\{0, 1\}$ while $p_4, p_5$ would see $\{0\}$. If decisions are made on local observations alone, agreement is violated. Overcoming this requires propagating not just values, but <em>who witnessed those values</em>.</p>
+        </div>
+
+        <h2 id="the-eig-tree-architecture">2. The EIG Tree Data Structure</h2>
+        <p>In the EIG algorithm, each process $p_i$ maintains an internal tree $\mathcal{T}_i$ known as the <strong>Exponential Information Gathering Tree</strong>. The structure is defined as follows:</p>
+
+        <ul>
+          <li><strong>Tree Depth:</strong> Exactly $f + 1$ levels (rooted at level 0, extending to level $f+1$), where $f < n$ is the maximum number of crash failures the protocol is configured to tolerate.</li>
+          <li><strong>Path Labeling:</strong> Each node in the tree is identified by a string $\alpha = j_1 j_2 \dots j_k$ of distinct process IDs, where $k$ is the tree depth ($1 \le k \le f+1$).</li>
+          <li><strong>Semantic Meaning of Path $\alpha$:</strong> The label $\alpha = j_1 j_2 \dots j_k$ represents the value:
+            $$\text{“Process } j_k \text{ reported to me that } j_{k-1} \text{ reported that } \dots \text{ that process } j_1 \text{ started with value } v_{j_1}\text{.”}$$
+          </li>
+          <li><strong>Root Node ($\lambda$):</strong> The empty string $\lambda$, representing the unassigned global consensus decision space.</li>
+          <li><strong>Node Values:</strong> For each node $\alpha$, the process stores a value $val(\alpha) \in V \cup \{\bot\}$, where $\bot$ explicitly denotes that no message was received (either the process crashed or an ancestor in the path crashed).</li>
+        </ul>
+
+        <div class="mermaid-diagram-wrapper">
+          <svg viewBox="0 0 860 380" width="100%" height="auto" xmlns="http://www.w3.org/2000/svg" style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; font-family: var(--sans);">
+            <!-- Background & Title -->
+            <rect width="860" height="380" fill="var(--bg-card)" rx="8"/>
+            <text x="430" y="30" text-anchor="middle" font-size="16" font-weight="700" fill="var(--text-heading)">EIG Tree Structure: Path-Attributed Knowledge Dissemination</text>
+            <text x="430" y="50" text-anchor="middle" font-size="12" fill="var(--text-muted)">Tracking recursive provenance across rounds up to depth f + 1</text>
+
+            <!-- Level 0: Root -->
+            <circle cx="430" cy="100" r="24" fill="var(--accent)" fill-opacity="0.2" stroke="var(--accent)" stroke-width="2.5"/>
+            <text x="430" y="105" text-anchor="middle" font-size="13" font-weight="700" fill="var(--text-heading)">Root λ</text>
+            <text x="50" y="105" font-size="12" font-weight="600" fill="var(--text-muted)">Level 0 (Decision)</text>
+
+            <!-- Connecting Lines Root to Level 1 -->
+            <line x1="430" y1="124" x2="190" y2="180" stroke="var(--border-color)" stroke-width="2"/>
+            <line x1="430" y1="124" x2="350" y2="180" stroke="var(--border-color)" stroke-width="2"/>
+            <line x1="430" y1="124" x2="510" y2="180" stroke="var(--border-color)" stroke-width="2"/>
+            <line x1="430" y1="124" x2="670" y2="180" stroke="var(--border-color)" stroke-width="2"/>
+
+            <!-- Level 1 Nodes -->
+            <rect x="150" y="180" width="80" height="36" rx="6" fill="var(--raised)" stroke="var(--accent)" stroke-width="2"/>
+            <text x="190" y="202" text-anchor="middle" font-size="12" font-weight="700" fill="var(--text-heading)">p1 (v1)</text>
+
+            <rect x="310" y="180" width="80" height="36" rx="6" fill="var(--raised)" stroke="var(--accent)" stroke-width="2"/>
+            <text x="350" y="202" text-anchor="middle" font-size="12" font-weight="700" fill="var(--text-heading)">p2 (v2)</text>
+
+            <rect x="470" y="180" width="80" height="36" rx="6" fill="var(--raised)" stroke="var(--accent)" stroke-width="2"/>
+            <text x="510" y="202" text-anchor="middle" font-size="12" font-weight="700" fill="var(--text-heading)">p3 (v3)</text>
+
+            <rect x="630" y="180" width="80" height="36" rx="6" fill="var(--raised)" stroke="#ef4444" stroke-width="2" stroke-dasharray="4"/>
+            <text x="670" y="202" text-anchor="middle" font-size="12" font-weight="700" fill="#ef4444">p4 (⊥)</text>
+            <text x="50" y="200" font-size="12" font-weight="600" fill="var(--text-muted)">Level 1 (Round 1)</text>
+
+            <!-- Connecting Lines Level 1 to Level 2 (Subtree under p1) -->
+            <line x1="170" y1="216" x2="110" y2="280" stroke="var(--border-color)" stroke-width="1.5"/>
+            <line x1="190" y1="216" x2="190" y2="280" stroke="var(--border-color)" stroke-width="1.5"/>
+            <line x1="210" y1="216" x2="270" y2="280" stroke="var(--border-color)" stroke-width="1.5"/>
+
+            <!-- Level 2 Nodes (Paths) -->
+            <rect x="75" y="280" width="70" height="34" rx="5" fill="var(--bg-card)" stroke="var(--border-color)" stroke-width="1.5"/>
+            <text x="110" y="301" text-anchor="middle" font-size="11" font-weight="600" fill="var(--text-heading)">p1·p2</text>
+
+            <rect x="155" y="280" width="70" height="34" rx="5" fill="var(--bg-card)" stroke="var(--border-color)" stroke-width="1.5"/>
+            <text x="190" y="301" text-anchor="middle" font-size="11" font-weight="600" fill="var(--text-heading)">p1·p3</text>
+
+            <rect x="235" y="280" width="70" height="34" rx="5" fill="var(--bg-card)" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3"/>
+            <text x="270" y="301" text-anchor="middle" font-size="11" font-weight="600" fill="#ef4444">p1·p4 (⊥)</text>
+            <text x="50" y="300" font-size="12" font-weight="600" fill="var(--text-muted)">Level 2 (Round 2)</text>
+
+            <!-- Callout text on right -->
+            <rect x="420" y="260" width="390" height="90" rx="6" fill="var(--raised)" stroke="var(--border-color)" stroke-width="1"/>
+            <text x="435" y="282" font-size="12" font-weight="700" fill="var(--text-heading)">Attribution &amp; Pruning Invariant:</text>
+            <text x="435" y="302" font-size="11" fill="var(--text-muted)">• Node label string p1·p2 indicates what p2 claims p1 reported.</text>
+            <text x="435" y="320" font-size="11" fill="var(--text-muted)">• If p4 crashes, missing entries evaluate to ⊥ (crash detected).</text>
+            <text x="435" y="338" font-size="11" fill="var(--text-muted)">• Depth f+1 ensures a clean crash-free transmission round.</text>
+          </svg>
+        </div>
+
+        <h2 id="step-by-step-algorithm">3. Step-by-Step EIG Protocol Execution</h2>
+        <p>The EIG protocol operates across strictly synchronous rounds $r = 1, 2, \dots, f + 1$, followed by a local bottom-up tree evaluation step:</p>
+
+        <h3>Round 1: Initial State Broadcast</h3>
+        <ol>
+          <li>Each process $p_i$ broadcasts its initial value $v_i \in V$ to all peers in $\mathcal{P}$.</li>
+          <li>For every process $p_j \in \mathcal{P}$:
+            <ul>
+              <li>If a valid message $v_j$ is received from $p_j$, set $val_i(j) \leftarrow v_j$.</li>
+              <li>If no message is received (timeout indicating crash), set $val_i(j) \leftarrow \bot$.</li>
+            </ul>
+          </li>
+        </ol>
+
+        <h3>Round $r$ ($2 \le r \le f + 1$): Attributed Path Exchange</h3>
+        <ol>
+          <li>Each surviving process $p_i$ constructs a message containing all node labels and values at <strong>level $r - 1$</strong> of its EIG tree:
+            $$\mathcal{M}_i^{(r)} = \{ (\alpha, val_i(\alpha)) \mid |\alpha| = r - 1 \}$$
+          </li>
+          <li>Process $p_i$ broadcasts $\mathcal{M}_i^{(r)}$ to all peers.</li>
+          <li>Upon receiving $\mathcal{M}_j^{(r)}$ from peer $p_j$, for each pair $(\alpha, v) \in \mathcal{M}_j^{(r)}$ where process $j$ does not appear in path $\alpha$:
+            $$val_i(\alpha \cdot j) \leftarrow v$$
+          </li>
+          <li>If no message was received from $p_j$ in Round $r$, then for all eligible prefixes $\alpha$:
+            $$val_i(\alpha \cdot j) \leftarrow \bot$$
+          </li>
+        </ol>
+
+        <h2 id="bottom-up-reduction">4. Decision Rule: Bottom-Up Tree Reduction</h2>
+        <p>Once Round $f + 1$ completes, each non-faulty process $p_i$ performs an identical, deterministic bottom-up resolution on its tree $\mathcal{T}_i$ to assign a resolved value $newval_i(\alpha)$ to each node, culminating in the root decision $newval_i(\lambda)$:</p>
+
+        <div class="callout callout-note">
+          <div class="callout-title">📐 Formal Bottom-Up Reduction Operator</div>
+          <p>For any node $\alpha$ with depth $|\alpha|$:</p>
+          <p><strong>1. Base Case (Leaves at Level $f + 1$):</strong></p>
+          $$newval_i(\alpha) = \begin{cases} val_i(\alpha) & \text{if } val_i(\alpha) \neq \bot \\ v_{\text{default}} & \text{if } val_i(\alpha) = \bot \end{cases}$$
+          <p><strong>2. Inductive Step (Internal Nodes from Level $f$ down to Level 0):</strong></p>
+          <p>Let $C(\alpha) = \{ newval_i(\alpha \cdot j) \mid j \notin \text{nodes}(\alpha) \}$ be the set of resolved values of $\alpha$'s children. If all values in $C(\alpha)$ are identical to some single value $v \in V$, then:</p>
+          $$newval_i(\alpha) = v$$
+          <p>Otherwise, if there is a conflict or multiple distinct values exist in $C(\alpha)$, $p_i$ applies the fixed tie-breaker rule:</p>
+          $$newval_i(\alpha) = \min(C(\alpha)) \quad (\text{or default } v_{\text{default}})$$
+          <p><strong>3. Terminal Output:</strong> Process $p_i$ outputs the decision $v^* = newval_i(\lambda)$.</p>
+        </div>
+
+        <h2 id="python-reference-implementation">5. Executable Reference Implementation</h2>
+        <p>Below is a clean, self-contained Python 3 implementation demonstrating the complete EIG tree construction, mid-broadcast crash simulation, and bottom-up reduction rule:</p>
+
+        <pre><code class="language-python">from typing import Dict, Optional, Set, List
+
+class EIGCrashConsensusNode:
+    def __init__(self, node_id: int, total_nodes: int, max_crashes: int, initial_val: int):
+        self.id = node_id
+        self.n = total_nodes
+        self.f = max_crashes
+        self.initial_val = initial_val
+        self.is_alive = True
+        
+        # Raw received tree values: key is path tuple e.g. (1,) or (1, 2)
+        self.val: Dict[tuple, Optional[int]] = {}
+        # Resolved values computed during bottom-up reduction
+        self.newval: Dict[tuple, int] = {}
+        self.default_val = 0
+
+    def round_1_broadcast(self) -> Optional[int]:
+        return self.initial_val if self.is_alive else None
+
+    def round_1_receive(self, messages: Dict[int, Optional[int]]):
+        for peer_id in range(1, self.n + 1):
+            val = messages.get(peer_id)
+            self.val[(peer_id,)] = val  # None represents bot (crashed)
+
+    def round_r_send(self, current_round: int) -> Optional[Dict[tuple, Optional[int]]]:
+        if not self.is_alive:
+            return None
+        # Return all entries in EIG tree at level current_round - 1
+        level = current_round - 1
+        return {path: v for path, v in self.val.items() if len(path) == level}
+
+    def round_r_receive(self, current_round: int, incoming: Dict[int, Optional[Dict[tuple, Optional[int]]]]):
+        expected_len = current_round - 1
+        for peer_id in range(1, self.n + 1):
+            peer_payload = incoming.get(peer_id)
+            # Iterate through all existing paths at level - 1
+            for path in list(self.val.keys()):
+                if len(path) == expected_len and peer_id not in path:
+                    new_path = path + (peer_id,)
+                    if peer_payload is not None and path in peer_payload:
+                        self.val[new_path] = peer_payload[path]
+                    else:
+                        self.val[new_path] = None  # Peer died or dropped message
+
+    def compute_decision(self) -> int:
+        """Evaluates tree bottom-up from depth f + 1 to root ()"""
+        # Step 1: Base Case for Leaves at depth f + 1
+        for path, v in self.val.items():
+            if len(path) == self.f + 1:
+                self.newval[path] = v if v is not None else self.default_val
+
+        # Step 2: Inductive bottom-up reduction for levels f down to 0
+        for level in range(self.f, -1, -1):
+            paths_at_level = [p for p in self.val.keys() if len(p) == level]
+            if level == 0:
+                paths_at_level = [()]
+
+            for path in paths_at_level:
+                # Find all children: path + (j,)
+                children_vals = [
+                    self.newval[path + (j,)]
+                    for j in range(1, self.n + 1)
+                    if j not in path and (path + (j,)) in self.newval
+                ]
+                if not children_vals:
+                    self.newval[path] = self.default_val
+                elif all(cv == children_vals[0] for cv in children_vals):
+                    self.newval[path] = children_vals[0]
+                else:
+                    self.newval[path] = min(children_vals)
+
+        return self.newval[()]  # Consensus decision at root
+</code></pre>
+
+        <h2 id="formal-correctness-proof">6. Formal Correctness &amp; Proof of Agreement</h2>
+        <p>The mathematical guarantee that all surviving processes output the exact same value relies on the <strong>Clean Round Invariant</strong>:</p>
+
+        <div class="callout callout-note">
+          <div class="callout-title">Theorem: Consensus Agreement in f + 1 Rounds</div>
+          <p>In any synchronous execution where at most $f$ processes crash, all non-faulty processes terminate after $f+1$ rounds and satisfy $newval_i(\lambda) = newval_j(\lambda)$ for all non-faulty $p_i, p_j$.</p>
+        </div>
+
+        <h3>Proof Sketch by the Pigeonhole Principle</h3>
+        <ol>
+          <li><strong>The Existence of a Clean Round:</strong> A process can crash at most once. If up to $f$ processes crash across $f + 1$ rounds of execution, by the <em>Pigeonhole Principle</em>, there must exist at least one round $k \in \{1, 2, \dots, f + 1\}$ in which <strong>zero processes crash</strong>. This round $k$ is designated as the <em>Clean Round</em>.</li>
+          <li><strong>Identical Level $k$ Broadcasts:</strong> In clean round $k$, every process that is alive at the start of round $k$ successfully transmits its level $k-1$ tree contents to <em>all</em> other living processes. No messages are lost or dropped.</li>
+          <li><strong>Knowledge Synchronization:</strong> Consequently, for every path $\alpha$ of length $k$, every non-faulty process $p_i$ and $p_j$ records identical values:
+            $$val_i(\alpha) = val_j(\alpha)$$
+          </li>
+          <li><strong>Determinism of Descendants:</strong> All subsequent messages at rounds $k+1, \dots, f+1$ are deterministic re-transmissions of these identical values. Any process that crashes in later rounds cannot distort the previously synchronized values.</li>
+          <li><strong>Bottom-Up Invariance:</strong> During bottom-up reduction, any node $\alpha$ with $|\alpha| = k$ evaluates to the exact same value across all non-faulty nodes:
+            $$newval_i(\alpha) = newval_j(\alpha)$$
+            By induction, this consensus propagates all the way up to the root:
+            $$newval_i(\lambda) = newval_j(\lambda) = v^*$$
+        </ol>
+
+        <h2 id="complexity-and-bounds">7. Complexity Analysis &amp; The EIG Explosion</h2>
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>Metric</th>
+                <th>EIG Algorithm (Crash Model)</th>
+                <th>FloodSet Algorithm</th>
+                <th>Paxos / Raft (Async)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Rounds to Decision</strong></td>
+                <td>$f + 1$ rounds (Strictly optimal)</td>
+                <td>$f + 1$ rounds (Strictly optimal)</td>
+                <td>1–2 RTTs typical; unbounded worst-case</td>
+              </tr>
+              <tr>
+                <td><strong>Tree / State Size</strong></td>
+                <td>$O(n^{f+1})$ nodes (Exponential explosion)</td>
+                <td>$O(|V|)$ flat values (Linear / Minimal)</td>
+                <td>$O(L)$ log entries</td>
+              </tr>
+              <tr>
+                <td><strong>Message Size</strong></td>
+                <td>$O(n^{f})$ bits per message</td>
+                <td>$O(|V|)$ bits per message</td>
+                <td>$O(\text{batch size})$</td>
+              </tr>
+              <tr>
+                <td><strong>Byzantine Generalizability</strong></td>
+                <td><strong>Yes</strong> (Direct foundation for $3f+1$ BA)</td>
+                <td><strong>No</strong> (Easily poisoned by arbitrary lies)</td>
+                <td>Requires PBFT / Tendermint</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="engineering-takeaways">8. Systems Engineering Takeaways</h2>
+        <ol>
+          <li><strong>EIG is a Theoretical Blueprint:</strong> While the $O(n^{f+1})$ message size makes EIG impractical for raw production storage systems compared to FloodSet or Paxos, its strict path attribution is the indispensable foundation for proving <strong>Byzantine Agreement</strong>.</li>
+          <li><strong>Lower Bound Irreducibility:</strong> No deterministic consensus algorithm can guarantee agreement under $f$ crash faults in fewer than $f+1$ rounds in synchronous networks. Whether using lightweight FloodSet or attribution-rich EIG, systems must pay the $f+1$ round latency penalty.</li>
+          <li><strong>Bridging to Byzantine Faults:</strong> In a crash model, a node cannot lie—it can only withhold messages ($\bot$). In the Byzantine model, nodes can actively lie and send conflicting values. Because EIG records <em>who told what</em>, it allows recursive majority voting to filter out traitors, which flat sets cannot do.</li>
+        </ol>
+      </article>
+
+      <aside class="toc-sidebar">
+        <div class="toc-title">Table of Contents</div>
+        <ul class="toc-list">
+          <li><a href="#the-crash-consensus-challenge">1. The Crash Consensus Challenge</a></li>
+          <li><a href="#the-eig-tree-architecture">2. The EIG Tree Data Structure</a></li>
+          <li><a href="#step-by-step-algorithm">3. Step-by-Step EIG Protocol</a></li>
+          <li><a href="#bottom-up-reduction">4. Decision Rule: Bottom-Up Reduction</a></li>
+          <li><a href="#python-reference-implementation">5. Python Reference Implementation</a></li>
+          <li><a href="#formal-correctness-proof">6. Formal Correctness Proof</a></li>
+          <li><a href="#complexity-and-bounds">7. Complexity &amp; State Explosion</a></li>
+          <li><a href="#engineering-takeaways">8. Systems Engineering Takeaways</a></li>
+        </ul>
+
+        <div class="companion-box" style="margin-top: 1.25rem;">
+          <div class="companion-title">Companion PDF</div>
+          <p>Download the verified 3-page technical breakdown for offline study and architecture review.</p>
+          <a href="../Docs/Exponential_Information_Gathering_Crash_Consensus_Technical_Breakdown.pdf" class="download-link" target="_blank" download>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            EIG Crash Consensus PDF
+          </a>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-container">
+      <div class="footer-col">
+        <div class="footer-brand">
+          <div class="brand-icon">⚡</div>
+          <span>System Design Notes</span>
+        </div>
+        <p class="footer-tagline">Curated engineering notes, production architecture dissections, and distributed systems research papers.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Distributed Algorithms</h5>
+        <ul>
+          <li><a href="two-phase-commit-distributed-transactions.html">Two-Phase Commit Protocol</a></li>
+          <li><a href="two-generals-unsolvable-distributed-consensus.html">Two Generals' Consensus</a></li>
+          <li><a href="floodset-distributed-consensus-crash-faults.html">FloodSet Consensus</a></li>
+          <li><a href="exponential-information-gathering-crash-consensus.html">EIG Crash Consensus</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Repository</h5>
+        <ul>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank">GitHub Repository</a></li>
+          <li><a href="../Docs/System_Design_Notes.pdf" target="_blank">Complete Notes (184 Pages)</a></li>
+          <li><a href="../Docs/Exponential_Information_Gathering_Crash_Consensus_Technical_Breakdown.pdf" target="_blank">EIG Crash PDF (3 Pages)</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>Released under MIT License • Open Source Engineering Notes</p>
+    </div>
+  </footer>
+
+  <script src="../assets/js/main.js?v=3.3"></script>
+</body>
+</html>

@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Distributed Bellman-Ford Algorithm: Distance Vector Routing &amp; Negative Cycle Detection — System Design Notes</title>
+  <meta name="description" content="Rigorous architectural breakdown and formal proofs of the Distributed Bellman-Ford shortest-path algorithm based on Arpit Bhayani's lecture. Features distance vector relaxation, convergence in |V|-1 rounds, negative cycle detection, and routing protocol trade-offs.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css?v=3.3">
+  <link rel="stylesheet" href="../blog-theme.css?v=3.3">
+  <link rel="stylesheet" href="../assets/css/style.css?v=3.3">
+  <script>
+    (function() {
+      const saved = localStorage.getItem('theme');
+      if (saved) document.documentElement.dataset.theme = saved;
+    })();
+  </script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+  <div id="progress" aria-hidden="true"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">← All Notes</a></li>
+        </ul>
+        <div class="swatches" role="group" aria-label="Colour theme">
+          <button class="swatch" data-set-theme="light"  style="--s1:#f2f3ef;--s2:#3d56a0" aria-label="Light"></button>
+          <button class="swatch" data-set-theme="dark"   style="--s1:#14181c;--s2:#a3b8f2" aria-label="Dark"></button>
+          <button class="swatch" data-set-theme="sepia"  style="--s1:#e8e0ce;--s2:#7b4a2a" aria-label="Sepia"></button>
+        </div>
+        <button id="theme-toggle" class="btn-icon" data-tooltip="Toggle light/dark theme" aria-label="Toggle Theme">
+          <span class="theme-icon">☀️</span>
+        </button>
+        <a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="btn-icon" data-tooltip="View GitHub Repository" aria-label="GitHub Repository">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+          </svg>
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="article-page">
+    <div class="article-breadcrumbs">
+      <a href="../index.html">Home</a>
+      <span>/</span>
+      <a href="../index.html#distributed-algorithms">Distributed Algorithms</a>
+      <span>/</span>
+      <span>Distributed Bellman-Ford Algorithm</span>
+    </div>
+
+    <header class="article-header">
+      <span class="article-header-badge">Distributed Algorithms • Shortest Path &amp; Routing</span>
+      <h1 class="article-header-title">Distributed Bellman-Ford Algorithm: Distance Vector Routing &amp; Negative Cycle Detection</h1>
+      <div class="article-header-meta">
+        <span>📁 Category: Distributed Algorithms &amp; Network Routing</span>
+      </div>
+      <div class="article-header-actions">
+        <a href="../Docs/Distributed_Bellman_Ford_Shortest_Path_Technical_Breakdown.pdf" target="_blank" download class="btn-secondary">
+          <span>📥 Download Technical PDF (3 Pages)</span>
+        </a>
+      </div>
+    </header>
+
+    <div class="article-container">
+      <article class="prose">
+        <div class="callout callout-note">
+          <div class="callout-title">📌 Primary Algorithmic Takeaway: Optimal Routing on Arbitrarily Weighted Graphs</div>
+          <p>While Breadth-First Search (BFS) computes shortest paths in unweighted graphs (minimizing pure hop count), real-world distributed networks feature diverse link costs: latency, financial transit tariffs, bandwidth congestion, and queue depths. The <strong>Distributed Bellman-Ford algorithm</strong> generalizes shortest-path computation to arbitrary weighted graphs, including negative edge costs. By iteratively executing <strong>Distance Vector Relaxations</strong> across synchronous rounds, nodes independently converge to optimal shortest paths in at most $|V| - 1$ rounds. Furthermore, by running an evaluation round at $|V|$, the protocol provides a mathematical guarantee for detecting <strong>Negative Weight Cycles</strong>, forming the foundation of autonomous distance-vector routing protocols like RIP and BGP.</p>
+        </div>
+
+        <h2 id="motivation-weighted-routing">1. Motivation: The Weighted Shortest-Path Problem</h2>
+        <p>In computer networking, the path with the fewest physical hops is frequently <em>not</em> the fastest or cheapest route. A 1-hop satellite link with 600 ms latency is far inferior to a 3-hop terrestrial fiber link with 12 ms total latency. Solving the Single-Source Shortest Path (SSSP) problem over weighted graphs is therefore the primary algorithmic task of network routing engines.</p>
+
+        <p>Unlike Dijkstra's algorithm, which requires a globally synchronized priority queue to extract minimum-distance nodes (a centralized bottleneck that is difficult to coordinate asynchronously across independent routers), the <strong>Bellman-Ford algorithm</strong> relies purely on <strong>localized edge relaxations</strong>. Each node exchanges distance estimates solely with its immediate adjacent neighbors.</p>
+
+        <h2 id="system-model">2. System Model &amp; Formal Definitions</h2>
+        <ul>
+          <li><strong>Directed Weighted Graph:</strong> $G = (V, E)$ with $n = |V|$ nodes and $m = |E|$ edges.</li>
+          <li><strong>Edge Weights:</strong> Each directed edge $(u, v) \in E$ has a weight $w(u, v) \in \mathbb{R}$ representing latency, cost, or metric penalty. Weights can be positive, zero, or negative.</li>
+          <li><strong>Source Vertex:</strong> A distinguished source process $s \in V$.</li>
+          <li><strong>Distance Estimates:</strong> Each node $u \in V$ maintains:
+            <ul>
+              <li>$d(u)$: Current estimate of shortest path distance from source $s$.</li>
+              <li>$\text{parent}(u)$: Upstream predecessor node along the shortest path.</li>
+            </ul>
+          </li>
+        </ul>
+
+        <h2 id="relaxation-mechanics">3. Protocol Mechanics: The Distance Vector Relaxation</h2>
+        <p>The mathematical engine of Bellman-Ford is the <strong>Relaxation Step</strong>:</p>
+
+        <blockquote>
+          <strong>The Triangle Inequality &amp; Relaxation Rule:</strong> For any directed edge $(u, v) \in E$, if the known distance to $u$ plus the weight of edge $(u, v)$ is less than the currently recorded distance to $v$, update $d(v)$:
+          $$\text{If } d(u) + w(u, v) < d(v) \implies d(v) \gets d(u) + w(u, v), \quad \text{parent}(v) \gets u$$
+        </blockquote>
+
+        <div class="diagram-wrapper">
+          <svg class="arch-diagram" viewBox="0 0 740 320" width="100%" height="auto" xmlns="http://www.w3.org/2000/svg">
+            <rect x="10" y="10" width="720" height="300" rx="10" fill="var(--bg-card)" stroke="var(--border-color)" stroke-width="1.5"/>
+            <text x="370" y="38" text-anchor="middle" font-family="var(--sans)" font-size="15" font-weight="700" fill="var(--text-heading)">Distributed Bellman-Ford Distance Vector Relaxation</text>
+
+            <!-- Source Node s -->
+            <circle cx="100" cy="160" r="26" fill="var(--code-bg)" stroke="#28a745" stroke-width="2.5"/>
+            <text x="100" y="157" text-anchor="middle" font-family="var(--sans)" font-size="11" font-weight="700" fill="var(--text-heading)">Source s</text>
+            <text x="100" y="172" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="#28a745">d(s)=0</text>
+
+            <!-- Intermediate Node u -->
+            <circle cx="340" cy="90" r="26" fill="var(--code-bg)" stroke="var(--primary)" stroke-width="2"/>
+            <text x="340" y="87" text-anchor="middle" font-family="var(--sans)" font-size="11" font-weight="700" fill="var(--text-heading)">Node u</text>
+            <text x="340" y="102" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--primary)">d(u)=4</text>
+
+            <!-- Intermediate Node x -->
+            <circle cx="340" cy="230" r="26" fill="var(--code-bg)" stroke="var(--border-color)" stroke-width="1.8"/>
+            <text x="340" y="227" text-anchor="middle" font-family="var(--sans)" font-size="11" font-weight="700" fill="var(--text-heading)">Node x</text>
+            <text x="340" y="242" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--text-muted)">d(x)=9</text>
+
+            <!-- Destination Node v -->
+            <circle cx="580" cy="160" r="28" fill="var(--code-bg)" stroke="#28a745" stroke-width="2.2"/>
+            <text x="580" y="157" text-anchor="middle" font-family="var(--sans)" font-size="11.5" font-weight="700" fill="var(--text-heading)">Node v</text>
+            <text x="580" y="172" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="#28a745">d(v): 10 &rarr; 6!</text>
+
+            <!-- Directed Edges -->
+            <line x1="124" y1="150" x2="316" y2="100" stroke="var(--primary)" stroke-width="2" marker-end="url(#arrow)"/>
+            <text x="210" y="115" font-family="var(--mono)" font-size="10" fill="var(--primary)">w(s,u)=4</text>
+
+            <line x1="124" y1="170" x2="316" y2="220" stroke="var(--border-color)" stroke-width="1.5" marker-end="url(#arrow)"/>
+            <text x="210" y="210" font-family="var(--mono)" font-size="10" fill="var(--text-muted)">w(s,x)=9</text>
+
+            <line x1="366" y1="95" x2="554" y2="150" stroke="#28a745" stroke-width="2.5" marker-end="url(#arrow-green)"/>
+            <text x="460" y="112" font-family="var(--mono)" font-size="10" font-weight="700" fill="#28a745">w(u,v)=2</text>
+
+            <line x1="366" y1="225" x2="554" y2="170" stroke="var(--border-color)" stroke-width="1.5" stroke-dasharray="3" marker-end="url(#arrow)"/>
+            <text x="460" y="215" font-family="var(--mono)" font-size="10" fill="var(--text-muted)">w(x,v)=1 (9+1=10)</text>
+
+            <!-- Bottom Callout -->
+            <rect x="50" y="265" width="640" height="35" rx="5" fill="var(--tint)"/>
+            <text x="370" y="287" text-anchor="middle" font-family="var(--sans)" font-size="11" font-weight="700" fill="var(--accent)">Relaxation: d(u) + w(u,v) = 4 + 2 = 6 &lt; 10 &rArr; d(v) strictly drops to 6!</text>
+
+            <defs>
+              <marker id="arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--primary)"/>
+              </marker>
+              <marker id="arrow-green" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="#28a745"/>
+              </marker>
+            </defs>
+          </svg>
+        </div>
+
+        <h3 id="step-by-step-rounds">Synchronous Round Execution</h3>
+        <ol>
+          <li><strong>Initialization (Round 0):</strong>
+            $$d(s) \gets 0, \quad d(u) \gets \infty \quad (\forall u \neq s), \quad \text{parent}(u) \gets \text{nil}$$
+          </li>
+          <li><strong>Rounds $r = 1, 2, \dots, |V| - 1$:</strong>
+            <ul>
+              <li>Every node $u$ whose distance $d(u)$ changed in the previous round broadcasts its new $d(u)$ to all outgoing neighbors.</li>
+              <li>Each receiving node $v$ collects distance estimates from its incoming neighbors and relaxes its local distance vector:
+              $$d(v) \gets \min\Big(d(v), \min_{(u, v) \in E} \{d(u) + w(u, v)\}\Big)$$
+              </li>
+            </ul>
+          </li>
+          <li><strong>Termination / Convergence:</strong>
+            After $|V| - 1$ rounds, if no negative cycles exist, all distance estimates are mathematically guaranteed to have converged to the true shortest path distance $\delta(s, v)$.
+          </li>
+        </ol>
+
+        <h2 id="convergence-proof">4. Formal Proof of Convergence in $|V| - 1$ Rounds</h2>
+        <p>Let $G = (V, E)$ contain no negative-weight cycles reachable from $s$.</p>
+
+        <h3 id="simple-path-lemma">Lemma 1: Shortest Paths are Simple</h3>
+        <p>In a graph without negative cycles, for any reachable vertex $v \in V$, there exists a shortest path from $s$ to $v$ that is <strong>simple</strong> (contains no repeated vertices). Since $G$ has $|V|$ vertices, a simple path contains at most $|V| - 1$ edges.</p>
+
+        <h3 id="path-length-induction">Lemma 2: Induction on Path Length</h3>
+        <p>Let $P = \langle v_0, v_1, v_2, \dots, v_k \rangle$ be a shortest path from $v_0 = s$ to $v_k = v$, where $k \le |V| - 1$.</p>
+        <ul>
+          <li><strong>Base Case ($k = 0$):</strong> At round 0, $d(s) = 0 = \delta(s, s)$. Trivially true.</li>
+          <li><strong>Inductive Step:</strong> Suppose that after round $k-1$, node $v_{k-1}$ has converged to its true shortest distance: $d(v_{k-1}) = \delta(s, v_{k-1})$.
+          In round $k$, node $v_{k-1}$ transmits $d(v_{k-1})$ to $v_k$. During the round $k$ relaxation:
+          $$d(v_k) \le d(v_{k-1}) + w(v_{k-1}, v_k) = \delta(s, v_{k-1}) + w(v_{k-1}, v_k) = \delta(s, v_k)$$
+          Because $d(v_k)$ is an upper bound on the true shortest distance, we must have $d(v_k) = \delta(s, v_k)$.
+          </li>
+        </ul>
+        <p>Since the maximum length of any simple path is $|V| - 1$ edges, <strong>all shortest paths must fully converge within at most $|V| - 1$ synchronous rounds</strong>. $\blacksquare$</p>
+
+        <h2 id="negative-cycle-detection">5. Detecting Negative Weight Cycles</h2>
+        <p>If a graph contains a cycle whose total edge weight sum is strictly negative ($W_{\text{cycle}} < 0$), traversing the cycle repeatedly yields arbitrarily low distance estimates ($-\infty$). In such graphs, shortest paths are undefined.</p>
+
+        <h3 id="the-extra-round-rule">The $|V|$-th Round Test</h3>
+        <p>The Distributed Bellman-Ford algorithm provides an elegant, decentralized test for negative cycles:</p>
+        <blockquote>
+          <strong>Negative Cycle Invariant:</strong> Execute the relaxation step for one additional round: <strong>Round $|V|$</strong>. If any node $v \in V$ observes that its distance estimate strictly decreases during Round $|V|$:
+          $$d(v)_{\text{round } |V|} < d(v)_{\text{round } |V|-1}$$
+          Then the network contains at least one negative-weight cycle reachable from $s$!
+        </blockquote>
+        <p>When a node detects a decrease in round $|V|$, it raises a distributed error alert, signaling that network weights are corrupted or misconfigured.</p>
+
+        <h2 id="distance-vector-protocols">6. Distance Vector Routing &amp; The Count-to-Infinity Problem</h2>
+        <p>The Distributed Bellman-Ford algorithm serves as the algorithmic engine of Internet <strong>Distance Vector Routing Protocols</strong> (such as RIP, RFC 2453):</p>
+
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Protocol Phenomenon</th>
+                <th>Underlying Cause</th>
+                <th>Engineering Mitigation</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Good News Travels Fast</strong></td>
+                <td>When a lower-cost link is added, relaxations propagate in $k$ rounds.</td>
+                <td>Standard Bellman-Ford relaxation.</td>
+              </tr>
+              <tr>
+                <td><strong>Bad News Travels Slow (Count-to-Infinity)</strong></td>
+                <td>When a link breaks, mutual neighbors iteratively update each other with obsolete paths, incrementing distances step by step to $\infty$.</td>
+                <td><strong>Split Horizon with Poison Reverse:</strong> Never advertise a route back to the neighbor through which that route was learned; advertise distance as $\infty$.</td>
+              </tr>
+              <tr>
+                <td><strong>Routing Loops</strong></td>
+                <td>Asynchronous message delays cause stale routing vectors to circulate.</td>
+                <td><strong>Path Vector Protocol (BGP):</strong> Explicitly include the full list of Autonomous System (AS) hops in the update, discarding routes with self-loops.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="complexity-bounds">7. Complexity Analysis &amp; Bounds</h2>
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-title">Time Complexity: $\mathcal{O}(|V|)$ Rounds</div>
+            <p>The algorithm executes at most $|V| - 1$ rounds for convergence, plus 1 round for negative cycle verification. Total time: strictly $\mathcal{O}(|V|)$ synchronous rounds.</p>
+          </div>
+          <div class="card">
+            <div class="card-title">Message Complexity: $\mathcal{O}(|V| \cdot |E|)$</div>
+            <p>In each round, every edge transmits at most 1 distance vector update. Total messages across all rounds: bounded by $\mathcal{O}(|V| \cdot |E|)$ messages.</p>
+          </div>
+        </div>
+
+        <h2 id="engineering-takeaways">8. Systems Engineering Takeaways</h2>
+        <ol>
+          <li><strong>Local Decisions Yield Global Optimality:</strong> Bellman-Ford demonstrates how purely local edge comparisons ($d(u) + w < d(v)$) without global topology maps automatically converge to cluster-wide shortest path trees.</li>
+          <li><strong>Negative Weights &amp; Arbitrage:</strong> Beyond network packets, Bellman-Ford is widely used in high-frequency trading (HFT) currency engines: by converting foreign exchange rates into negative logarithms ($-\ln(\text{rate})$), negative cycles identify risk-free triangular arbitrage opportunities!</li>
+          <li><strong>Distance Vector vs. Link State:</strong> Bellman-Ford (Distance Vector) consumes minimal memory ($\mathcal{O}(\text{degree})$ per node) but converges slowly under link drops. Link State algorithms (Dijkstra / OSPF) flood entire topologies, trading higher memory for instantaneous SPF convergence.</li>
+        </ol>
+      </article>
+
+      <aside class="toc-sidebar">
+        <div class="toc-title">Table of Contents</div>
+        <ul class="toc-list">
+          <li><a href="#motivation-weighted-routing">1. Weighted Routing Motivation</a></li>
+          <li><a href="#system-model">2. System Model &amp; Invariants</a></li>
+          <li><a href="#relaxation-mechanics">3. Distance Vector Relaxation</a></li>
+          <li><a href="#convergence-proof">4. |V|-1 Round Convergence Proof</a></li>
+          <li><a href="#negative-cycle-detection">5. Negative Cycle Detection</a></li>
+          <li><a href="#distance-vector-protocols">6. Distance Vector Protocols (RIP/BGP)</a></li>
+          <li><a href="#complexity-bounds">7. Complexity &amp; Bounds</a></li>
+          <li><a href="#engineering-takeaways">8. Systems Engineering Takeaways</a></li>
+        </ul>
+
+        <div class="companion-box" style="margin-top: 1.25rem;">
+          <div class="companion-title">Companion PDF</div>
+          <p>Download the verified 3-page technical breakdown for offline study and architecture review.</p>
+          <a href="../Docs/Distributed_Bellman_Ford_Shortest_Path_Technical_Breakdown.pdf" class="download-link" target="_blank" download>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Bellman-Ford PDF
+          </a>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-container">
+      <div class="footer-col">
+        <div class="footer-brand">
+          <div class="brand-icon">⚡</div>
+          <span>System Design Notes</span>
+        </div>
+        <p class="footer-tagline">Curated engineering notes, production architecture dissections, and distributed systems research papers.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Distributed Algorithms</h5>
+        <ul>
+          <li><a href="two-phase-commit-distributed-transactions.html">Two-Phase Commit Protocol</a></li>
+          <li><a href="implementing-two-phase-commit-distributed-system.html">Implementing 2PC &amp; WAL</a></li>
+          <li><a href="lcr-leader-election-algorithm.html">LCR Ring Leader Election</a></li>
+          <li><a href="hs-leader-election-algorithm.html">HS Bidirectional Leader Election</a></li>
+          <li><a href="timeslice-leader-election-algorithm.html">TimeSlice O(n) Leader Election</a></li>
+          <li><a href="floodmax-leader-election-algorithm.html">FloodMax General Graph Election</a></li>
+          <li><a href="synchronous-bfs-distributed-systems.html">Synchronous Distributed BFS</a></li>
+          <li><a href="distributed-bellman-ford-shortest-path.html">Distributed Bellman-Ford</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Repository</h5>
+        <ul>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank">GitHub Repository</a></li>
+          <li><a href="../Docs/System_Design_Notes.pdf" target="_blank">Complete Notes (184 Pages)</a></li>
+          <li><a href="../Docs/Distributed_Bellman_Ford_Shortest_Path_Technical_Breakdown.pdf" target="_blank">Bellman-Ford PDF (3 Pages)</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>Released under MIT License • Open Source Engineering Notes</p>
+    </div>
+  </footer>
+
+  <script src="../assets/js/main.js?v=3.3"></script>
+</body>
+</html>
