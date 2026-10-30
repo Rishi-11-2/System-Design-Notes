@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Database per Service Pattern: Polyglot Persistence & Event Sourcing — System Design Notes</title>
+  <meta name="description" content="Deep dive into the Database per Service pattern: domain encapsulation, polyglot persistence, overcoming distributed join barriers, CQRS materialized read-models, and eventual consistency.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css?v=3.3">
+  <link rel="stylesheet" href="../blog-theme.css?v=3.3">
+  <link rel="stylesheet" href="../assets/css/style.css?v=3.3">
+  <script>
+    (function() {
+      const saved = localStorage.getItem('theme');
+      if (saved) document.documentElement.dataset.theme = saved;
+    })();
+  </script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+</head>
+<body class="blog-post">
+  <header class="site-header">
+    <div class="header-inner">
+      <a href="../index.html" class="site-title">System Design Notes</a>
+      <nav class="site-nav">
+        <a href="../index.html">All Notes</a>
+        <a href="../index.html?category=outages">Outage Dissections</a>
+        <a href="../index.html?category=distributed-algorithms">Distributed Algorithms</a>
+        <a href="../index.html?category=microservices" class="active">Microservices</a>
+      </nav>
+      <div class="theme-switcher">
+        <button id="theme-toggle" aria-label="Toggle theme" title="Toggle theme">
+          <svg class="sun-icon" viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+          <svg class="moon-icon" viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <div class="article-container">
+    <article class="article-content">
+      <div class="article-header">
+        <div class="meta-details">
+          <span class="category-badge microservices">Microservices Architecture</span>
+          <span class="date">Resilience Engineering</span>
+          <span class="reading-time">16 min read</span>
+          <span class="source-link">Dissection based on <a href="https://www.youtube.com/watch?v=la2q1vFA5q0" target="_blank" rel="noopener">Arpit Bhayani's Architecture Series</a></span>
+        </div>
+        <h1 class="article-title">Database per Service Pattern: Polyglot Persistence & Event Sourcing</h1>
+        <p class="article-subtitle">Deep dive into the Database per Service pattern: domain encapsulation, polyglot persistence, overcoming distributed join barriers, CQRS materialized read-models, and eventual consistency.</p>
+        <div class="pdf-download-card">
+          <div class="pdf-info">
+            <span class="pdf-badge">Companion Resource</span>
+            <h3>Technical Architecture Breakdown (PDF)</h3>
+            <p>Download the verified 3-page engineering review containing mathematical latency accumulation proofs, circuit breaker state transitions, and production Go/Envoy configs.</p>
+          </div>
+          <a href="../Docs/Microservices_Database_Per_Service_Technical_Breakdown.pdf" class="pdf-download-btn" target="_blank" download>
+            <span>📥 Download PDF (3 Pages)</span>
+          </a>
+        </div>
+      </div>
+
+
+      <section id="database-per-service-rationale">
+        <h2>1. Database per Service Rationale &amp; Domain Encapsulation</h2>
+        <p>
+          In a true microservices architecture, loose coupling is impossible if services share access to a single monolithic database. The <strong>Database per Service Pattern</strong> mandates that each microservice must privately and exclusively own its datastore. No external service is permitted to query, join, or mutate another service's tables directly.
+        </p>
+        <p>
+          Instead, all cross-service data access must occur strictly through well-defined, versioned public APIs (gRPC/REST) or asynchronous domain events.
+        </p>
+        <div class="callout warning">
+          <div class="callout-title">The Encapsulation Invariant</div>
+          <p>
+            Treating internal database schemas as private implementation details frees teams to optimize data structures, rewrite schemas, or migrate database engines without coordinating release trains with other teams.
+          </p>
+        </div>
+      </section>
+
+      <section id="polyglot-persistence">
+        <h2>2. Polyglot Persistence: Choosing the Right Engine</h2>
+        <p>
+          In a monolith, developers are forced to shoehorn every data access pattern into a single relational database (e.g. MySQL or PostgreSQL), whether storing graph relationships, time-series telemetry, or full-text documents.
+        </p>
+        <p>
+          Database per service unlocks <strong>Polyglot Persistence</strong>: selecting the ideal storage paradigm tailored to the specific query characteristics of each bounded context:
+        </p>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-title">Relational (PostgreSQL / MySQL)</div>
+            <p><strong>Use Cases:</strong> Ledger, Invoicing, Billing, User Accounts.<br><strong>Strength:</strong> ACID compliance, multi-record foreign keys, structured consistency.</p>
+          </div>
+          <div class="card">
+            <div class="card-title">Document Store (MongoDB / DynamoDB)</div>
+            <p><strong>Use Cases:</strong> Product Catalog, Order Snapshots.<br><strong>Strength:</strong> Schemaless flexibility, hierarchical JSON nesting, linear horizontal partitioning.</p>
+          </div>
+          <div class="card">
+            <div class="card-title">Graph Database (Neo4j / Amazon Neptune)</div>
+            <p><strong>Use Cases:</strong> Social Graph, Fraud Ring Detection, Recommendation Networks.<br><strong>Strength:</strong> Index-free adjacency, recursive $N$-hop path traversals.</p>
+          </div>
+          <div class="card">
+            <div class="card-title">Search Engine &amp; Cache (Elasticsearch / Redis)</div>
+            <p><strong>Use Cases:</strong> Full-text autocomplete, low-latency session state, rate limiters.<br><strong>Strength:</strong> Inverted indexes, sub-millisecond in-memory lookups.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="social-network-case-study">
+        <h2>3. Case Study: Social Network Architecture</h2>
+        <p>
+          Consider the data architecture required for a Twitter or Instagram-scale social network:
+        </p>
+
+        <div class="diagram-wrapper">
+          <svg viewBox="0 0 740 220" width="100%" height="220" xmlns="http://www.w3.org/2000/svg">
+            <rect x="20" y="20" width="700" height="180" rx="8" fill="var(--card-bg, #f8f9fa)" stroke="#0056b3" stroke-width="1.5"/>
+            <text x="370" y="45" font-family="var(--sans)" font-size="13" font-weight="bold" text-anchor="middle" fill="#0056b3">Polyglot Storage Topology for Social Graph</text>
+
+            <rect x="40" y="70" width="150" height="110" rx="6" fill="#fff" stroke="#0056b3" stroke-width="1.2"/>
+            <text x="115" y="95" font-family="var(--sans)" font-size="10" font-weight="bold" text-anchor="middle" fill="#0056b3">User Profile Service</text>
+            <text x="115" y="115" font-family="var(--sans)" font-size="8.5" text-anchor="middle" fill="#555">Stores auth, email, settings</text>
+            <rect x="60" y="130" width="110" height="35" rx="4" fill="#e3f2fd" stroke="#0056b3"/>
+            <text x="115" y="152" font-family="var(--mono)" font-size="8.5" font-weight="bold" text-anchor="middle" fill="#0056b3">Postgres (ACID)</text>
+
+            <rect x="205" y="70" width="150" height="110" rx="6" fill="#fff" stroke="#2e7d32" stroke-width="1.2"/>
+            <text x="280" y="95" font-family="var(--sans)" font-size="10" font-weight="bold" text-anchor="middle" fill="#2e7d32">Follow Graph Service</text>
+            <text x="280" y="115" font-family="var(--sans)" font-size="8.5" text-anchor="middle" fill="#555">Followers, Following, Blocks</text>
+            <rect x="225" y="130" width="110" height="35" rx="4" fill="#e8f5e9" stroke="#2e7d32"/>
+            <text x="280" y="152" font-family="var(--mono)" font-size="8.5" font-weight="bold" text-anchor="middle" fill="#2e7d32">Neo4j (Graph)</text>
+
+            <rect x="370" y="70" width="155" height="110" rx="6" fill="#fff" stroke="#d32f2f" stroke-width="1.2"/>
+            <text x="447" y="95" font-family="var(--sans)" font-size="10" font-weight="bold" text-anchor="middle" fill="#d32f2f">Post Storage Service</text>
+            <text x="447" y="115" font-family="var(--sans)" font-size="8.5" text-anchor="middle" fill="#555">Billions of immutable posts</text>
+            <rect x="390" y="130" width="115" height="35" rx="4" fill="#ffebee" stroke="#d32f2f"/>
+            <text x="447" y="152" font-family="var(--mono)" font-size="8.5" font-weight="bold" text-anchor="middle" fill="#d32f2f">Cassandra (LSM)</text>
+
+            <rect x="540" y="70" width="160" height="110" rx="6" fill="#fff" stroke="#f57f17" stroke-width="1.2"/>
+            <text x="620" y="95" font-family="var(--sans)" font-size="10" font-weight="bold" text-anchor="middle" fill="#f57f17">Timeline Feed Service</text>
+            <text x="620" y="115" font-family="var(--sans)" font-size="8.5" text-anchor="middle" fill="#555">Fanout on write feeds</text>
+            <rect x="560" y="130" width="120" height="35" rx="4" fill="#fff8e1" stroke="#f57f17"/>
+            <text x="620" y="152" font-family="var(--mono)" font-size="8.5" font-weight="bold" text-anchor="middle" fill="#f57f17">Redis Cluster</text>
+          </svg>
+        </div>
+      </section>
+
+      <section id="the-distributed-join-problem">
+        <h2>4. Overcoming Distributed Joins: API Composition &amp; CQRS</h2>
+        <p>
+          The primary engineering consequence of separating databases is the elimination of SQL <code>JOIN</code> operations. How do you render an Order Details page that requires Customer info, Order items, and Shipping tracking status?
+        </p>
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-title">1. API Composition Pattern</div>
+            <p>An API Gateway or Aggregator service invokes each microservice in parallel via RPC, parses the JSON responses, and executes an in-memory hash join. Simple to build, but bounded by tail latency.</p>
+          </div>
+          <div class="card">
+            <div class="card-title">2. CQRS Materialized Read Models</div>
+            <p>Command Query Responsibility Segregation (CQRS) subscribes to Kafka domain events and pre-joins data into an optimized, denormalized read-optimized view in Elasticsearch or MongoDB.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="event-sourcing-and-cdc">
+        <h2>5. Event Sourcing &amp; Change Data Capture (CDC)</h2>
+        <p>
+          To keep distributed databases synchronized without fragile dual-writes, production architectures use <strong>Change Data Capture (CDC)</strong>. Engines like Debezium monitor the Postgres write-ahead log (WAL) or MySQL binlog and stream row-level change events to Apache Kafka.
+        </p>
+        <p>
+          In <strong>Event Sourcing</strong>, state changes are stored as an append-only sequence of immutable domain events (<code>AccountCreated</code>, <code>MoneyDeposited</code>, <code>MoneyWithdrawn</code>). Current state is reconstructed by replaying the log, providing full historical auditing and point-in-time recovery.
+        </p>
+      </section>
+
+      <section id="consistency-and-operational-tax">
+        <h2>6. Consistency Models &amp; Operational Trade-offs</h2>
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 25%;">Architecture Metric</th>
+              <th style="width: 38%;">Monolithic Shared Database</th>
+              <th style="width: 37%;">Database per Service</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Transactional Consistency</strong></td>
+              <td><span class="badge badge-info">Immediate ACID</span> Instant cross-table rollbacks.</td>
+              <td><span class="badge badge-warn">Eventual Consistency</span> Managed via Sagas.</td>
+            </tr>
+            <tr>
+              <td><strong>Schema Autonomy</strong></td>
+              <td>Zero; cross-team release coordination.</td>
+              <td><span class="badge badge-info">Complete</span> Deploy schema migrations independently.</td>
+            </tr>
+            <tr>
+              <td><strong>Disaster Recovery</strong></td>
+              <td>Single point of failure; unified backup.</td>
+              <td>Isolated backups; complex multi-db point-in-time recovery.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="production-checklist">
+        <h2>7. Production Engineering Checklist</h2>
+        <ul class="checklist">
+          <li><strong>Network Boundary Fencing:</strong> Put each database in a private subnet accessible only to its owning service pod.</li>
+          <li><strong>Outbox + CDC for Sync:</strong> Prohibit dual-writing from application code; mandate Transactional Outbox + Debezium.</li>
+          <li><strong>Zero Cross-DB Joins:</strong> Run automated CI queries to detect and block cross-database connection attempts.</li>
+          <li><strong>Backup Alignment:</strong> Coordinate snapshot strategies across polyglot stores to support disaster recovery simulations.</li>
+        </ul>
+      </section>
+
+
+      <div class="article-footer">
+        <div class="footer-nav">
+          <a href="microservices-rest-api-architecture.html" class="prev-post">← Everything You Need to Know About REST: Semantics & Trade-offs</a>
+          <a href="microservices-api-composition-pattern.html" class="next-post">API Composition Pattern: Query Aggregation & In-Memory Joins →</a>
+        </div>
+      </div>
+    </article>
+
+    <aside class="toc-sidebar">
+      <div class="sidebar-sticky">
+        <div class="sidebar-header">
+          <span class="toc-title">Table of Contents</span>
+        </div>
+        <nav class="toc-list">
+          <a href="#database-per-service-rationale" class="toc-link">1. Database per Service Rationale & Encapsulation</a>
+          <a href="#polyglot-persistence" class="toc-link">2. Polyglot Persistence: Choosing the Right Engine</a>
+          <a href="#social-network-case-study" class="toc-link">3. Case Study: Social Network Architecture</a>
+          <a href="#the-distributed-join-problem" class="toc-link">4. Overcoming Distributed Joins: API Composition & CQRS</a>
+          <a href="#event-sourcing-and-cdc" class="toc-link">5. Event Sourcing & Change Data Capture (CDC)</a>
+          <a href="#consistency-and-operational-tax" class="toc-link">6. Consistency Models & Operational Trade-offs</a>
+          <a href="#production-checklist" class="toc-link">7. Production Checklist</a>
+        </nav>
+        <div class="sidebar-download">
+          <a href="../Docs/Microservices_Database_Per_Service_Technical_Breakdown.pdf" class="download-link" target="_blank" download>
+            <span>📥 Technical PDF (3 Pages)</span>
+          </a>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <p>&copy; 2026 System Design Notes. Microservices Architecture Series.</p>
+    </div>
+  </footer>
+
+  <script src="../theme.js?v=3.3"></script>
+</body>
+</html>

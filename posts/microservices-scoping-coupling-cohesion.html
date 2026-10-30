@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Scoping Microservices Right: Loose Coupling &amp; High Cohesion — System Design Notes</title>
+  <meta name="description" content="Master the art of sizing and scoping microservices using Domain-Driven Design (DDD) Bounded Contexts, Loose Coupling, High Cohesion, and avoiding the Distributed Monolith trap.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css?v=3.3">
+  <link rel="stylesheet" href="../blog-theme.css?v=3.3">
+  <link rel="stylesheet" href="../assets/css/style.css?v=3.3">
+  <script>
+    (function() {
+      const saved = localStorage.getItem('theme');
+      if (saved) document.documentElement.dataset.theme = saved;
+    })();
+  </script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+</head>
+<body class="blog-post">
+  <header class="site-header">
+    <div class="header-inner">
+      <a href="../index.html" class="site-title">System Design Notes</a>
+      <nav class="site-nav">
+        <a href="../index.html">All Notes</a>
+        <a href="../index.html?category=outages">Outage Dissections</a>
+        <a href="../index.html?category=distributed-algorithms">Distributed Algorithms</a>
+        <a href="../index.html?category=microservices" class="active">Microservices</a>
+      </nav>
+      <div class="theme-switcher">
+        <button id="theme-toggle" aria-label="Toggle theme" title="Toggle theme">
+          <svg class="sun-icon" viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+          <svg class="moon-icon" viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <div class="article-container">
+    <article class="article-content">
+      <div class="article-header">
+        <div class="meta-details">
+          <span class="category-badge microservices">Microservices Architecture</span>
+          <span class="date">Design Principles</span>
+          <span class="reading-time">14 min read</span>
+          <span class="source-link">Dissection based on <a href="https://www.youtube.com/watch?v=nfkdKHcKxbE" target="_blank" rel="noopener">Arpit Bhayani's Architecture Series</a></span>
+        </div>
+        <h1 class="article-title">Scoping Microservices Right: Loose Coupling &amp; High Cohesion</h1>
+        <p class="article-subtitle">How to correctly draw service boundaries using Domain-Driven Design (DDD) Bounded Contexts, eliminate synchronous inter-service dependencies, and prevent the dreaded Distributed Monolith anti-pattern.</p>
+        <div class="pdf-download-card">
+          <div class="pdf-info">
+            <span class="pdf-badge">Companion Resource</span>
+            <h3>Technical Architecture Breakdown (PDF)</h3>
+            <p>Download the verified 3-page engineering review containing boundary scoping heuristics, cohesion metrics, and coupling elimination runbooks.</p>
+          </div>
+          <a href="../Docs/Microservices_Scoping_Coupling_Cohesion_Technical_Breakdown.pdf" class="pdf-download-btn" target="_blank" download>
+            <span>📥 Download PDF (3 Pages)</span>
+          </a>
+        </div>
+      </div>
+
+      <section id="the-scoping-paradox">
+        <h2>1. The Scoping Paradox: Sizing Microservices</h2>
+        <p>
+          The prefix "micro" in microservices is notoriously misleading. Many engineering teams mistakenly believe that microservices should be sized by lines of code (e.g. "under 500 lines") or by isolated CRUD entities (e.g. creating a separate service for <code>UserPreferences</code>, <code>UserProfile</code>, and <code>UserAvatar</code>).
+        </p>
+        <p>
+          This fine-grained decomposition leads to <strong>nano-services</strong>. When services are sliced too thin, single business operations require multi-hop synchronous RPC chains across 10 different network endpoints. The result is the worst of all worlds: the operational fragility and latency of a distributed system paired with the tight coupling of a monolith—commonly termed a <strong>Distributed Monolith</strong>.
+        </p>
+        <div class="callout warning">
+          <div class="callout-title">The Cardinal Rule of Scoping</div>
+          <p>
+            The size of a microservice does not matter; its <strong>boundary coherence</strong> does. A well-designed microservice can be 10,000 lines of code if it encapsulates a cohesive domain boundary, or 1,000 lines if it represents an isolated utility.
+          </p>
+        </div>
+      </section>
+
+      <section id="loose-coupling">
+        <h2>2. Loose Coupling: Independent Evolvability</h2>
+        <p>
+          Two services are <strong>loosely coupled</strong> if a modification to one service does not force a corresponding modification or coordinated deployment to another service.
+        </p>
+
+        <div class="diagram-wrapper">
+          <svg viewBox="0 0 740 200" width="100%" height="200" xmlns="http://www.w3.org/2000/svg">
+            <rect x="20" y="25" width="320" height="150" rx="6" fill="#ffebee" stroke="#b00020" stroke-width="1.5"/>
+            <text x="180" y="50" font-family="var(--sans)" font-size="12" font-weight="bold" text-anchor="middle" fill="#b00020">Tight Coupling (Distributed Monolith)</text>
+            <rect x="35" y="70" width="120" height="40" rx="4" fill="#fff" stroke="#b00020" stroke-width="1"/>
+            <text x="95" y="95" font-family="var(--sans)" font-size="9.5" text-anchor="middle" fill="#333">Order Service</text>
+            <rect x="200" y="70" width="120" height="40" rx="4" fill="#fff" stroke="#b00020" stroke-width="1"/>
+            <text x="260" y="95" font-family="var(--sans)" font-size="9.5" text-anchor="middle" fill="#333">Inventory Service</text>
+            <path d="M 155 90 L 200 90" stroke="#b00020" stroke-width="2" marker-end="url(#arr-red-coup)" fill="none"/>
+            <text x="180" y="130" font-family="var(--mono)" font-size="8" text-anchor="middle" fill="#c62828">Shared MySQL DB / Tight RPC</text>
+            <text x="180" y="150" font-family="var(--sans)" font-size="8" text-anchor="middle" fill="#777">Must Deploy Simultaneously</text>
+
+            <rect x="400" y="25" width="320" height="150" rx="6" fill="#e8f5e9" stroke="#2e7d32" stroke-width="1.5"/>
+            <text x="560" y="50" font-family="var(--sans)" font-size="12" font-weight="bold" text-anchor="middle" fill="#2e7d32">Loose Coupling (Event-Driven / Contracts)</text>
+            <rect x="415" y="70" width="120" height="40" rx="4" fill="#fff" stroke="#2e7d32" stroke-width="1"/>
+            <text x="475" y="95" font-family="var(--sans)" font-size="9.5" text-anchor="middle" fill="#333">Order Service</text>
+            <rect x="580" y="70" width="120" height="40" rx="4" fill="#fff" stroke="#2e7d32" stroke-width="1"/>
+            <text x="640" y="95" font-family="var(--sans)" font-size="9.5" text-anchor="middle" fill="#333">Inventory Service</text>
+            <circle cx="547" cy="90" r="10" fill="#0056b3"/>
+            <text x="547" y="93" font-family="var(--mono)" font-size="7" fill="#fff" text-anchor="middle">Bus</text>
+            <text x="560" y="130" font-family="var(--mono)" font-size="8" text-anchor="middle" fill="#2e7d32">OrderPlaced Event (Kafka)</text>
+            <text x="560" y="150" font-family="var(--sans)" font-size="8" text-anchor="middle" fill="#555">Independent Deployments</text>
+
+            <defs>
+              <marker id="arr-red-coup" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 1 L 8 5 L 0 9 z" fill="#b00020" />
+              </marker>
+            </defs>
+          </svg>
+        </div>
+
+        <p>There are three primary forms of coupling to aggressively eliminate:</p>
+        <ol>
+          <li><strong>Data Coupling:</strong> Two services reading or writing to the same database schema. If Service A alters a table column, Service B crashes.</li>
+          <li><strong>Temporal Coupling:</strong> Service A requires an immediate, synchronous response from Service B to finish its work. If Service B is slow or down, Service A fails.</li>
+          <li><strong>Contract / Model Coupling:</strong> Leaking internal database entities across public APIs (e.g. returning raw ORM models rather than versioned DTOs).</li>
+        </ol>
+      </section>
+
+      <section id="high-cohesion">
+        <h2>3. High Cohesion: Grouping What Changes Together</h2>
+        <p>
+          <strong>Cohesion</strong> is a measure of how strongly related and focused the responsibilities of a single module or service are. A service has high cohesion when all of its internal components contribute to a single, well-defined business capability.
+        </p>
+        <p>
+          The acid test for high cohesion is: <em>"When a single business requirement changes, how many services must be modified?"</em>
+        </p>
+        <ul>
+          <li><strong>High Cohesion:</strong> The requirement change affects exactly <strong>one</strong> service. The team writes code, runs tests, and deploys that single service.</li>
+          <li><strong>Low Cohesion:</strong> Modifying a discount calculation rule requires modifying the Order Service, Cart Service, Invoice Service, and Notification Service. This is an immediate architectural smell indicating fragmented domain boundaries.</li>
+        </ul>
+      </section>
+
+      <section id="bounded-contexts">
+        <h2>4. Applying Domain-Driven Design (DDD) Bounded Contexts</h2>
+        <p>
+          The most robust methodology for identifying microservice boundaries is Eric Evans' concept of <strong>Bounded Contexts</strong>. In a complex enterprise, the exact same word often has radically different meanings depending on the context:
+        </p>
+
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Business Domain</th>
+              <th>Bounded Context</th>
+              <th>What "Product" Means in this Context</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Catalog / Search</strong></td>
+              <td>Discovery Context</td>
+              <td>Title, SEO metadata, high-res images, categories, reviews</td>
+            </tr>
+            <tr>
+              <td><strong>Order Fulfillment</strong></td>
+              <td>Inventory Context</td>
+              <td>SKU, warehouse bin location, weight, dimensions, units in stock</td>
+            </tr>
+            <tr>
+              <td><strong>Billing / Invoicing</strong></td>
+              <td>Finance Context</td>
+              <td>Price, applicable VAT/tax rate, currency code, ledger account</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <p>
+          Attempting to create a single "Universal Product Service" that serves all three contexts results in an unmaintainable god-object table with 80 columns. Instead, each bounded context should be its own microservice, storing only the attributes relevant to its domain.
+        </p>
+      </section>
+
+      <section id="the-scoping-decision-matrix">
+        <h2>5. The Scoping Decision Matrix</h2>
+        <div class="cards-grid">
+          <div class="card">
+            <h3 class="card-title">Signs a Service is Too Large:</h3>
+            <ul>
+              <li>Multiple teams are constantly committing to the same repository.</li>
+              <li>A change to inventory logic breaks user authentication.</li>
+              <li>The database contains over 30 unrelated tables.</li>
+              <li>Scaling the service wastes huge memory on inactive features.</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3 class="card-title">Signs a Service is Too Small (Nano-Service):</h3>
+            <ul>
+              <li>A single user action triggers a chain of 6+ synchronous HTTP hops.</li>
+              <li>Two services must always be deployed in lockstep.</li>
+              <li>Network latency exceeds the actual database compute time by $10\times$.</li>
+              <li>The service cannot fulfill any request without querying 3 other services.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section id="engineering-checklist">
+        <h2>6. Production Engineering Checklist</h2>
+        <ul class="checklist">
+          <li><strong>Enforce Independent Deployability:</strong> Can you deploy this service to production right now without coordinating with any other team? If no, it is tightly coupled.</li>
+          <li><strong>Strict Domain Data Ownership:</strong> Does this service own 100% of its data tables? No shared databases, no direct cross-service SQL joins.</li>
+          <li><strong>Prefer Asynchronous Events Over Synchronous RPCs:</strong> Publish domain events (e.g. <code>OrderCreated</code>) so downstream services react independently.</li>
+          <li><strong>Expose Versioned Stable Contracts:</strong> Use Protobuf / gRPC or OpenAPI schemas with strict backward-compatibility rules.</li>
+          <li><strong>Merge Nano-Services When in Doubt:</strong> It is far easier to split a cohesive service later than to debug a distributed monolith across 20 nano-services.</li>
+        </ul>
+      </section>
+
+      <div class="article-footer">
+        <div class="footer-nav">
+          <a href="microservices-adoption-tradeoffs.html" class="prev-post">← Microservices Adoption Trade-offs</a>
+          <a href="microservices-graceful-timeouts-resilience.html" class="next-post">Safely Handling Timeouts in Microservices →</a>
+        </div>
+      </div>
+    </article>
+
+    <aside class="toc-sidebar">
+      <div class="sidebar-sticky">
+        <div class="sidebar-header">
+          <span class="toc-title">Table of Contents</span>
+        </div>
+        <nav class="toc-list">
+          <a href="#the-scoping-paradox" class="toc-link">1. The Scoping Paradox</a>
+          <a href="#loose-coupling" class="toc-link">2. Loose Coupling</a>
+          <a href="#high-cohesion" class="toc-link">3. High Cohesion</a>
+          <a href="#bounded-contexts" class="toc-link">4. DDD Bounded Contexts</a>
+          <a href="#the-scoping-decision-matrix" class="toc-link">5. Scoping Decision Matrix</a>
+          <a href="#engineering-checklist" class="toc-link">6. Engineering Checklist</a>
+        </nav>
+        <div class="sidebar-download">
+          <a href="../Docs/Microservices_Scoping_Coupling_Cohesion_Technical_Breakdown.pdf" class="download-link" target="_blank" download>
+            <span>📥 Technical PDF (3 Pages)</span>
+          </a>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <p>&copy; 2026 System Design Notes. Microservices Architecture Series.</p>
+    </div>
+  </footer>
+
+  <script src="../theme.js?v=3.3"></script>
+</body>
+</html>

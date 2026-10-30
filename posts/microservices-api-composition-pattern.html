@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>API Composition Pattern: Query Aggregation & In-Memory Joins — System Design Notes</title>
+  <meta name="description" content="Master the API Composition Pattern in microservices: parallel fan-out, API gateways, aggregation layers, handling tail latency amplification, partial failures, and comparison with CQRS.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css?v=3.3">
+  <link rel="stylesheet" href="../blog-theme.css?v=3.3">
+  <link rel="stylesheet" href="../assets/css/style.css?v=3.3">
+  <script>
+    (function() {
+      const saved = localStorage.getItem('theme');
+      if (saved) document.documentElement.dataset.theme = saved;
+    })();
+  </script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+</head>
+<body class="blog-post">
+  <header class="site-header">
+    <div class="header-inner">
+      <a href="../index.html" class="site-title">System Design Notes</a>
+      <nav class="site-nav">
+        <a href="../index.html">All Notes</a>
+        <a href="../index.html?category=outages">Outage Dissections</a>
+        <a href="../index.html?category=distributed-algorithms">Distributed Algorithms</a>
+        <a href="../index.html?category=microservices" class="active">Microservices</a>
+      </nav>
+      <div class="theme-switcher">
+        <button id="theme-toggle" aria-label="Toggle theme" title="Toggle theme">
+          <svg class="sun-icon" viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+          <svg class="moon-icon" viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <div class="article-container">
+    <article class="article-content">
+      <div class="article-header">
+        <div class="meta-details">
+          <span class="category-badge microservices">Microservices Architecture</span>
+          <span class="date">Resilience Engineering</span>
+          <span class="reading-time">16 min read</span>
+          <span class="source-link">Dissection based on <a href="https://www.youtube.com/watch?v=5pYLlYsy6fQ" target="_blank" rel="noopener">Arpit Bhayani's Architecture Series</a></span>
+        </div>
+        <h1 class="article-title">API Composition Pattern: Query Aggregation & In-Memory Joins</h1>
+        <p class="article-subtitle">Master the API Composition Pattern in microservices: parallel fan-out, API gateways, aggregation layers, handling tail latency amplification, partial failures, and comparison with CQRS.</p>
+        <div class="pdf-download-card">
+          <div class="pdf-info">
+            <span class="pdf-badge">Companion Resource</span>
+            <h3>Technical Architecture Breakdown (PDF)</h3>
+            <p>Download the verified 3-page engineering review containing mathematical latency accumulation proofs, circuit breaker state transitions, and production Go/Envoy configs.</p>
+          </div>
+          <a href="../Docs/Microservices_API_Composition_Pattern_Technical_Breakdown.pdf" class="pdf-download-btn" target="_blank" download>
+            <span>📥 Download PDF (3 Pages)</span>
+          </a>
+        </div>
+      </div>
+
+
+      <section id="api-composition-problem">
+        <h2>1. The Query Aggregation Challenge in Microservices</h2>
+        <p>
+          Once an engineering organization adopts the Database per Service pattern, data is physically partitioned across multiple private datastores. A common user-facing query—such as viewing an Order Summary screen—requires attributes stored in the Order Service, Customer Service, Inventory Service, and Shipping Service.
+        </p>
+        <p>
+          In a monolith, this is a routine SQL query:
+        </p>
+        <pre><code class="language-sql">SELECT o.id, c.name, i.item_name, s.tracking_number
+FROM orders o
+JOIN customers c ON o.customer_id = c.id
+JOIN items i ON o.item_id = i.id
+JOIN shipments s ON o.id = s.order_id
+WHERE o.id = 'ORD-9842';</code></pre>
+        <p>
+          In microservices, these tables reside in separate databases managed by different teams. The <strong>API Composition Pattern</strong> solves this by introducing a service (the API Composer, Aggregator, or API Gateway) that queries each microservice via RPC and merges the returned datasets in memory.
+        </p>
+      </section>
+
+      <section id="architecture-of-composer">
+        <h2>2. Architecture of an API Composer</h2>
+        <p>
+          An API Composer can reside at the edge API Gateway, as a Backend-for-Frontend (BFF) service, or as a standalone domain aggregator:
+        </p>
+
+        <div class="diagram-wrapper">
+          <svg viewBox="0 0 740 220" width="100%" height="220" xmlns="http://www.w3.org/2000/svg">
+            <rect x="20" y="20" width="700" height="180" rx="8" fill="var(--card-bg, #f8f9fa)" stroke="#0056b3" stroke-width="1.5"/>
+            <text x="370" y="45" font-family="var(--sans)" font-size="13" font-weight="bold" text-anchor="middle" fill="#0056b3">API Composition Fan-Out &amp; Join Topology</text>
+
+            <rect x="40" y="75" width="120" height="50" rx="6" fill="#0056b3" stroke="#004085"/>
+            <text x="100" y="98" font-family="var(--sans)" font-size="10" font-weight="bold" text-anchor="middle" fill="#fff">Client / Browser</text>
+            <text x="100" y="112" font-family="var(--mono)" font-size="7.5" text-anchor="middle" fill="#cce5ff">GET /order-view/99</text>
+
+            <path d="M 160 100 L 220 100" stroke="#0056b3" stroke-width="2"/>
+
+            <rect x="220" y="65" width="160" height="70" rx="6" fill="#e3f2fd" stroke="#0056b3" stroke-width="1.5"/>
+            <text x="300" y="90" font-family="var(--sans)" font-size="10" font-weight="bold" text-anchor="middle" fill="#0056b3">API Composer</text>
+            <text x="300" y="105" font-family="var(--sans)" font-size="8" text-anchor="middle" fill="#555">Concurrent RPC Fan-Out</text>
+            <text x="300" y="120" font-family="var(--mono)" font-size="7.5" text-anchor="middle" fill="#2e7d32">In-Memory Hash Join</text>
+
+            <path d="M 380 80 L 440 60" stroke="#0056b3" stroke-width="1.5"/>
+            <path d="M 380 95 L 440 95" stroke="#0056b3" stroke-width="1.5"/>
+            <path d="M 380 110 L 440 130" stroke="#0056b3" stroke-width="1.5"/>
+            <path d="M 380 125 L 440 165" stroke="#0056b3" stroke-width="1.5"/>
+
+            <rect x="440" y="45" width="130" height="30" rx="4" fill="#fff" stroke="#333"/>
+            <text x="505" y="65" font-family="var(--sans)" font-size="8.5" text-anchor="middle">Order Service (20ms)</text>
+
+            <rect x="440" y="80" width="130" height="30" rx="4" fill="#fff" stroke="#333"/>
+            <text x="505" y="100" font-family="var(--sans)" font-size="8.5" text-anchor="middle">Customer Service (15ms)</text>
+
+            <rect x="440" y="115" width="130" height="30" rx="4" fill="#fff" stroke="#333"/>
+            <text x="505" y="135" font-family="var(--sans)" font-size="8.5" text-anchor="middle">Inventory Service (35ms)</text>
+
+            <rect x="440" y="150" width="130" height="30" rx="4" fill="#fff" stroke="#333"/>
+            <text x="505" y="170" font-family="var(--sans)" font-size="8.5" text-anchor="middle">Shipment Service (50ms)</text>
+
+            <rect x="600" y="65" width="115" height="70" rx="4" fill="#e8f5e9" stroke="#2e7d32"/>
+            <text x="657" y="90" font-family="var(--sans)" font-size="8.5" font-weight="bold" text-anchor="middle" fill="#2e7d32">Unified Response</text>
+            <text x="657" y="108" font-family="var(--mono)" font-size="7.5" text-anchor="middle">Latency: ~52ms</text>
+            <text x="657" y="122" font-family="var(--sans)" font-size="7" text-anchor="middle" fill="#555">Max(L_i) + Join</text>
+          </svg>
+        </div>
+      </section>
+
+      <section id="parallelization-and-tail-latency">
+        <h2>3. Concurrent Fan-Out &amp; Tail Latency Amplification</h2>
+        <p>
+          Executing calls sequentially ($L = L_1 + L_2 + L_3 + L_4$) produces unacceptably high latency. An efficient Composer executes remote calls <strong>concurrently in parallel</strong> (using Go <code>errgroup</code>, Java <code>CompletableFuture</code>, or Node.js <code>Promise.all</code>).
+        </p>
+        <p>
+          Overall response time becomes:
+          $$T_{\text{composer}} = \max(L_1, L_2, \dots, L_k) + T_{\text{serialization}} + T_{\text{join}}$$
+        </p>
+
+        <h3>Tail Latency (p99) Amplification</h3>
+        <p>
+          However, fan-out architectures suffer from severe tail latency amplification. If each of the 4 downstream services has a 99th percentile (p99) latency of 200ms, the probability that <em>at least one</em> downstream call hits the p99 tail is:
+          $$P(\text{tail}) = 1 - (1 - 0.01)^4 = 1 - (0.99)^4 \approx 3.94\%$$
+          If the Composer fans out to 15 microservices, $1 - (0.99)^{15} \approx 14\%$. Nearly 1 out of every 7 requests to the Composer suffers p99 tail latency!
+        </p>
+      </section>
+
+      <section id="multilevel-composition">
+        <h2>4. Multilevel &amp; Nested API Composition</h2>
+        <p>
+          In complex enterprise architectures, API Composition occurs across multiple hierarchical tiers:
+        </p>
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-title">Tier 1: Edge API Gateway / BFF</div>
+            <p>Aggregates top-level domain summaries for specific client form factors (Mobile vs Web vs IoT).</p>
+          </div>
+          <div class="card">
+            <div class="card-title">Tier 2: Sub-domain Aggregators</div>
+            <p>A Fulfillment Composer coordinates lower-level microservices (Warehouse, Courier Routing, Packing Stations) before returning an aggregated status to the edge.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="partial-failure-strategies">
+        <h2>5. Partial Failure Strategies: Degrade vs. Abort</h2>
+        <p>
+          What happens when 3 services reply in 30ms, but the Recommendations service times out or crashes with a <code>500 Internal Server Error</code>?
+        </p>
+        <ul>
+          <li><strong>Fail-Open Degradation (Non-Essential Domains):</strong> Return the primary order and shipping details, but return an empty array or cached fallback for recommendations (<code>"recommendations": []</code>). The user experience remains functional.</li>
+          <li><strong>Fail-Closed Abort (Mission-Critical Domains):</strong> If the core Order or Payment service fails, the entire aggregated request must abort immediately with a <code>502 Bad Gateway</code> or <code>504 Gateway Timeout</code>, rather than rendering a corrupted checkout screen.</li>
+        </ul>
+      </section>
+
+      <section id="api-composition-vs-cqrs">
+        <h2>6. API Composition vs. CQRS Materialized Views</h2>
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 25%;">Evaluation Metric</th>
+              <th style="width: 38%;">API Composition Pattern</th>
+              <th style="width: 37%;">CQRS Materialized Views</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Implementation Simplicity</strong></td>
+              <td><span class="badge badge-info">High</span> Straightforward RPC aggregation in memory.</td>
+              <td>Complex; requires Kafka, CDC, event schemas, view storage.</td>
+            </tr>
+            <tr>
+              <td><strong>Data Consistency</strong></td>
+              <td><span class="badge badge-info">Immediate</span> Reads direct from primary source.</td>
+              <td><span class="badge badge-warn">Eventual</span> Slight replication lag behind write.</td>
+            </tr>
+            <tr>
+              <td><strong>Large In-Memory Sets</strong></td>
+              <td><span class="badge badge-crit">Poor</span> Unsuitable for sorting/joining 10,000+ rows.</td>
+              <td><span class="badge badge-info">Optimal</span> Pre-indexed in Elasticsearch or SQL.</td>
+            </tr>
+            <tr>
+              <td><strong>Tail Latency Impact</strong></td>
+              <td>Bounded by slowest downstream dependency.</td>
+              <td>Single local datastore query (~5ms).</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="production-checklist">
+        <h2>7. Production Engineering Checklist</h2>
+        <ul class="checklist">
+          <li><strong>Timeout Budget Enforcement:</strong> Enforce parallel context deadlines; abort downstream RPCs as soon as the composer budget expires.</li>
+          <li><strong>In-Memory Join Memory Bounds:</strong> Limit query page sizes (e.g. <code>max_items = 50</code>) to prevent OOM panics during in-memory joining.</li>
+          <li><strong>Circuit Breakers on Fan-Out:</strong> Equip each downstream client stub with an isolated circuit breaker.</li>
+          <li><strong>Distributed Tracing Context:</strong> Propagate the composer's span context to all concurrent downstream goroutines/threads.</li>
+        </ul>
+      </section>
+
+
+      <div class="article-footer">
+        <div class="footer-nav">
+          <a href="microservices-database-per-service-pattern.html" class="prev-post">← Database per Service Pattern: Polyglot Persistence & Event Sourcing</a>
+          <a href="microservices-foundations-monolith-to-distributed.html" class="next-post">What are Microservices? Decomposition, Governance & Real-World Trade-offs →</a>
+        </div>
+      </div>
+    </article>
+
+    <aside class="toc-sidebar">
+      <div class="sidebar-sticky">
+        <div class="sidebar-header">
+          <span class="toc-title">Table of Contents</span>
+        </div>
+        <nav class="toc-list">
+          <a href="#api-composition-problem" class="toc-link">1. The Query Aggregation Challenge</a>
+          <a href="#architecture-of-composer" class="toc-link">2. Architecture of an API Composer</a>
+          <a href="#parallelization-and-tail-latency" class="toc-link">3. Concurrent Fan-Out & Tail Latency Amplification</a>
+          <a href="#multilevel-composition" class="toc-link">4. Multilevel & Nested API Composition</a>
+          <a href="#partial-failure-strategies" class="toc-link">5. Partial Failure Strategies: Degrade vs Abort</a>
+          <a href="#api-composition-vs-cqrs" class="toc-link">6. API Composition vs. CQRS Materialized Views</a>
+          <a href="#production-checklist" class="toc-link">7. Production Checklist</a>
+        </nav>
+        <div class="sidebar-download">
+          <a href="../Docs/Microservices_API_Composition_Pattern_Technical_Breakdown.pdf" class="download-link" target="_blank" download>
+            <span>📥 Technical PDF (3 Pages)</span>
+          </a>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <p>&copy; 2026 System Design Notes. Microservices Architecture Series.</p>
+    </div>
+  </footer>
+
+  <script src="../theme.js?v=3.3"></script>
+</body>
+</html>

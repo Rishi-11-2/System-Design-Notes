@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>What are Microservices? Decomposition, Governance & Real-World Trade-offs — System Design Notes</title>
+  <meta name="description" content="First-principles foundation of microservice architectures: anatomical characteristics, monolith decomposition limits, organizational scaling via Conway's law, and economic cost-benefit trade-offs.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css?v=3.3">
+  <link rel="stylesheet" href="../blog-theme.css?v=3.3">
+  <link rel="stylesheet" href="../assets/css/style.css?v=3.3">
+  <script>
+    (function() {
+      const saved = localStorage.getItem('theme');
+      if (saved) document.documentElement.dataset.theme = saved;
+    })();
+  </script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+</head>
+<body class="blog-post">
+  <header class="site-header">
+    <div class="header-inner">
+      <a href="../index.html" class="site-title">System Design Notes</a>
+      <nav class="site-nav">
+        <a href="../index.html">All Notes</a>
+        <a href="../index.html?category=outages">Outage Dissections</a>
+        <a href="../index.html?category=distributed-algorithms">Distributed Algorithms</a>
+        <a href="../index.html?category=microservices" class="active">Microservices</a>
+      </nav>
+      <div class="theme-switcher">
+        <button id="theme-toggle" aria-label="Toggle theme" title="Toggle theme">
+          <svg class="sun-icon" viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+          <svg class="moon-icon" viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <div class="article-container">
+    <article class="article-content">
+      <div class="article-header">
+        <div class="meta-details">
+          <span class="category-badge microservices">Microservices Architecture</span>
+          <span class="date">Resilience Engineering</span>
+          <span class="reading-time">16 min read</span>
+          <span class="source-link">Dissection based on <a href="https://www.youtube.com/watch?v=qoAox0FGzRQ" target="_blank" rel="noopener">Arpit Bhayani's Architecture Series</a></span>
+        </div>
+        <h1 class="article-title">What are Microservices? Decomposition, Governance & Real-World Trade-offs</h1>
+        <p class="article-subtitle">First-principles foundation of microservice architectures: anatomical characteristics, monolith decomposition limits, organizational scaling via Conway's law, and economic cost-benefit trade-offs.</p>
+        <div class="pdf-download-card">
+          <div class="pdf-info">
+            <span class="pdf-badge">Companion Resource</span>
+            <h3>Technical Architecture Breakdown (PDF)</h3>
+            <p>Download the verified 3-page engineering review containing mathematical latency accumulation proofs, circuit breaker state transitions, and production Go/Envoy configs.</p>
+          </div>
+          <a href="../Docs/Microservices_Foundations_Monolith_Decomposition_Technical_Breakdown.pdf" class="pdf-download-btn" target="_blank" download>
+            <span>📥 Download PDF (3 Pages)</span>
+          </a>
+        </div>
+      </div>
+
+
+      <section id="what-are-microservices">
+        <h2>1. What are Microservices? A First-Principles Definition</h2>
+        <p>
+          A <strong>microservice architecture</strong> is an approach to software development in which a single large application is structured as a suite of small, independently deployable services, each running in its own process and communicating via lightweight mechanisms (typically an HTTP resource API or gRPC protocol).
+        </p>
+        <p>
+          Each service is centered around a specific business capability, independently maintained by a cross-functional autonomous team, and owns its persistence layer. Microservices are not about writing "tiny functions"; they are about establishing <strong>autonomous units of deployment and scaling</strong>.
+        </p>
+        <div class="callout warning">
+          <div class="callout-title">The Monolith Fallacy</div>
+          <p>
+            A monolithic architecture is not inherently "legacy" or "bad code". High-performing monoliths (such as GitHub, Shopify, and Basecamp) serve hundreds of millions of requests daily. Microservices become necessary when organizational communication overhead and deployment bottlenecks outpace computational capacity.
+          </p>
+        </div>
+      </section>
+
+      <section id="monolith-architecture-breakdown">
+        <h2>2. Monolithic Architecture &amp; The Scaling Ceiling</h2>
+        <p>
+          Monoliths package the user interface, business logic, data access layer, and domain rules into a single deployable artifact (e.g. a single <code>.jar</code>, <code>.war</code>, Go binary, or Rails app) talking to a single relational database.
+        </p>
+
+        <div class="diagram-wrapper">
+          <svg viewBox="0 0 740 220" width="100%" height="220" xmlns="http://www.w3.org/2000/svg">
+            <rect x="20" y="20" width="320" height="180" rx="8" fill="#f8f9fa" stroke="#333" stroke-width="1.5"/>
+            <text x="180" y="45" font-family="var(--sans)" font-size="12" font-weight="bold" text-anchor="middle">Monolithic Architecture</text>
+            <rect x="40" y="65" width="280" height="65" rx="4" fill="#e3f2fd" stroke="#0056b3"/>
+            <text x="180" y="90" font-family="var(--sans)" font-size="10" font-weight="bold" text-anchor="middle" fill="#0056b3">Single Process (Shared Memory)</text>
+            <text x="180" y="105" font-family="var(--sans)" font-size="8" text-anchor="middle" fill="#555">Auth | Catalog | Orders | Payments | Notifications</text>
+            <text x="180" y="120" font-family="var(--mono)" font-size="7.5" text-anchor="middle" fill="#2e7d32">Fast in-memory function calls</text>
+            <path d="M 180 130 L 180 155" stroke="#333" stroke-width="1.5"/>
+            <rect x="110" y="155" width="140" height="35" rx="4" fill="#fff" stroke="#333"/>
+            <text x="180" y="177" font-family="var(--mono)" font-size="9" text-anchor="middle">Shared Database</text>
+
+            <rect x="400" y="20" width="320" height="180" rx="8" fill="#e8f5e9" stroke="#2e7d32" stroke-width="1.5"/>
+            <text x="560" y="45" font-family="var(--sans)" font-size="12" font-weight="bold" text-anchor="middle" fill="#2e7d32">Microservices Architecture</text>
+            <rect x="420" y="65" width="85" height="40" rx="4" fill="#fff" stroke="#0056b3"/>
+            <text x="462" y="88" font-family="var(--sans)" font-size="8" text-anchor="middle">Auth Svc</text>
+            <rect x="517" y="65" width="85" height="40" rx="4" fill="#fff" stroke="#0056b3"/>
+            <text x="560" y="88" font-family="var(--sans)" font-size="8" text-anchor="middle">Order Svc</text>
+            <rect x="615" y="65" width="85" height="40" rx="4" fill="#fff" stroke="#0056b3"/>
+            <text x="657" y="88" font-family="var(--sans)" font-size="8" text-anchor="middle">Pay Svc</text>
+            <path d="M 462 105 L 462 135" stroke="#2e7d32" stroke-width="1.5"/>
+            <path d="M 560 105 L 560 135" stroke="#2e7d32" stroke-width="1.5"/>
+            <path d="M 657 105 L 657 135" stroke="#2e7d32" stroke-width="1.5"/>
+            <rect x="430" y="135" width="65" height="30" rx="4" fill="#fff" stroke="#2e7d32"/>
+            <text x="462" y="153" font-family="var(--mono)" font-size="7" text-anchor="middle">Auth DB</text>
+            <rect x="527" y="135" width="65" height="30" rx="4" fill="#fff" stroke="#2e7d32"/>
+            <text x="560" y="153" font-family="var(--mono)" font-size="7" text-anchor="middle">Order DB</text>
+            <rect x="625" y="135" width="65" height="30" rx="4" fill="#fff" stroke="#2e7d32"/>
+            <text x="657" y="153" font-family="var(--mono)" font-size="7" text-anchor="middle">Pay DB</text>
+            <text x="560" y="185" font-family="var(--mono)" font-size="7.5" text-anchor="middle" fill="#0056b3">Network RPCs (gRPC / HTTP)</text>
+          </svg>
+        </div>
+
+        <h3>The Three Monolithic Pain Points</h3>
+        <ul>
+          <li><strong>Deployment Queue Gridlock:</strong> 200 developers committing to a single repository create massive deployment train delays. A failure in one unrelated test blocks all teams from shipping.</li>
+          <li><strong>Homogeneous Hardware Scaling:</strong> If only the recommendation module requires expensive GPU instances or 128 GB of RAM, the entire monolith must be scaled up, multiplying cloud infrastructure bills.</li>
+          <li><strong>Unbounded Blast Radius:</strong> A memory leak or infinite loop in a low-priority reporting cron job crashes the entire operating system process, taking down checkout.</li>
+        </ul>
+      </section>
+
+      <section id="six-core-characteristics">
+        <h2>3. The 6 Architectural Characteristics of Microservices</h2>
+        <div class="grid-3">
+          <div class="card">
+            <div class="card-title">1. Componentization via Services</div>
+            <p>Components are out-of-process services that deploy and run independently without redeploying the parent app.</p>
+          </div>
+          <div class="card">
+            <div class="card-title">2. Organized by Capability</div>
+            <p>Teams align with business boundaries (Billing, Shipping) rather than technology layers (DB team vs UI team).</p>
+          </div>
+          <div class="card">
+            <div class="card-title">3. Products, Not Projects</div>
+            <p>Teams own a service throughout its entire lifecycle ("You build it, you run it", including on-call support).</p>
+          </div>
+        </div>
+
+        <div class="grid-3" style="margin-top: 6px;">
+          <div class="card">
+            <div class="card-title">4. Smart Endpoints, Dumb Pipes</div>
+            <p>Logic resides in service code; network fabrics (Kafka, gRPC) simply route bytes without complex ESB transformations.</p>
+          </div>
+          <div class="card">
+            <div class="card-title">5. Decentralized Governance</div>
+            <p>Teams choose language, frameworks, and deployment cadence best suited to their specific domain invariants.</p>
+          </div>
+          <div class="card">
+            <div class="card-title">6. Decentralized Data</div>
+            <p>Each service strictly encapsulates its private datastore; cross-boundary access is prohibited.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="monolith-to-microservices-path">
+        <h2>4. The Decomposition Roadmap: Monolith to Mesh</h2>
+        <p>
+          Decomposing a live monolith into microservices requires a disciplined incremental roadmap:
+        </p>
+        <ol>
+          <li><strong>Identify Domain Boundaries (DDD):</strong> Map out bounded contexts using Event Storming and Ubiquitous Language.</li>
+          <li><strong>Extract In-Memory Modules First:</strong> Refactor monolithic spaghetti into clean modular packages with explicit interfaces before touching the network.</li>
+          <li><strong>Deploy Edge Gateway &amp; Strangler Fig:</strong> Route target endpoints (e.g. <code>/api/v1/payments</code>) through an Envoy proxy.</li>
+          <li><strong>Carve Out Service &amp; Decouple Data:</strong> Move domain logic to a new repo, provision an isolated DB, and replicate historical data via CDC.</li>
+        </ol>
+      </section>
+
+      <section id="conways-law-and-governance">
+        <h2>5. Conway's Law &amp; Decentralized Governance</h2>
+        <p>
+          Melvin Conway's Law (1967) states: <em>"Organizations which design systems are constrained to produce designs which are copies of the communication structures of these organizations."</em>
+        </p>
+        <p>
+          Monolithic organizations with functional silos (DBAs, Backend, Frontend, QA) inevitably create three-tier layered systems with massive coordination friction. Microservices require an <strong>Inverse Conway Maneuver</strong>: organize cross-functional two-pizza teams (6–8 engineers including frontend, backend, product, and DevOps) around business capabilities, producing naturally decoupled software architectures.
+        </p>
+      </section>
+
+      <section id="when-to-avoid-microservices">
+        <h2>6. When to Avoid Microservices: The Economic Equation</h2>
+        <p>
+          Adopting microservices prematurely is catastrophic for early-stage startups and small engineering teams:
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 25%;">Dimension</th>
+              <th style="width: 38%;">Stay with Monolith</th>
+              <th style="width: 37%;">Adopt Microservices</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Team Size</strong></td>
+              <td>&lt; 30 engineers.</td>
+              <td>&gt; 50–100 engineers across multiple squads.</td>
+            </tr>
+            <tr>
+              <td><strong>Domain Stability</strong></td>
+              <td>Early product-market fit; rapidly shifting requirements.</td>
+              <td>Well-defined, stable business domain boundaries.</td>
+            </tr>
+            <tr>
+              <td><strong>Platform DevOps Maturity</strong></td>
+              <td>Minimal dedicated infrastructure engineers.</td>
+              <td>Dedicated platform team managing K8s, tracing, CI/CD.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="production-checklist">
+        <h2>7. Production Engineering Checklist</h2>
+        <ul class="checklist">
+          <li><strong>Modularize Before Decomposing:</strong> Never carve out a microservice from code that is not already modularized inside the monolith.</li>
+          <li><strong>Align with Two-Pizza Teams:</strong> A service should be small enough to be fully understood and maintained by a single small team.</li>
+          <li><strong>Paved Road Infrastructure:</strong> Ensure CI/CD pipelines, container registries, and monitoring templates are automated before splitting.</li>
+          <li><strong>Explicit Business SLAs:</strong> Every service must define and publish its latency, throughput, and error budget SLAs.</li>
+        </ul>
+      </section>
+
+
+      <div class="article-footer">
+        <div class="footer-nav">
+          <a href="microservices-api-composition-pattern.html" class="prev-post">← API Composition Pattern: Query Aggregation & In-Memory Joins</a>
+          <a href="microservices-ten-critical-challenges.html" class="next-post">10 Critical Challenges in Adopting and Implementing Microservices →</a>
+        </div>
+      </div>
+    </article>
+
+    <aside class="toc-sidebar">
+      <div class="sidebar-sticky">
+        <div class="sidebar-header">
+          <span class="toc-title">Table of Contents</span>
+        </div>
+        <nav class="toc-list">
+          <a href="#what-are-microservices" class="toc-link">1. What are Microservices? Foundational Definition</a>
+          <a href="#monolith-architecture-breakdown" class="toc-link">2. Monolithic Architecture & Scaling Ceilings</a>
+          <a href="#six-core-characteristics" class="toc-link">3. The 6 Architectural Characteristics of Microservices</a>
+          <a href="#monolith-to-microservices-path" class="toc-link">4. The Decomposition Roadmap: Monolith to Mesh</a>
+          <a href="#conways-law-and-governance" class="toc-link">5. Conway's Law & Decentralized Governance</a>
+          <a href="#when-to-avoid-microservices" class="toc-link">6. When to Avoid Microservices: The Economic Equation</a>
+          <a href="#production-checklist" class="toc-link">7. Production Checklist</a>
+        </nav>
+        <div class="sidebar-download">
+          <a href="../Docs/Microservices_Foundations_Monolith_Decomposition_Technical_Breakdown.pdf" class="download-link" target="_blank" download>
+            <span>📥 Technical PDF (3 Pages)</span>
+          </a>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <p>&copy; 2026 System Design Notes. Microservices Architecture Series.</p>
+    </div>
+  </footer>
+
+  <script src="../theme.js?v=3.3"></script>
+</body>
+</html>

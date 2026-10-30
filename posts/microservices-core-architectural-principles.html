@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Core Principles for Building Sustainable Microservices — System Design Notes</title>
+  <meta name="description" content="Critical mental models and non-negotiable principles for engineering microservices: managing distributed tech debt, resolving team friction, avoiding resume-driven development, and aligning architectural complexity with business ROI.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css?v=3.3">
+  <link rel="stylesheet" href="../blog-theme.css?v=3.3">
+  <link rel="stylesheet" href="../assets/css/style.css?v=3.3">
+  <script>
+    (function() {
+      const saved = localStorage.getItem('theme');
+      if (saved) document.documentElement.dataset.theme = saved;
+    })();
+  </script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+</head>
+<body class="blog-post">
+  <header class="site-header">
+    <div class="header-inner">
+      <a href="../index.html" class="site-title">System Design Notes</a>
+      <nav class="site-nav">
+        <a href="../index.html">All Notes</a>
+        <a href="../index.html?category=outages">Outage Dissections</a>
+        <a href="../index.html?category=distributed-algorithms">Distributed Algorithms</a>
+        <a href="../index.html?category=microservices" class="active">Microservices</a>
+      </nav>
+      <div class="theme-switcher">
+        <button id="theme-toggle" aria-label="Toggle theme" title="Toggle theme">
+          <svg class="sun-icon" viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+          <svg class="moon-icon" viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <div class="article-container">
+    <article class="article-content">
+      <div class="article-header">
+        <div class="meta-details">
+          <span class="category-badge microservices">Microservices Architecture</span>
+          <span class="date">Resilience Engineering</span>
+          <span class="reading-time">16 min read</span>
+          <span class="source-link">Dissection based on <a href="https://www.youtube.com/watch?v=xbtE9IF4yRc" target="_blank" rel="noopener">Arpit Bhayani's Architecture Series</a></span>
+        </div>
+        <h1 class="article-title">Core Principles for Building Sustainable Microservices</h1>
+        <p class="article-subtitle">Critical mental models and non-negotiable principles for engineering microservices: managing distributed tech debt, resolving team friction, avoiding resume-driven development, and aligning architectural complexity with business ROI.</p>
+        <div class="pdf-download-card">
+          <div class="pdf-info">
+            <span class="pdf-badge">Companion Resource</span>
+            <h3>Technical Architecture Breakdown (PDF)</h3>
+            <p>Download the verified 3-page engineering review containing mathematical latency accumulation proofs, circuit breaker state transitions, and production Go/Envoy configs.</p>
+          </div>
+          <a href="../Docs/Microservices_Core_Architectural_Principles_Technical_Breakdown.pdf" class="pdf-download-btn" target="_blank" download>
+            <span>📥 Download PDF (3 Pages)</span>
+          </a>
+        </div>
+      </div>
+
+
+      <section id="engineering-vs-business-roi">
+        <h2>1. Architecture vs. Business ROI: The Pragmatic Lens</h2>
+        <p>
+          Microservices are frequently adopted for the wrong reasons. Engineers often champion microservices because they are fashionable, exciting to build, or represent an opportunity to master modern cloud-native tools like Kubernetes, Kafka, and Envoy.
+        </p>
+        <p>
+          However, <strong>software architecture does not exist to satisfy engineering curiosity; it exists to deliver business value</strong>. An architecture that increases operational downtime, inflates cloud infrastructure bills, and slows down feature delivery is a failed architecture, regardless of how elegantly its microservices are decoupled.
+        </p>
+        <div class="callout warning">
+          <div class="callout-title">The Fundamental Question</div>
+          <p>
+            Does breaking this capability into an out-of-process network service increase the organization's business velocity, or does it merely introduce distributed latency, eventual consistency headaches, and multi-repository maintenance overhead?
+          </p>
+        </div>
+      </section>
+
+      <section id="growth-opportunity-trap">
+        <h2>2. The Growth Opportunity &amp; 'Resume-Driven' Trap</h2>
+        <p>
+          In growing companies, microservices are often created as an organizational mechanism to give junior or mid-level engineers "ownership" of a service. While empowering, creating 20 microservices for a 15-person engineering department produces an untenable ratio of services to developers.
+        </p>
+        <div class="callout note">
+          <p>
+            When an engineer leaves the company, who maintains the 4 obscure services they built in a niche framework? The organization suffers orphaned services, abandoned dependency updates, and recurring production brownouts.
+          </p>
+        </div>
+      </section>
+
+      <section id="resolving-team-conflicts">
+        <h2>3. Managing Cross-Team Conflicts &amp; API Boundaries</h2>
+        <p>
+          In a monolithic architecture, disagreements over code organization and database schema design manifest as pull request debates. In microservices, team conflicts manifest as <strong>API boundary friction</strong>:
+        </p>
+        <ul>
+          <li><strong>Passing the Blame:</strong> When an edge request fails, Service A blames Service B's latency, while Service B blames Service C's database locks. Distributed tracing (OpenTelemetry) is required to establish indisputable root cause telemetry.</li>
+          <li><strong>The Consumer-Supplier Dynamic:</strong> Upstream services must treat downstream internal squads as paying customers. Breaking changes must never be deployed unilaterally; upstream teams must support semantic versioning and backward compatibility.</li>
+        </ul>
+      </section>
+
+      <section id="technical-debt-in-distributed-systems">
+        <h2>4. Managing Technical Debt in Distributed Topologies</h2>
+        <p>
+          Technical debt in a monolith is localized within files and packages. Technical debt in microservices is <strong>topological debt</strong>:
+        </p>
+
+        <div class="diagram-wrapper">
+          <svg viewBox="0 0 740 200" width="100%" height="200" xmlns="http://www.w3.org/2000/svg">
+            <rect x="20" y="20" width="700" height="160" rx="8" fill="var(--card-bg, #f8f9fa)" stroke="#0056b3" stroke-width="1.5"/>
+            <text x="370" y="45" font-family="var(--sans)" font-size="13" font-weight="bold" text-anchor="middle" fill="#0056b3">The Spectrum of Distributed Technical Debt</text>
+
+            <rect x="40" y="65" width="200" height="95" rx="4" fill="#fff" stroke="#c62828" stroke-width="1.2"/>
+            <text x="140" y="88" font-family="var(--sans)" font-size="10" font-weight="bold" text-anchor="middle" fill="#c62828">1. Zombie Services</text>
+            <text x="140" y="108" font-family="var(--sans)" font-size="8" text-anchor="middle" fill="#555">Services with no active owner</text>
+            <text x="140" y="125" font-family="var(--sans)" font-size="8" text-anchor="middle" fill="#555">Unpatched security CVEs</text>
+            <text x="140" y="142" font-family="var(--mono)" font-size="7.5" text-anchor="middle" fill="#c62828">Runaway cloud cost</text>
+
+            <rect x="270" y="65" width="200" height="95" rx="4" fill="#fff" stroke="#f57f17" stroke-width="1.2"/>
+            <text x="370" y="88" font-family="var(--sans)" font-size="10" font-weight="bold" text-anchor="middle" fill="#f57f17">2. Cyclic Dependencies</text>
+            <text x="370" y="108" font-family="var(--sans)" font-size="8" text-anchor="middle" fill="#555">Service A calls B, B calls A</text>
+            <text x="370" y="125" font-family="var(--sans)" font-size="8" text-anchor="middle" fill="#555">Distributed deadlocks</text>
+            <text x="370" y="142" font-family="var(--mono)" font-size="7.5" text-anchor="middle" fill="#f57f17">Impossible to restart</text>
+
+            <rect x="500" y="65" width="200" height="95" rx="4" fill="#fff" stroke="#0056b3" stroke-width="1.2"/>
+            <text x="600" y="88" font-family="var(--sans)" font-size="10" font-weight="bold" text-anchor="middle" fill="#0056b3">3. Schema Drift</text>
+            <text x="600" y="108" font-family="var(--sans)" font-size="8" text-anchor="middle" fill="#555">Discrepancies in API contracts</text>
+            <text x="600" y="125" font-family="var(--sans)" font-size="8" text-anchor="middle" fill="#555">Silent serialization drops</text>
+            <text x="600" y="142" font-family="var(--mono)" font-size="7.5" text-anchor="middle" fill="#0056b3">Production runtime panics</text>
+          </svg>
+        </div>
+      </section>
+
+      <section id="service-templates-and-chassis">
+        <h2>5. The Strategic Value of Service Templates</h2>
+        <p>
+          High-velocity engineering organizations prevent architectural sprawl by enforcing <strong>Service Templates</strong> (Cookiecutter, Backstage software templates):
+        </p>
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-title">Turnkey Infrastructure Scaffolding</div>
+            <p>A single CLI command provisions a Git repo, Dockerfile, Kubernetes Helm charts, OpenTelemetry tracing, Prometheus alerts, and Vault secret access.</p>
+          </div>
+          <div class="card">
+            <div class="card-title">Enforced Organizational Invariants</div>
+            <p>Guarantees that every new service conforms to enterprise security, error schemas, and linter policies without manual DevOps audits.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="non-negotiable-principles">
+        <h2>6. The 7 Non-Negotiable Microservice Axioms</h2>
+        <ol>
+          <li><strong>Model Around Business Concepts, Not Technology:</strong> Group services by domain capabilities (Orders, Shipping), never by tech layers (Postgres service, Redis service).</li>
+          <li><strong>Hide Internal Implementation Details:</strong> Never expose database IDs or storage models directly in public API contracts.</li>
+          <li><strong>Decentralize All The Things:</strong> Decentralize governance and data; avoid centralized orchestrator bottlenecks where possible.</li>
+          <li><strong>Deploy Independently:</strong> If Service A cannot be deployed without simultaneously deploying Service B, they are a distributed monolith. Merge them.</li>
+          <li><strong>Isolate Failure Domains:</strong> Design every network hop with timeouts, bulkheads, and circuit breakers.</li>
+          <li><strong>Observe Everything:</strong> A service without metrics, health probes, and distributed tracing is unfit for production.</li>
+          <li><strong>Culture of Automation:</strong> Microservices at scale require automated testing, automated CI/CD, and infrastructure as code.</li>
+        </ol>
+      </section>
+
+      <section id="production-checklist">
+        <h2>7. Production Engineering Checklist</h2>
+        <ul class="checklist">
+          <li><strong>Service Catalog &amp; Ownership:</strong> Maintain a live catalog (e.g. Backstage) documenting the owning on-call team for every microservice.</li>
+          <li><strong>Deprecation Protocols:</strong> Establish clear SLAs for retiring legacy API versions (minimum 6 months deprecation notice).</li>
+          <li><strong>Deadlock Linting:</strong> Map inter-service dependency graphs and flag any bidirectional or cyclic dependencies.</li>
+          <li><strong>Business Case Sign-Off:</strong> Require architecture review approval demonstrating measurable business ROI before creating a new service.</li>
+        </ul>
+      </section>
+
+
+      <div class="article-footer">
+        <div class="footer-nav">
+          <a href="microservices-standardization-paved-path.html" class="prev-post">← Standardizing Microservices: The Paved Road & Shared Chassis Architecture</a>
+          <a href="microservices-integration-best-practices.html" class="next-post">Best Practices for Microservices Integration & Contract Evolution →</a>
+        </div>
+      </div>
+    </article>
+
+    <aside class="toc-sidebar">
+      <div class="sidebar-sticky">
+        <div class="sidebar-header">
+          <span class="toc-title">Table of Contents</span>
+        </div>
+        <nav class="toc-list">
+          <a href="#engineering-vs-business-roi" class="toc-link">1. Architecture vs. Business ROI</a>
+          <a href="#growth-opportunity-trap" class="toc-link">2. The Growth Opportunity & 'Resume-Driven' Trap</a>
+          <a href="#resolving-team-conflicts" class="toc-link">3. Managing Cross-Team Conflicts & API Boundaries</a>
+          <a href="#technical-debt-in-distributed-systems" class="toc-link">4. Managing Technical Debt in Distributed Topologies</a>
+          <a href="#service-templates-and-chassis" class="toc-link">5. The Strategic Value of Service Templates</a>
+          <a href="#non-negotiable-principles" class="toc-link">6. The 7 Non-Negotiable Microservice Axioms</a>
+          <a href="#production-checklist" class="toc-link">7. Production Checklist</a>
+        </nav>
+        <div class="sidebar-download">
+          <a href="../Docs/Microservices_Core_Architectural_Principles_Technical_Breakdown.pdf" class="download-link" target="_blank" download>
+            <span>📥 Technical PDF (3 Pages)</span>
+          </a>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <p>&copy; 2026 System Design Notes. Microservices Architecture Series.</p>
+    </div>
+  </footer>
+
+  <script src="../theme.js?v=3.3"></script>
+</body>
+</html>

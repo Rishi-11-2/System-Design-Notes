@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Everything You Need to Know About REST: Constraints, HTTP Semantics & Trade-offs — System Design Notes</title>
+  <meta name="description" content="Comprehensive breakdown of REST architectural constraints, HTTP safe and idempotent verbs, status codes, Richardson Maturity Model, HTTP caching, and REST vs gRPC trade-offs.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css?v=3.3">
+  <link rel="stylesheet" href="../blog-theme.css?v=3.3">
+  <link rel="stylesheet" href="../assets/css/style.css?v=3.3">
+  <script>
+    (function() {
+      const saved = localStorage.getItem('theme');
+      if (saved) document.documentElement.dataset.theme = saved;
+    })();
+  </script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+</head>
+<body class="blog-post">
+  <header class="site-header">
+    <div class="header-inner">
+      <a href="../index.html" class="site-title">System Design Notes</a>
+      <nav class="site-nav">
+        <a href="../index.html">All Notes</a>
+        <a href="../index.html?category=outages">Outage Dissections</a>
+        <a href="../index.html?category=distributed-algorithms">Distributed Algorithms</a>
+        <a href="../index.html?category=microservices" class="active">Microservices</a>
+      </nav>
+      <div class="theme-switcher">
+        <button id="theme-toggle" aria-label="Toggle theme" title="Toggle theme">
+          <svg class="sun-icon" viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+          <svg class="moon-icon" viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <div class="article-container">
+    <article class="article-content">
+      <div class="article-header">
+        <div class="meta-details">
+          <span class="category-badge microservices">Microservices Architecture</span>
+          <span class="date">Resilience Engineering</span>
+          <span class="reading-time">16 min read</span>
+          <span class="source-link">Dissection based on <a href="https://www.youtube.com/watch?v=uFGJVQvR59A" target="_blank" rel="noopener">Arpit Bhayani's Architecture Series</a></span>
+        </div>
+        <h1 class="article-title">Everything You Need to Know About REST: Constraints, HTTP Semantics & Trade-offs</h1>
+        <p class="article-subtitle">Comprehensive breakdown of REST architectural constraints, HTTP safe and idempotent verbs, status codes, Richardson Maturity Model, HTTP caching, and REST vs gRPC trade-offs.</p>
+        <div class="pdf-download-card">
+          <div class="pdf-info">
+            <span class="pdf-badge">Companion Resource</span>
+            <h3>Technical Architecture Breakdown (PDF)</h3>
+            <p>Download the verified 3-page engineering review containing mathematical latency accumulation proofs, circuit breaker state transitions, and production Go/Envoy configs.</p>
+          </div>
+          <a href="../Docs/Microservices_REST_Architecture_Semantics_Technical_Breakdown.pdf" class="pdf-download-btn" target="_blank" download>
+            <span>📥 Download PDF (3 Pages)</span>
+          </a>
+        </div>
+      </div>
+
+
+      <section id="rest-architectural-constraints">
+        <h2>1. Roy Fielding's REST Architectural Style: The 6 Constraints</h2>
+        <p>
+          <strong>Representational State Transfer (REST)</strong> was formulated in Roy Fielding's seminal 2000 doctoral dissertation. REST is not a protocol, standard, or software library; it is an <strong>architectural style</strong> defined by six foundational constraints:
+        </p>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-title">1. Client-Server Separation</div>
+            <p>Separates user interface concerns (clients) from data storage and business logic (servers), enabling independent component evolution.</p>
+          </div>
+          <div class="card">
+            <div class="card-title">2. Statelessness</div>
+            <p>Every client request must contain all necessary authentication, state, and context. The server stores zero session state between calls.</p>
+          </div>
+          <div class="card">
+            <div class="card-title">3. Cacheability</div>
+            <p>Responses must explicitly designate themselves as cacheable or non-cacheable to prevent stale data reuse and eliminate redundant server load.</p>
+          </div>
+          <div class="card">
+            <div class="card-title">4. Uniform Interface</div>
+            <p>The core differentiator: resources are identified by URIs, manipulated through representations, and self-descriptive.</p>
+          </div>
+          <div class="card">
+            <div class="card-title">5. Layered System</div>
+            <p>Clients cannot know whether they connect directly to the origin server or via intermediate proxies, CDNs, or load balancers.</p>
+          </div>
+          <div class="card">
+            <div class="card-title">6. Code on Demand (Optional)</div>
+            <p>Servers can temporarily extend client functionality by transmitting executable code (e.g. JavaScript or WebAssembly).</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="http-verbs-and-idempotency">
+        <h2>2. HTTP Verbs: Safe &amp; Idempotent Semantics</h2>
+        <p>
+          The power of REST emerges from aligning domain resources with HTTP protocol semantics:
+        </p>
+
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 15%;">HTTP Verb</th>
+              <th style="width: 25%;">Domain Purpose</th>
+              <th style="width: 18%;">Safe? (Read-Only)</th>
+              <th style="width: 22%;">Idempotent? ($f(f(x)) = f(x)$)</th>
+              <th style="width: 20%;">Success Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>GET</code></td>
+              <td>Read resource representation</td>
+              <td><span class="badge badge-info">YES</span></td>
+              <td><span class="badge badge-info">YES</span></td>
+              <td><code>200 OK</code></td>
+            </tr>
+            <tr>
+              <td><code>POST</code></td>
+              <td>Create new subordinate resource</td>
+              <td><span class="badge badge-crit">NO</span></td>
+              <td><span class="badge badge-crit">NO</span></td>
+              <td><code>201 Created</code></td>
+            </tr>
+            <tr>
+              <td><code>PUT</code></td>
+              <td>Replace entire resource state</td>
+              <td><span class="badge badge-crit">NO</span></td>
+              <td><span class="badge badge-info">YES</span></td>
+              <td><code>200 OK / 204 No Content</code></td>
+            </tr>
+            <tr>
+              <td><code>PATCH</code></td>
+              <td>Partial resource mutation</td>
+              <td><span class="badge badge-crit">NO</span></td>
+              <td><span class="badge badge-warn">Conditional</span></td>
+              <td><code>200 OK</code></td>
+            </tr>
+            <tr>
+              <td><code>DELETE</code></td>
+              <td>Remove resource</td>
+              <td><span class="badge badge-crit">NO</span></td>
+              <td><span class="badge badge-info">YES</span></td>
+              <td><code>200 OK / 204 No Content</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="richardson-maturity-model">
+        <h2>3. The Richardson Maturity Model: Levels 0 to 3</h2>
+        <p>
+          Leonard Richardson categorized REST implementations across four evolutionary levels:
+        </p>
+
+        <div class="diagram-wrapper">
+          <svg viewBox="0 0 740 200" width="100%" height="200" xmlns="http://www.w3.org/2000/svg">
+            <rect x="20" y="20" width="700" height="160" rx="8" fill="var(--card-bg, #f8f9fa)" stroke="#0056b3" stroke-width="1.5"/>
+            <text x="370" y="45" font-family="var(--sans)" font-size="13" font-weight="bold" text-anchor="middle" fill="#0056b3">The Richardson Maturity Model Ladder</text>
+
+            <rect x="40" y="65" width="140" height="95" rx="4" fill="#fff" stroke="#d0d7de"/>
+            <text x="110" y="88" font-family="var(--sans)" font-size="10" font-weight="bold" text-anchor="middle">Level 0: Swamp of POX</text>
+            <text x="110" y="108" font-family="var(--sans)" font-size="8" text-anchor="middle" fill="#555">Single URI endpoint</text>
+            <text x="110" y="123" font-family="var(--mono)" font-size="7.5" text-anchor="middle" fill="#c62828">POST /api/service</text>
+            <text x="110" y="142" font-family="var(--sans)" font-size="7.5" text-anchor="middle" fill="#555">XML-RPC / SOAP style</text>
+
+            <rect x="200" y="65" width="150" height="95" rx="4" fill="#fff" stroke="#d0d7de"/>
+            <text x="275" y="88" font-family="var(--sans)" font-size="10" font-weight="bold" text-anchor="middle">Level 1: Resources</text>
+            <text x="275" y="108" font-family="var(--sans)" font-size="8" text-anchor="middle" fill="#555">Multiple discrete URIs</text>
+            <text x="275" y="123" font-family="var(--mono)" font-size="7.5" text-anchor="middle" fill="#f57f17">/orders/123</text>
+            <text x="275" y="142" font-family="var(--sans)" font-size="7.5" text-anchor="middle" fill="#555">Still uses POST for all</text>
+
+            <rect x="370" y="65" width="150" height="95" rx="4" fill="#fff" stroke="#0056b3" stroke-width="1.5"/>
+            <text x="445" y="88" font-family="var(--sans)" font-size="10" font-weight="bold" text-anchor="middle" fill="#0056b3">Level 2: HTTP Verbs</text>
+            <text x="445" y="108" font-family="var(--sans)" font-size="8" text-anchor="middle" fill="#555">Standard Verbs &amp; Codes</text>
+            <text x="445" y="123" font-family="var(--mono)" font-size="7.5" text-anchor="middle" fill="#0056b3">GET /orders, DELETE</text>
+            <text x="445" y="142" font-family="var(--sans)" font-size="7.5" font-weight="bold" text-anchor="middle" fill="#2e7d32">Industry Standard</text>
+
+            <rect x="540" y="65" width="160" height="95" rx="4" fill="#fff" stroke="#d0d7de"/>
+            <text x="620" y="88" font-family="var(--sans)" font-size="10" font-weight="bold" text-anchor="middle">Level 3: HATEOAS</text>
+            <text x="620" y="108" font-family="var(--sans)" font-size="8" text-anchor="middle" fill="#555">Hypermedia Controls</text>
+            <text x="620" y="123" font-family="var(--mono)" font-size="7.5" text-anchor="middle" fill="#555">{"_links": {"pay": ...}}</text>
+            <text x="620" y="142" font-family="var(--sans)" font-size="7.5" text-anchor="middle" fill="#555">Self-navigating API</text>
+          </svg>
+        </div>
+      </section>
+
+      <section id="http-tooling-and-caching">
+        <h2>4. The HTTP Tooling Synergy: Caching &amp; Proxies</h2>
+        <p>
+          The immense popularity of REST is not solely due to elegance; it is driven by the <strong>massive global ecosystem of HTTP-aware infrastructure</strong>:
+        </p>
+        <ul>
+          <li><strong>Edge CDN Caching:</strong> Akamai, Cloudflare, and Fastly cache HTTP <code>GET</code> responses automatically using <code>Cache-Control: public, max-age=3600</code> and <code>ETag</code> entity tags. Millions of read requests can be satisfied without hitting backend origin servers.</li>
+          <li><strong>Universal Tooling:</strong> Every programming language, browser, debug proxy (Wireshark, Charles), and load balancer natively understands HTTP/1.1 and HTTP/2 headers.</li>
+        </ul>
+      </section>
+
+      <section id="downsides-of-rest">
+        <h2>5. Downsides of REST in Microservices: The Microservice Tax</h2>
+        <p>
+          While unmatched for public-facing edge APIs, REST exhibits serious drawbacks for internal east-west microservice communication:
+        </p>
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-title">1. Over-fetching &amp; Under-fetching</div>
+            <p>Clients either receive huge unwanted payloads (over-fetching 60 fields when only 2 are needed) or must make 5 sequential roundtrips to assemble a view (under-fetching).</p>
+          </div>
+          <div class="card">
+            <div class="card-title">2. Text-Based Serialization Tax</div>
+            <p>JSON serialization consumes up to 40% of microservice CPU cycles at high throughput, compared to zero-copy binary protocols like FlatBuffers or Protobuf.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="rest-vs-grpc-decision">
+        <h2>6. Architectural Decision Matrix: REST vs. gRPC</h2>
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 25%;">Architecture Boundary</th>
+              <th style="width: 38%;">REST (JSON over HTTP)</th>
+              <th style="width: 37%;">gRPC (Protobuf over HTTP/2)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>North-South (Edge / Mobile)</strong></td>
+              <td><span class="badge badge-info">Optimal</span> Universal client support, CDN caching, browser native.</td>
+              <td>Requires gRPC-Web proxy; difficult debugging.</td>
+            </tr>
+            <tr>
+              <td><strong>East-West (Internal Mesh)</strong></td>
+              <td>High JSON parsing overhead, loose typing, latency.</td>
+              <td><span class="badge badge-info">Optimal</span> High throughput, strict proto typing, streaming.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="production-checklist">
+        <h2>7. Production Engineering Checklist</h2>
+        <ul class="checklist">
+          <li><strong>RFC 7807 Problem Details:</strong> Standardize HTTP error responses using <code>application/problem+json</code> with type, title, status, and detail.</li>
+          <li><strong>ETag Conditional Updates:</strong> Prevent lost updates on concurrent <code>PUT/PATCH</code> calls using <code>If-Match</code> headers.</li>
+          <li><strong>Idempotency Keys on POST:</strong> Protect non-idempotent order and payment endpoints against duplicate transmissions.</li>
+          <li><strong>OpenAPI Specification (OAS 3.0):</strong> Maintain automated contract schemas to generate client SDKs and mock tests.</li>
+        </ul>
+      </section>
+
+
+      <div class="article-footer">
+        <div class="footer-nav">
+          <a href="microservices-rpc-remote-procedure-calls.html" class="prev-post">← Introduction to RPC: Protocols, Client/Server Stubs, and Primitives</a>
+          <a href="microservices-database-per-service-pattern.html" class="next-post">Database per Service Pattern: Polyglot Persistence & Event Sourcing →</a>
+        </div>
+      </div>
+    </article>
+
+    <aside class="toc-sidebar">
+      <div class="sidebar-sticky">
+        <div class="sidebar-header">
+          <span class="toc-title">Table of Contents</span>
+        </div>
+        <nav class="toc-list">
+          <a href="#rest-architectural-constraints" class="toc-link">1. Roy Fielding's REST Architectural Constraints</a>
+          <a href="#http-verbs-and-idempotency" class="toc-link">2. HTTP Verbs: Safe & Idempotent Semantics</a>
+          <a href="#richardson-maturity-model" class="toc-link">3. Richardson Maturity Model & HATEOAS</a>
+          <a href="#http-tooling-and-caching" class="toc-link">4. HTTP Tooling Synergy: Caching & Proxies</a>
+          <a href="#downsides-of-rest" class="toc-link">5. Downsides of REST: Over-fetching & Rigidity</a>
+          <a href="#rest-vs-grpc-decision" class="toc-link">6. REST vs. gRPC Decision Matrix</a>
+          <a href="#production-checklist" class="toc-link">7. Production Checklist</a>
+        </nav>
+        <div class="sidebar-download">
+          <a href="../Docs/Microservices_REST_Architecture_Semantics_Technical_Breakdown.pdf" class="download-link" target="_blank" download>
+            <span>📥 Technical PDF (3 Pages)</span>
+          </a>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <p>&copy; 2026 System Design Notes. Microservices Architecture Series.</p>
+    </div>
+  </footer>
+
+  <script src="../theme.js?v=3.3"></script>
+</body>
+</html>

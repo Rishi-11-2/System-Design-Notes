@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Introduction to RPC: Remote Procedure Calls, Protocols, and Stubs — System Design Notes</title>
+  <meta name="description" content="Deep dive into Remote Procedure Call (RPC) architecture: the local procedure illusion, fallacies of distributed computing, client stubs, IDL compilation, binary serialization, and gRPC over HTTP/2.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css?v=3.3">
+  <link rel="stylesheet" href="../blog-theme.css?v=3.3">
+  <link rel="stylesheet" href="../assets/css/style.css?v=3.3">
+  <script>
+    (function() {
+      const saved = localStorage.getItem('theme');
+      if (saved) document.documentElement.dataset.theme = saved;
+    })();
+  </script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+</head>
+<body class="blog-post">
+  <header class="site-header">
+    <div class="header-inner">
+      <a href="../index.html" class="site-title">System Design Notes</a>
+      <nav class="site-nav">
+        <a href="../index.html">All Notes</a>
+        <a href="../index.html?category=outages">Outage Dissections</a>
+        <a href="../index.html?category=distributed-algorithms">Distributed Algorithms</a>
+        <a href="../index.html?category=microservices" class="active">Microservices</a>
+      </nav>
+      <div class="theme-switcher">
+        <button id="theme-toggle" aria-label="Toggle theme" title="Toggle theme">
+          <svg class="sun-icon" viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+          <svg class="moon-icon" viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <div class="article-container">
+    <article class="article-content">
+      <div class="article-header">
+        <div class="meta-details">
+          <span class="category-badge microservices">Microservices Architecture</span>
+          <span class="date">Resilience Engineering</span>
+          <span class="reading-time">16 min read</span>
+          <span class="source-link">Dissection based on <a href="https://www.youtube.com/watch?v=eRndYq8iTio" target="_blank" rel="noopener">Arpit Bhayani's Architecture Series</a></span>
+        </div>
+        <h1 class="article-title">Introduction to RPC: Remote Procedure Calls, Protocols, and Stubs</h1>
+        <p class="article-subtitle">Deep dive into Remote Procedure Call (RPC) architecture: the local procedure illusion, fallacies of distributed computing, client stubs, IDL compilation, binary serialization, and gRPC over HTTP/2.</p>
+        <div class="pdf-download-card">
+          <div class="pdf-info">
+            <span class="pdf-badge">Companion Resource</span>
+            <h3>Technical Architecture Breakdown (PDF)</h3>
+            <p>Download the verified 3-page engineering review containing mathematical latency accumulation proofs, circuit breaker state transitions, and production Go/Envoy configs.</p>
+          </div>
+          <a href="../Docs/Microservices_RPC_Protocols_Stubs_Technical_Breakdown.pdf" class="pdf-download-btn" target="_blank" download>
+            <span>📥 Download PDF (3 Pages)</span>
+          </a>
+        </div>
+      </div>
+
+
+      <section id="the-rpc-concept">
+        <h2>1. The RPC Concept: The Local Procedure Call Illusion</h2>
+        <p>
+          In traditional procedural programming, calling a function is fundamentally simple: the caller places parameters onto the CPU call stack, executes a jump instruction to the function's memory address, and reads the return value from the register.
+        </p>
+        <p>
+          <strong>Remote Procedure Call (RPC)</strong> was conceived to preserve this familiar abstraction across a network. An application developer writes code that appears to invoke a standard local function, while an underlying RPC framework transparently serializes the arguments, transmits them over TCP/IP to a remote machine, executes the logic, and returns the serialized result.
+        </p>
+        <div class="callout warning">
+          <div class="callout-title">The Leaky Abstraction</div>
+          <p>
+            While syntactically identical to a local call, an RPC is physically subject to network partitions, packet drops, serialization overhead, DNS resolutions, and unbounded latency. Pretending a network hop is an in-memory pointer dereference is the root cause of countless distributed system outages.
+          </p>
+        </div>
+      </section>
+
+      <section id="fallacies-of-distributed-computing">
+        <h2>2. The Fallacies of Distributed Computing (Peter Deutsch)</h2>
+        <p>
+          Every RPC designer must explicitly confront the classic eight fallacies of network computing:
+        </p>
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-title">1. The Network is Reliable</div>
+            <p>Routers flap, switches drop frames, and cables get severed. RPC clients must implement retries, timeouts, and circuit breakers.</p>
+          </div>
+          <div class="card">
+            <div class="card-title">2. Latency is Zero</div>
+            <p>In-memory pointer access takes ~10 nanoseconds ($10^{-8}\text{ s}$). A cross-rack datacenter network roundtrip takes ~500 microseconds ($5 \times 10^{-4}\text{ s}$) — a $50,000\times$ latency penalty.</p>
+          </div>
+          <div class="card">
+            <div class="card-title">3. Bandwidth is Infinite</div>
+            <p>Transmitting bloated JSON payloads across thousands of internal microservice RPCs saturates network interface cards (NICs) and switches.</p>
+          </div>
+          <div class="card">
+            <div class="card-title">4. Topology Doesn't Change</div>
+            <p>Cloud containers spin up, crash, and migrate dynamically. Service discovery and client-side load balancing are mandatory.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="anatomy-of-rpc">
+        <h2>3. Anatomy of an RPC: Stubs, Marshaling &amp; Skeletons</h2>
+        <p>
+          How does an RPC call travel from client code to server execution?
+        </p>
+
+        <div class="diagram-wrapper">
+          <svg viewBox="0 0 740 220" width="100%" height="220" xmlns="http://www.w3.org/2000/svg">
+            <rect x="20" y="20" width="700" height="180" rx="8" fill="var(--card-bg, #f8f9fa)" stroke="#0056b3" stroke-width="1.5"/>
+            <text x="370" y="45" font-family="var(--sans)" font-size="13" font-weight="bold" text-anchor="middle" fill="#0056b3">The RPC Execution Lifecycle</text>
+
+            <rect x="40" y="65" width="130" height="45" rx="4" fill="#fff" stroke="#333"/>
+            <text x="105" y="88" font-family="var(--sans)" font-size="9" font-weight="bold" text-anchor="middle">Client Application</text>
+            <text x="105" y="100" font-family="var(--mono)" font-size="7.5" text-anchor="middle" fill="#555">client.GetUser(id)</text>
+
+            <path d="M 170 87 L 220 87" stroke="#0056b3" stroke-width="1.5"/>
+
+            <rect x="220" y="65" width="120" height="45" rx="4" fill="#e3f2fd" stroke="#0056b3"/>
+            <text x="280" y="88" font-family="var(--sans)" font-size="9" font-weight="bold" text-anchor="middle" fill="#0056b3">Client Stub</text>
+            <text x="280" y="100" font-family="var(--mono)" font-size="7.5" text-anchor="middle">Marshaling / Encode</text>
+
+            <path d="M 340 87 L 400 87" stroke="#0056b3" stroke-width="2"/>
+            <text x="370" y="80" font-family="var(--mono)" font-size="7.5" text-anchor="middle" fill="#0056b3">TCP/HTTP2</text>
+
+            <rect x="400" y="65" width="120" height="45" rx="4" fill="#e3f2fd" stroke="#0056b3"/>
+            <text x="460" y="88" font-family="var(--sans)" font-size="9" font-weight="bold" text-anchor="middle" fill="#0056b3">Server Skeleton</text>
+            <text x="460" y="100" font-family="var(--mono)" font-size="7.5" text-anchor="middle">Unmarshal / Decode</text>
+
+            <path d="M 520 87 L 570 87" stroke="#0056b3" stroke-width="1.5"/>
+
+            <rect x="570" y="65" width="130" height="45" rx="4" fill="#fff" stroke="#333"/>
+            <text x="635" y="88" font-family="var(--sans)" font-size="9" font-weight="bold" text-anchor="middle">Server Implementation</text>
+            <text x="635" y="100" font-family="var(--mono)" font-size="7.5" text-anchor="middle" fill="#555">Execute Service Logic</text>
+
+            <path d="M 635 110 L 635 155 L 105 155 L 105 110" fill="none" stroke="#2e7d32" stroke-width="1.5" stroke-dasharray="4"/>
+            <text x="370" y="150" font-family="var(--mono)" font-size="8" text-anchor="middle" fill="#2e7d32">Return Serialized Response Payload</text>
+          </svg>
+        </div>
+
+        <ol>
+          <li><strong>Client Invocation:</strong> Client code calls the generated local stub method.</li>
+          <li><strong>Marshaling (Serialization):</strong> The client stub serializes the in-memory object into a binary format (e.g., Protobuf) and attaches metadata headers (Tracing IDs, Auth tokens, Deadlines).</li>
+          <li><strong>Network Transport:</strong> The framed binary buffer is transmitted across a persistent TCP connection (HTTP/2 stream).</li>
+          <li><strong>Unmarshaling (Deserialization):</strong> The server-side skeleton reads the bytes, decodes them into language-native structs, and invokes the concrete service handler.</li>
+        </ol>
+      </section>
+
+      <section id="serialization-formats">
+        <h2>4. Binary Serialization: Protocol Buffers vs. JSON</h2>
+        <p>
+          Why does gRPC use Protocol Buffers rather than JSON over HTTP?
+        </p>
+
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 25%;">Metric</th>
+              <th style="width: 37%;">JSON (Text-based)</th>
+              <th style="width: 38%;">Protocol Buffers (Binary)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Payload Size</strong></td>
+              <td>Repeats field names in every message (e.g. <code>"customer_id": 123</code>).</td>
+              <td><span class="badge badge-info">Compact</span> Uses integer field tags (e.g. tag <code>1</code> in 1-2 bytes). Typically 3x to 10x smaller.</td>
+            </tr>
+            <tr>
+              <td><strong>CPU Serialization Speed</strong></td>
+              <td>Heavy CPU cost parsing string tokens and numbers.</td>
+              <td><span class="badge badge-info">Fast</span> Direct binary memory layout; 5x to 8x faster serialization.</td>
+            </tr>
+            <tr>
+              <td><strong>Type Safety</strong></td>
+              <td>Implicit / Loose schema; runtime validation.</td>
+              <td>Strict compile-time typing enforced via <code>.proto</code> IDL file.</td>
+            </tr>
+            <tr>
+              <td><strong>Human Readability</strong></td>
+              <td><span class="badge badge-info">High</span> Easy to inspect via cURL / browser.</td>
+              <td>Requires decoding tool (e.g. <code>grpcurl</code>) or proto schema.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="grpc-and-http2">
+        <h2>5. gRPC over HTTP/2: Multiplexing &amp; Streaming</h2>
+        <p>
+          Traditional HTTP/1.1 requires opening separate TCP connections for concurrent requests or suffers head-of-line blocking. gRPC leverages <strong>HTTP/2</strong> primitives:
+        </p>
+        <ul>
+          <li><strong>Single Persistent TCP Connection:</strong> All RPC requests to a server instance are multiplexed over a single TCP socket via binary streams.</li>
+          <li><strong>HPACK Header Compression:</strong> Repetitive headers (User-Agent, Auth tokens) are compressed into shared connection lookup tables.</li>
+          <li><strong>Four Streaming Modes:</strong>
+            <ol>
+              <li><em>Unary RPC:</em> Single request &rarr; Single response.</li>
+              <li><em>Server Streaming:</em> Single request &rarr; Stream of responses (e.g. stock ticker prices).</li>
+              <li><em>Client Streaming:</em> Stream of requests &rarr; Single response (e.g. file upload chunks).</li>
+              <li><em>Bidirectional Streaming:</em> Concurrent streams flowing both ways (e.g. chat, real-time gaming).</li>
+            </ol>
+          </li>
+        </ul>
+      </section>
+
+      <section id="deadlines-and-status-codes">
+        <h2>6. Deadlines, Cancellations &amp; Canonical Error Codes</h2>
+        <p>
+          gRPC replaces ambiguous HTTP status codes with 16 canonical error codes (<code>OK</code>, <code>CANCELLED</code>, <code>DEADLINE_EXCEEDED</code>, <code>UNAVAILABLE</code>, <code>RESOURCE_EXHAUSTED</code>).
+        </p>
+        <p>
+          Crucially, gRPC supports <strong>Active Request Cancellation</strong>: when an edge client cancels a search request, the <code>RST_STREAM</code> frame propagates downstream through all intermediate microservices, allowing them to stop heavy database queries immediately and save compute resources.
+        </p>
+      </section>
+
+      <section id="production-checklist">
+        <h2>7. Production Engineering Checklist</h2>
+        <ul class="checklist">
+          <li><strong>Strict Field Tag Immutability:</strong> Never renumber or reuse a deleted Protobuf field tag number.</li>
+          <li><strong>Client-Side Load Balancing:</strong> Use Envoy sidecars or gRPC lookaside load balancing (xDS) to prevent traffic concentration on single pods over long-lived HTTP/2 TCP connections.</li>
+          <li><strong>Mandatory Deadlines:</strong> Every gRPC stub invocation must pass a context with an explicit timeout.</li>
+          <li><strong>Structured Error Details:</strong> Attach Google <code>status.proto</code> rich error details (ErrorInfo, RetryInfo, BadRequest) rather than generic strings.</li>
+        </ul>
+      </section>
+
+
+      <div class="article-footer">
+        <div class="footer-nav">
+          <a href="microservices-orchestration-vs-choreography.html" class="prev-post">← Designing Workflows in Microservices: Orchestration vs. Choreography</a>
+          <a href="microservices-rest-api-architecture.html" class="next-post">Everything You Need to Know About REST: Semantics & Trade-offs →</a>
+        </div>
+      </div>
+    </article>
+
+    <aside class="toc-sidebar">
+      <div class="sidebar-sticky">
+        <div class="sidebar-header">
+          <span class="toc-title">Table of Contents</span>
+        </div>
+        <nav class="toc-list">
+          <a href="#the-rpc-concept" class="toc-link">1. The RPC Concept & Local Call Illusion</a>
+          <a href="#fallacies-of-distributed-computing" class="toc-link">2. The Fallacies of Distributed Computing</a>
+          <a href="#anatomy-of-rpc" class="toc-link">3. Anatomy of an RPC: Stubs, Marshaling & Transport</a>
+          <a href="#serialization-formats" class="toc-link">4. Binary Serialization: Protobuf vs JSON</a>
+          <a href="#grpc-and-http2" class="toc-link">5. gRPC over HTTP/2: Multiplexing & Streams</a>
+          <a href="#deadlines-and-status-codes" class="toc-link">6. Deadlines, Cancellations & Error Semantics</a>
+          <a href="#production-checklist" class="toc-link">7. Production Checklist</a>
+        </nav>
+        <div class="sidebar-download">
+          <a href="../Docs/Microservices_RPC_Protocols_Stubs_Technical_Breakdown.pdf" class="download-link" target="_blank" download>
+            <span>📥 Technical PDF (3 Pages)</span>
+          </a>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <p>&copy; 2026 System Design Notes. Microservices Architecture Series.</p>
+    </div>
+  </footer>
+
+  <script src="../theme.js?v=3.3"></script>
+</body>
+</html>
