@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>How a Single MySQL Index Broke GitHub: Query Optimizer Inversion — System Design Notes</title>
+  <meta name="description" content="Technical deep-dive into how an innocent MySQL index addition caused a massive GitHub outage. Analyzes the Cost-Based Optimizer index flip, full table scans under ORDER BY LIMIT, thread pool saturation, and MySQL 8 invisible indexes.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css?v=3.3">
+  <link rel="stylesheet" href="../blog-theme.css?v=3.3">
+  <link rel="stylesheet" href="../assets/css/style.css?v=3.3">
+  <script>
+    (function() {
+      const saved = localStorage.getItem('theme');
+      if (saved) document.documentElement.dataset.theme = saved;
+    })();
+  </script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+  <div id="progress" aria-hidden="true"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">Articles</a></li>
+          <li><a href="../index.html#categories">Categories</a></li>
+          <li><a href="../index.html#pdf-library">PDF Library</a></li>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="github-nav-link">GitHub</a></li>
+        </ul>
+        <button id="theme-toggle" class="theme-toggle-btn" aria-label="Toggle theme">
+          <svg class="sun-icon" viewBox="0 0 24 24" width="18" height="18"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+          <svg class="moon-icon" viewBox="0 0 24 24" width="18" height="18"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <main class="post-container">
+    <div class="breadcrumb">
+      <a href="../index.html">Home</a>
+      <span class="separator">/</span>
+      <a href="../index.html#categories">Outage Dissections</a>
+      <span class="separator">/</span>
+      <span class="current">MySQL Single Index Outage</span>
+    </div>
+
+    <header class="article-header">
+      <div class="badge-row">
+        <span class="badge badge-consensus">Outage Dissection</span>
+        <span class="badge badge-theory">Query Optimizer</span>
+        <span class="badge badge-accent">MySQL Cost Model</span>
+        <span class="badge badge-rounds">Index Inversion</span>
+      </div>
+      <h1 class="article-title">How a Single MySQL Index Broke GitHub: Query Optimizer Inversion</h1>
+      <p class="article-subtitle">The dangerous physics of Cost-Based Optimizers: how adding an innocent secondary index tricked MySQL into abandoning primary keys, triggering cascading 100% CPU lockups.</p>
+      <div class="article-meta">
+        <span class="meta-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> 23 min read</span>
+        <span class="meta-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> Arpit Bhayani Outage Dissections</span>
+        <span class="meta-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> Verified 3-Page Companion PDF</span>
+      </div>
+      <div class="pdf-action-banner">
+        <a href="../Docs/GitHub_Outage_MySQL_Index_Optimizer_Flip_Technical_Breakdown.pdf" class="pdf-btn" target="_blank" download>
+          <span>📥 Download Technical PDF (3 Pages)</span>
+        </a>
+      </div>
+    </header>
+
+    <div class="article-container">
+      <article class="prose">
+        <div class="callout callout-note">
+          <div class="callout-title">📌 Database Internals Incident Abstract</div>
+          <p>Developers routinely assume that adding an index to a relational database is a purely additive optimization: at best it accelerates queries; at worst it takes up disk space. In this classic infrastructure incident, GitHub added what appeared to be an innocuous secondary index to a core multi-million-row table. Instead of accelerating traffic, the new index tricked the <strong>MySQL Cost-Based Optimizer (CBO)</strong> into an catastrophic <strong>Index Flip</strong>. Rather than executing a 1ms indexed B+ tree seek, MySQL switched query execution plans to scan millions of rows under an <code>ORDER BY ... LIMIT</code> clause. Concurrently executed across thousands of web requests, database CPU surged to 100%, connections backed up, and the platform collapsed.</p>
+        </div>
+
+        <h2 id="the-innocent-schema-change">1. The Innocent Schema Migration</h2>
+        <p>A feature team introduced an index to support a new query filter on a large relational table (e.g. <code>issues</code> or <code>pull_requests</code>). The table contained tens of millions of records and was queried thousands of times per second by high-frequency dashboard queries resembling:</p>
+
+        <pre><code class="language-sql">-- Core High-Frequency Dashboard Query
+SELECT id, title, state, created_at 
+FROM issues 
+WHERE repository_id = 12345 
+ORDER BY created_at DESC 
+LIMIT 30;</code></pre>
+
+        <p>Prior to migration, the table had an existing composite index:</p>
+        <pre><code class="language-sql">-- Existing Optimal Composite Index
+INDEX idx_repo_created (repository_id, created_at);</code></pre>
+
+        <p>Under <code>idx_repo_created</code>, MySQL performed a direct index seek on <code>repository_id = 12345</code> and read the first 30 pre-sorted records in reverse chronological order. Execution time was <strong>0.8ms</strong>.</p>
+
+        <h2 id="the-index-flip-mechanism">2. The Index Flip: How the Optimizer Was Tricked</h2>
+        <p>The migration added a new index on <code>created_at</code> alone to support a global timeline feature:</p>
+        <pre><code class="language-sql">-- Newly Added Index
+INDEX idx_created_at (created_at);</code></pre>
+
+        <div class="callout callout-warning">
+          <div class="callout-title">⚠️ The Optimizer Cost Calculation Trap</div>
+          <p>MySQL's Cost-Based Optimizer calculates two competing query execution paths:</p>
+          <ul>
+            <li><strong>Path A (idx_repo_created):</strong> Scan rows matching <code>repository_id = 12345</code>, already sorted. Cost estimate: $C_A$.</li>
+            <li><strong>Path B (idx_created_at):</strong> Read the <code>idx_created_at</code> index backwards, hoping to find 30 rows matching <code>repository_id = 12345</code> quickly, avoiding any sorting.</li>
+          </ul>
+          <p>Because the query included <code>LIMIT 30</code>, the optimizer believed it only needed to read 30 rows from the new index! It failed to realize that repository 12345 was a low-volume repository whose records were scattered sparsely across <strong>50,000,000 rows</strong> in the global <code>created_at</code> index. Path B resulted in scanning <strong>12,000,000 index pages</strong> instead of 30 rows!</p>
+        </div>
+
+        <div class="mermaid-diagram-wrapper">
+          <svg viewBox="0 0 860 380" width="100%" height="auto" xmlns="http://www.w3.org/2000/svg" style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; font-family: var(--sans);">
+            <rect width="860" height="380" fill="var(--bg-card)" rx="8"/>
+            <text x="430" y="30" text-anchor="middle" font-size="16" font-weight="700" fill="var(--text-heading)">The Index Flip: Expected Plan vs. Optimizer Inversion Disaster</text>
+            <text x="430" y="50" text-anchor="middle" font-size="12" fill="var(--text-muted)">Why a LIMIT Clause Tricked MySQL into Scanning Millions of Unrelated Rows</text>
+
+            <!-- Plan A (Optimal) -->
+            <rect x="50" y="80" width="350" height="260" rx="6" fill="#f0fdf4" stroke="#10b981" stroke-width="1.5"/>
+            <text x="225" y="105" text-anchor="middle" font-size="13" font-weight="700" fill="#10b981">Plan A: Expected Seek (idx_repo_created)</text>
+
+            <rect x="75" y="130" width="300" height="40" rx="4" fill="var(--bg-card)" stroke="#10b981" stroke-width="1"/>
+            <text x="225" y="155" text-anchor="middle" font-size="11" font-weight="600">B+ Tree Seek: repository_id = 12345</text>
+
+            <path d="M 225 170 L 225 200" stroke="#10b981" stroke-width="2"/>
+            <rect x="75" y="200" width="300" height="40" rx="4" fill="var(--bg-card)" stroke="#10b981" stroke-width="1"/>
+            <text x="225" y="225" text-anchor="middle" font-size="11" font-weight="600">Read First 30 Pre-Sorted Leaf Nodes</text>
+
+            <rect x="75" y="270" width="300" height="50" rx="4" fill="var(--raised)" stroke="none"/>
+            <text x="225" y="292" text-anchor="middle" font-size="11" font-weight="700" fill="#10b981">Rows Examined: Exactly 30</text>
+            <text x="225" y="308" text-anchor="middle" font-size="10" fill="var(--text-muted)">Execution Time: 0.8ms • Zero CPU Strain</text>
+
+            <!-- Plan B (Flipped) -->
+            <rect x="460" y="80" width="350" height="260" rx="6" fill="#fef2f2" stroke="#ef4444" stroke-width="1.5"/>
+            <text x="635" y="105" text-anchor="middle" font-size="13" font-weight="700" fill="#ef4444">Plan B: Flipped Scan (idx_created_at)</text>
+
+            <rect x="485" y="130" width="300" height="40" rx="4" fill="var(--bg-card)" stroke="#ef4444" stroke-width="1"/>
+            <text x="635" y="155" text-anchor="middle" font-size="11" font-weight="600">Scan idx_created_at in reverse order</text>
+
+            <path d="M 635 170 L 635 200" stroke="#ef4444" stroke-width="2"/>
+            <rect x="485" y="200" width="300" height="40" rx="4" fill="var(--bg-card)" stroke="#ef4444" stroke-width="1"/>
+            <text x="635" y="225" text-anchor="middle" font-size="11" font-weight="600">Check each row for repository_id = 12345</text>
+
+            <rect x="485" y="270" width="300" height="50" rx="4" fill="var(--raised)" stroke="none"/>
+            <text x="635" y="292" text-anchor="middle" font-size="11" font-weight="700" fill="#ef4444">Rows Examined: 12,400,000</text>
+            <text x="635" y="308" text-anchor="middle" font-size="10" fill="var(--text-muted)">Execution Time: 8,200ms (10,000x Explosion)</text>
+          </svg>
+        </div>
+
+        <h2 id="cascading-connection-saturation">3. The Cascading Saturation Breakdown</h2>
+        <p>Because this dashboard query was executed on nearly every repository pageview, the impact was immediate and non-linear:</p>
+        <ol>
+          <li><strong>CPU Spike:</strong> Scanning millions of rows across hundreds of concurrent threads drove MySQL server CPU utilization from 20% to <strong>100%</strong> in 15 seconds.</li>
+          <li><strong>Lock Contention:</strong> Long-running queries acquired read view locks, stalling the InnoDB purge thread and causing the undo log to balloon.</li>
+          <li><strong>Connection Queue Overflow:</strong> Web workers waited 8+ seconds for query results. The connection pool hit its <code>max_connections</code> cap (2,000 connections). ProxySQL began rejecting queries with <code>Max connections reached</code>.</li>
+          <li><strong>Health Check Timeouts:</strong> Orchestrator probes could not establish connections to execute heartbeats, falsely assuming the master had died and triggering chaotic automated failovers.</li>
+        </ol>
+
+        <h2 id="engineering-solutions">4. Engineering Solutions: Defeating Optimizer Inversion</h2>
+        <p>Production systems employ multiple defense-in-depth mechanisms to protect against query optimizer plan flips:</p>
+
+        <div class="card" style="margin-bottom: 8px;">
+          <div class="card-title">Solution 1: Explicit Optimizer Index Hints (FORCE INDEX)</div>
+          <p>When an index is critical to platform liveness, do not leave selection to optimizer heuristics:</p>
+          <pre><code class="language-sql">-- Force the composite index explicitly
+SELECT id, title, state, created_at 
+FROM issues FORCE INDEX (idx_repo_created)
+WHERE repository_id = 12345 
+ORDER BY created_at DESC 
+LIMIT 30;</code></pre>
+        </div>
+
+        <div class="card" style="margin-bottom: 8px;">
+          <div class="card-title">Solution 2: MySQL 8.0 Invisible Indexes</div>
+          <p>In modern MySQL versions, indexes can be created in an <strong>INVISIBLE</strong> state. The optimizer ignores the index during query planning while the storage engine maintains it in the background. Engineers can test queries explicitly using <code>USE INDEX</code> in staging before making it globally visible:</p>
+          <pre><code class="language-sql">-- Create index invisibly first
+CREATE INDEX idx_created_at ON issues (created_at) INVISIBLE;
+
+-- Validate performance in production canary session:
+SET SESSION optimizer_switch = 'use_invisible_indexes=on';
+EXPLAIN SELECT ...; -- Verify no plan regressions occur!
+
+-- Safely make visible:
+ALTER TABLE issues ALTER INDEX idx_created_at VISIBLE;</code></pre>
+        </div>
+
+        <div class="card" style="margin-bottom: 8px;">
+          <div class="card-title">Solution 3: Circuit Breaking Runaway Queries (max_execution_time)</div>
+          <p>Configure a hard execution ceiling on analytical or web queries to terminate runaway scans automatically before they starve CPU:</p>
+          <pre><code class="language-sql">-- Enforce a 1000ms query execution ceiling
+SET GLOBAL max_execution_time = 1000;</code></pre>
+        </div>
+
+        <h2 id="engineering-takeaways">5. Systems Engineering Takeaways</h2>
+        <ol>
+          <li><strong>Indexes Are Not Purely Additive:</strong> Adding an index alters the statistical cost model of every query touching that table. A new index can inadvertently degrade existing queries from $O(\log n)$ to $O(n)$.</li>
+          <li><strong>Beware of ORDER BY ... LIMIT Optimization Traps:</strong> MySQL's optimizer treats <code>LIMIT</code> as an aggressive cost discount. If an index matches the <code>ORDER BY</code> column, the optimizer will frequently choose a massive index scan over an indexed <code>WHERE</code> filter.</li>
+          <li><strong>Automate EXPLAIN Diffing in CI/CD:</strong> Never deploy schema changes without automated query plan verification. Compare <code>EXPLAIN</code> plans on production clones before and after migrations to catch plan inversions before deployment.</li>
+        </ol>
+      </article>
+
+      <aside class="toc-sidebar">
+        <div class="toc-title">Table of Contents</div>
+        <ul class="toc-list">
+          <li><a href="#the-innocent-schema-change">1. Innocent Schema Migration</a></li>
+          <li><a href="#the-index-flip-mechanism">2. The Index Flip Mechanism</a></li>
+          <li><a href="#cascading-connection-saturation">3. Cascading Saturation</a></li>
+          <li><a href="#engineering-solutions">4. Engineering Solutions</a></li>
+          <li><a href="#engineering-takeaways">5. Systems Engineering Takeaways</a></li>
+        </ul>
+
+        <div class="companion-box" style="margin-top: 1.25rem;">
+          <div class="companion-title">Companion PDF</div>
+          <p>Download the verified 3-page technical breakdown for offline study and architecture review.</p>
+          <a href="../Docs/GitHub_Outage_MySQL_Index_Optimizer_Flip_Technical_Breakdown.pdf" class="download-link" target="_blank" download>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            MySQL Index Flip PDF (3 Pages)
+          </a>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-container">
+      <div class="footer-col">
+        <div class="footer-brand">
+          <div class="brand-icon">⚡</div>
+          <span>System Design Notes</span>
+        </div>
+        <p class="footer-tagline">Curated engineering notes, production architecture dissections, and distributed systems research papers.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Outage Dissections</h5>
+        <ul>
+          <li><a href="github-outage-actions-data-inconsistencies-cache.html">GitHub Actions 24h Outage</a></li>
+          <li><a href="github-outage-mysql-index-optimizer-flip.html">MySQL Index Optimizer Flip</a></li>
+          <li><a href="github-outage-high-availability-blind-spots.html">HA Blind Spots &amp; Cold Caches</a></li>
+          <li><a href="github-outage-master-failover-failure.html">Master Failover Failure</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Repository</h5>
+        <ul>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank">GitHub Repository</a></li>
+          <li><a href="../Docs/System_Design_Notes.pdf" target="_blank">Complete Notes (184 Pages)</a></li>
+          <li><a href="../Docs/GitHub_Outage_MySQL_Index_Optimizer_Flip_Technical_Breakdown.pdf" target="_blank">MySQL Index Flip PDF (3 Pages)</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>Released under MIT License • Open Source Engineering Notes</p>
+    </div>
+  </footer>
+
+  <script src="../assets/js/main.js?v=3.3"></script>
+</body>
+</html>

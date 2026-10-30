@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>How an ALTER TABLE Caused a Massive GitHub Outage: gh-ost &amp; Cascading Replica Collapse — System Design Notes</title>
+  <meta name="description" content="Technical post-mortem of GitHub's November 2020 outage caused by an ALTER TABLE migration on a massive MySQL table using gh-ost, replica deadlocks, and cascading read pool failure.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css?v=3.3">
+  <link rel="stylesheet" href="../blog-theme.css?v=3.3">
+  <link rel="stylesheet" href="../assets/css/style.css?v=3.3">
+  <script>
+    (function() {
+      const saved = localStorage.getItem('theme');
+      if (saved) document.documentElement.dataset.theme = saved;
+    })();
+  </script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+</head>
+<body class="blog-post">
+  <header class="site-header">
+    <div class="header-inner">
+      <a href="../index.html" class="site-title">System Design Notes</a>
+      <nav class="site-nav">
+        <a href="../index.html">All Notes</a>
+        <a href="../index.html?category=outages" class="active">Outage Dissections</a>
+        <a href="../index.html?category=distributed-algorithms">Distributed Algorithms</a>
+        <a href="../index.html?category=system-design">System Design</a>
+      </nav>
+      <div class="theme-switcher">
+        <button id="theme-toggle" aria-label="Toggle theme" title="Toggle theme">
+          <svg class="sun-icon" viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+          <svg class="moon-icon" viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <div class="article-container">
+    <article class="article-content">
+      <div class="article-header">
+        <div class="meta-details">
+          <span class="category-badge outage">Outage Dissection</span>
+          <span class="date">November 2020 Outage Analysis</span>
+          <span class="reading-time">14 min read</span>
+          <span class="source-link">Dissection based on <a href="https://www.youtube.com/watch?v=82Xywy74kfE" target="_blank" rel="noopener">Arpit Bhayani's Analysis</a></span>
+        </div>
+        <h1 class="article-title">How an ALTER TABLE Caused a Massive GitHub Outage: gh-ost &amp; Cascading Replica Collapse</h1>
+        <p class="article-subtitle">Online schema migration on a multi-terabyte MySQL table triggered replication replay deadlocks, throwing database read replicas into crash-recovery loops and sparking a classic cascading pool failure.</p>
+        <div class="pdf-download-card">
+          <div class="pdf-info">
+            <span class="pdf-badge">Companion Resource</span>
+            <h3>Technical Architecture Breakdown (PDF)</h3>
+            <p>Download the verified 3-page engineering review containing gh-ost binlog replication mechanics, cascading failure mathematics, and pool segregation topologies.</p>
+          </div>
+          <a href="../Docs/GitHub_Outage_Alter_Table_Ghost_Migration_Technical_Breakdown.pdf" class="pdf-download-btn" target="_blank" download>
+            <span>📥 Download PDF (3 Pages)</span>
+          </a>
+        </div>
+      </div>
+
+      <section id="executive-summary">
+        <h2>1. Executive Summary &amp; Outage Scope</h2>
+        <p>
+          On November 27, 2020, GitHub suffered a widespread outage affecting GitHub Actions, Codespaces, pull requests, Git SSH/HTTPS operations, and API queries. The incident originated during a routine online schema migration on a massive, business-critical MySQL table.
+        </p>
+        <p>
+          GitHub relies heavily on <strong>gh-ost</strong> (GitHub Online Schema Transformations), an open-source triggerless migration tool developed in-house to alter petabyte-scale tables without locking writers. During this migration, an atypical concurrency pattern produced an unhandled <strong>InnoDB deadlock</strong> inside the replication SQL applier thread on read replicas. This deadlock forced replica nodes into sudden crash-recovery states.
+        </p>
+        <p>
+          When the initial replicas rebooted, load balancers automatically redirected 100% of read traffic across the surviving nodes. The surviving replicas were immediately overwhelmed by traffic exceeding 150% of capacity, crashing sequentially in a textbook <strong>cascading failure</strong> that wiped out GitHub's database read tier.
+        </p>
+      </section>
+
+      <section id="online-schema-migrations">
+        <h2>2. Why ALTER TABLE is Lethal at Scale: The gh-ost Architecture</h2>
+        <p>
+          In a production relational database, executing a direct DDL statement such as:
+        </p>
+        <pre><code class="language-sql">-- Dangerous in high-volume production!
+ALTER TABLE pull_requests ADD COLUMN reviewer_state VARCHAR(32);</code></pre>
+        <p>
+          locks metadata and table pages, stalling all concurrent writes. Furthermore, in MySQL replication topologies, DDL statements replicate sequentially, causing massive <strong>replication lag</strong> across read replicas.
+        </p>
+        <p>
+          To solve this, GitHub engineered <code>gh-ost</code>. Unlike older tools like <code>pt-online-schema-change</code> that rely on synchronous database triggers (which introduce heavy lock contention on the master), <code>gh-ost</code> is completely triggerless and asynchronous:
+        </p>
+
+        <div class="diagram-wrapper">
+          <svg viewBox="0 0 740 220" width="100%" height="220" xmlns="http://www.w3.org/2000/svg">
+            <rect x="20" y="20" width="180" height="170" rx="6" fill="var(--card-bg, #f8f9fa)" stroke="#0056b3" stroke-width="1.5"/>
+            <text x="110" y="45" font-family="var(--sans)" font-size="12" font-weight="bold" text-anchor="middle" fill="#0056b3">MySQL Primary</text>
+            <rect x="35" y="65" width="150" height="35" rx="4" fill="#e3f2fd" stroke="#0056b3" stroke-width="1"/>
+            <text x="110" y="87" font-family="var(--mono)" font-size="9" text-anchor="middle" fill="#0056b3">Original Table: tbl</text>
+            <rect x="35" y="110" width="150" height="35" rx="4" fill="#fff8e1" stroke="#f57f17" stroke-width="1"/>
+            <text x="110" y="132" font-family="var(--mono)" font-size="9" text-anchor="middle" fill="#f57f17">Ghost Table: _tbl_gho</text>
+            <text x="110" y="170" font-family="var(--sans)" font-size="8.5" text-anchor="middle" fill="#555">Binary Log (ROW format)</text>
+
+            <path d="M 200 95 L 300 95" stroke="#0056b3" stroke-width="2" marker-end="url(#arr-blue)" fill="none"/>
+            <text x="250" y="85" font-family="var(--sans)" font-size="8" text-anchor="middle" fill="#0056b3">Binlog Stream</text>
+
+            <rect x="300" y="20" width="170" height="170" rx="6" fill="#f0f4f8" stroke="#0056b3" stroke-width="2"/>
+            <text x="385" y="45" font-family="var(--sans)" font-size="12" font-weight="bold" text-anchor="middle" fill="#0056b3">gh-ost Process</text>
+            <text x="385" y="75" font-family="var(--sans)" font-size="8.5" text-anchor="middle" fill="#333">1. Creates Ghost Table</text>
+            <text x="385" y="100" font-family="var(--sans)" font-size="8.5" text-anchor="middle" fill="#333">2. Copies Rows in Batches</text>
+            <text x="385" y="125" font-family="var(--sans)" font-size="8.5" text-anchor="middle" fill="#333">3. Tails Binlog &amp; Replays</text>
+            <text x="385" y="150" font-family="var(--sans)" font-size="8.5" font-weight="bold" text-anchor="middle" fill="#c62828">4. Atomic Table Cut-Over</text>
+
+            <path d="M 470 95 L 560 95" stroke="#b00020" stroke-width="2" marker-end="url(#arr-red)" fill="none"/>
+            <text x="515" y="85" font-family="var(--sans)" font-size="8" text-anchor="middle" fill="#b00020">Replication</text>
+
+            <rect x="560" y="20" width="160" height="170" rx="6" fill="#ffebee" stroke="#b00020" stroke-width="1.5"/>
+            <text x="640" y="45" font-family="var(--sans)" font-size="12" font-weight="bold" text-anchor="middle" fill="#b00020">Read Replicas</text>
+            <text x="640" y="75" font-family="var(--mono)" font-size="8.5" text-anchor="middle" fill="#c62828">Applier Deadlock!</text>
+            <text x="640" y="105" font-family="var(--sans)" font-size="8.5" text-anchor="middle" fill="#555">SQL Thread Abort</text>
+            <text x="640" y="135" font-family="var(--sans)" font-size="8.5" font-weight="bold" text-anchor="middle" fill="#b00020">Crash Recovery State</text>
+            <text x="640" y="165" font-family="var(--sans)" font-size="8" text-anchor="middle" fill="#777">Pool Drain &rarr; Domino</text>
+
+            <defs>
+              <marker id="arr-blue" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 1 L 8 5 L 0 9 z" fill="#0056b3" />
+              </marker>
+              <marker id="arr-red" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 1 L 8 5 L 0 9 z" fill="#b00020" />
+              </marker>
+            </defs>
+          </svg>
+        </div>
+      </section>
+
+      <section id="the-failure-mechanism">
+        <h2>3. The Failure Mechanism: Deadlocks &amp; Crash Recovery</h2>
+        <p>
+          <code>gh-ost</code> operates by acting as a fake MySQL replica: it connects to the primary, streams binlog events, and rewrites ongoing DML operations into the ghost table. Concurrently, it migrates existing rows in range-based chunks (e.g., <code>WHERE id BETWEEN x AND y</code>).
+        </p>
+        <p>
+          During the November 27 incident, a high rate of production concurrent updates clashed with the row-copy operations and binlog replay on the ghost table. While MySQL handles standard client deadlocks by rolling back one transaction, this specific condition triggered a severe bug inside the replication applier on the replicas:
+        </p>
+        <div class="callout danger">
+          <div class="callout-title">The Replication Applier Crash Loop</div>
+          <p>
+            When a replica's single-threaded SQL applier encounters an unhandled deadlock during multi-statement binlog transaction replay, MySQL marks the replication state corrupt and terminates the mysqld daemon to preserve data integrity. Upon automatic container/daemon restart, InnoDB enters <strong>Crash Recovery Mode</strong>—scanning redo logs and rolling back uncommitted transactions before opening network ports.
+          </p>
+        </div>
+      </section>
+
+      <section id="cascading-replica-collapse">
+        <h2>4. Mathematical Anatomy of Cascading Failure</h2>
+        <p>
+          To understand why the entire read tier collapsed, let us analyze the load distribution across a replica pool.
+        </p>
+        <p>
+          Suppose an active cluster has $N$ read replicas handling total query ingress $R_{\text{total}}$. Each replica handles a baseline load of:
+        </p>
+        $$L_{\text{baseline}} = \frac{R_{\text{total}}}{N}$$
+        <p>
+          Suppose each replica is provisioned with capacity $C_{\text{max}} = 1.25 \cdot L_{\text{baseline}}$ (a 25% safety headroom).
+        </p>
+        <p>
+          When $k$ replicas crash due to replication replay deadlocks, the proxy load balancer immediately drains the failing nodes and distributes the entire load across the remaining $(N - k)$ replicas:
+        </p>
+        $$L_{\text{remaining}} = \frac{R_{\text{total}}}{N - k} = L_{\text{baseline}} \cdot \left(\frac{N}{N - k}\right)$$
+        <p>
+          The condition for a self-propagating cascading failure is:
+        </p>
+        $$L_{\text{remaining}} &gt; C_{\text{max}} \implies \frac{N}{N - k} &gt; 1.25 \implies k &gt; 0.2 N$$
+        <p>
+          If merely <strong>20% of replicas crash</strong>, every surviving replica instantly experiences load exceeding its maximum provisioned capacity. In GitHub's case, with $N=3$ replicas per partition, a single replica crashing shifted load from $33\%$ to $50\%$ ($1.5\times$ overload), causing the second replica to exhaust connections and crash, leaving the final replica with $3.0\times$ traffic ($100\%$ of all load).
+        </p>
+      </section>
+
+      <section id="incident-chronology">
+        <h2>5. Chronology of the Outage</h2>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>System Component</th>
+              <th>Observed Event &amp; Root Cause</th>
+              <th>Severity</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>T + 00:00</strong></td>
+              <td>Migration Orchestration</td>
+              <td><code>gh-ost</code> begins backfill on massive primary table.</td>
+              <td><span class="badge info">Routine</span> Controlled run</td>
+            </tr>
+            <tr>
+              <td><strong>T + 00:15</strong></td>
+              <td>Read Replica #1</td>
+              <td>Replication applier encounters deadlock on ghost table replay; daemon crashes.</td>
+              <td><span class="badge warn">Warning</span> 1 Node Down</td>
+            </tr>
+            <tr>
+              <td><strong>T + 00:18</strong></td>
+              <td>ProxySQL Load Balancer</td>
+              <td>Removes Replica #1 from active pool; splits 100% traffic across Replicas #2 &amp; #3.</td>
+              <td><span class="badge warn">Overload</span> 150% Load</td>
+            </tr>
+            <tr>
+              <td><strong>T + 00:22</strong></td>
+              <td>Read Replica #2</td>
+              <td>Memory thrashing and connection pool exhaustion cause mysqld crash.</td>
+              <td><span class="badge crit">Critical</span> 2 Nodes Down</td>
+            </tr>
+            <tr>
+              <td><strong>T + 00:25</strong></td>
+              <td>Read Replica #3</td>
+              <td>Bears 300% of standard traffic; collapses in under 15 seconds.</td>
+              <td><span class="badge crit">Collapse</span> 0 Nodes Active</td>
+            </tr>
+            <tr>
+              <td><strong>T + 00:30</strong></td>
+              <td>Ingress API &amp; Web</td>
+              <td>GitHub Actions, pull requests, and web dashboards emit HTTP 500 errors.</td>
+              <td><span class="badge crit">Sitewide</span> Outage</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="architectural-remediation">
+        <h2>6. Architecture Solutions &amp; Pool Segregation</h2>
+        <p>
+          GitHub implemented several major architectural remediations to prevent schema migrations from destabilizing user-facing reads:
+        </p>
+
+        <div class="cards-grid">
+          <div class="card">
+            <h3 class="card-title">1. Dedicated Migration Replicas</h3>
+            <p>
+              Schema migrations no longer run against production-facing read replicas. GitHub provisions dedicated, isolated replication targets for <code>gh-ost</code> to inspect and apply chunked writes, shielding user traffic pools.
+            </p>
+          </div>
+          <div class="card">
+            <h3 class="card-title">2. Strict Pool Segregation</h3>
+            <p>
+              Production read traffic is strictly isolated from internal batch analytics, reporting services, and database backups. If an internal batch query triggers a crash, production traffic is completely unaffected.
+            </p>
+          </div>
+          <div class="card">
+            <h3 class="card-title">3. Dynamic Throttling &amp; Heartbeat Caps</h3>
+            <p>
+              <code>gh-ost</code> was updated with enhanced throttling: it monitors replication lag on all production replicas via a heartbeat table. If lag exceeds 1 second, migration chunks are paused immediately.
+            </p>
+          </div>
+          <div class="card">
+            <h3 class="card-title">4. Adaptive Load Shedding in ProxySQL</h3>
+            <p>
+              When a replica fails, the proxy limits maximum load routed to surviving nodes rather than blindly forwarding 100% of traffic. Surplus queries are gracefully degraded or rejected at the edge with HTTP 429.
+            </p>
+          </div>
+        </div>
+
+        <div class="code-block-header">Architecture Topology: Segregated Read Pools</div>
+        <pre><code class="language-text">                     [ MySQL Primary Writer ]
+                                |
+             +------------------+------------------+
+             |                                     |
+   [ Production Read Pool ]              [ Internal Read Pool ]
+   (User Web &amp; API Traffic)              (Analytics, gh-ost, Backups)
+   +-----------+-----------+             +-----------+-----------+
+   | Replica A | Replica B |             | Replica C | Replica D |
+   +-----------+-----------+             +-----------+-----------+
+     Protected from heavy                  Dedicated sandbox for
+    migrations and batch jobs              asynchronous operations</code></pre>
+      </section>
+
+      <section id="key-takeaways">
+        <h2>7. Production Engineering Checklist</h2>
+        <ul class="checklist">
+          <li><strong>Never run migrations directly on user-serving replicas:</strong> Direct online schema tools to dedicated replica nodes isolated from client traffic.</li>
+          <li><strong>Cap load redistribution during node outages:</strong> Configure proxies to shed excess traffic rather than overloading surviving replicas beyond safe operating limits.</li>
+          <li><strong>Throttle migrations on replica lag:</strong> Configure tools like <code>gh-ost</code> to throttle aggressively whenever replica lag exceeds sub-second thresholds.</li>
+          <li><strong>Enforce pool segregation:</strong> Physically partition replica clusters between latency-sensitive customer traffic and batch analytics.</li>
+          <li><strong>Simulate replica failover under peak load:</strong> Conduct chaos engineering drills where random replica nodes are killed while the cluster runs at peak traffic.</li>
+        </ul>
+      </section>
+
+      <div class="article-footer">
+        <div class="footer-nav">
+          <a href="github-outage-edge-case-concurrency-race-peak-load.html" class="prev-post">← Edge Case Query Degradation</a>
+          <a href="atlassian-april-2022-mega-outage-dissection.html" class="next-post">Atlassian Mega-Outage Dissection →</a>
+        </div>
+      </div>
+    </article>
+
+    <aside class="toc-sidebar">
+      <div class="sidebar-sticky">
+        <div class="sidebar-header">
+          <span class="toc-title">Table of Contents</span>
+        </div>
+        <nav class="toc-list">
+          <a href="#executive-summary" class="toc-link">1. Executive Summary</a>
+          <a href="#online-schema-migrations" class="toc-link">2. ALTER TABLE &amp; gh-ost</a>
+          <a href="#the-failure-mechanism" class="toc-link">3. Failure Mechanism</a>
+          <a href="#cascading-replica-collapse" class="toc-link">4. Cascading Collapse Math</a>
+          <a href="#incident-chronology" class="toc-link">5. Incident Chronology</a>
+          <a href="#architectural-remediation" class="toc-link">6. Architectural Remediation</a>
+          <a href="#key-takeaways" class="toc-link">7. Engineering Checklist</a>
+        </nav>
+        <div class="sidebar-download">
+          <a href="../Docs/GitHub_Outage_Alter_Table_Ghost_Migration_Technical_Breakdown.pdf" class="download-link" target="_blank" download>
+            <span>📥 Technical PDF (3 Pages)</span>
+          </a>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <p>&copy; 2026 System Design Notes. Production Engineering &amp; Architecture Post-Mortems.</p>
+    </div>
+  </footer>
+
+  <script src="../theme.js?v=3.3"></script>
+</body>
+</html>

@@ -65,36 +65,6 @@
   </header>
 
   <div class="post-layout">
-    <aside class="post-sidebar">
-      <div class="sidebar-sticky">
-        <div class="sidebar-header">
-          <span class="badge-post">Database Sharding</span>
-          <span class="reading-time">22 min read</span>
-        </div>
-        <nav class="toc" aria-label="Table of Contents">
-          <h4>Table of Contents</h4>
-          <ul>
-            <li><a href="#shopify-sharding">1. Multi-Tenant Sharding at Shopify</a></li>
-            <li><a href="#noisy-neighbor">2. The Noisy Neighbor Problem</a></li>
-            <li><a href="#ghostferry-architecture">3. Ghostferry Core Architecture</a></li>
-            <li><a href="#binlog-tailing">4. Row-Based Binlog Streaming &amp; Invalidation</a></li>
-            <li><a href="#data-copy-loop">5. Concurrent Batch Copying &amp; Watermarks</a></li>
-            <li><a href="#cutover-phase">6. The 500ms Atomic Cutover Sequence</a></li>
-            <li><a href="#data-verification">7. Verification &amp; Checksumming</a></li>
-            <li><a href="#key-takeaways">8. Key Architectural Takeaways</a></li>
-          </ul>
-        </nav>
-        <div class="companion-box">
-          <div class="companion-title">Companion PDF</div>
-          <p>Download the verified 3-page technical breakdown for offline study and architecture review.</p>
-          <a href="../Docs/Shopify_Ghostferry_Live_Shard_Migration_Technical_Breakdown.pdf" class="download-link" target="_blank" download>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            Shopify Ghostferry PDF
-          </a>
-        </div>
-      </div>
-    </aside>
-
     <main class="post-content">
       <header class="post-header">
         <div class="meta-row">
@@ -238,6 +208,36 @@ Step 5: Release Tenant Lock (~10ms)
         </div>
       </section>
     </main>
+
+    <aside class="post-sidebar">
+      <div class="sidebar-sticky">
+        <div class="sidebar-header">
+          <span class="badge-post">Database Sharding</span>
+          <span class="reading-time">22 min read</span>
+        </div>
+        <nav class="toc" aria-label="Table of Contents">
+          <h4>Table of Contents</h4>
+          <ul>
+            <li><a href="#shopify-sharding">1. Multi-Tenant Sharding at Shopify</a></li>
+            <li><a href="#noisy-neighbor">2. The Noisy Neighbor Problem</a></li>
+            <li><a href="#ghostferry-architecture">3. Ghostferry Core Architecture</a></li>
+            <li><a href="#binlog-tailing">4. Row-Based Binlog Streaming &amp; Invalidation</a></li>
+            <li><a href="#data-copy-loop">5. Concurrent Batch Copying &amp; Watermarks</a></li>
+            <li><a href="#cutover-phase">6. The 500ms Atomic Cutover Sequence</a></li>
+            <li><a href="#data-verification">7. Verification &amp; Checksumming</a></li>
+            <li><a href="#key-takeaways">8. Key Architectural Takeaways</a></li>
+          </ul>
+        </nav>
+        <div class="companion-box">
+          <div class="companion-title">Companion PDF</div>
+          <p>Download the verified 3-page technical breakdown for offline study and architecture review.</p>
+          <a href="../Docs/Shopify_Ghostferry_Live_Shard_Migration_Technical_Breakdown.pdf" class="download-link" target="_blank" download>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Shopify Ghostferry PDF
+          </a>
+        </div>
+      </div>
+    </aside>
   </div>
 
   <footer class="footer">

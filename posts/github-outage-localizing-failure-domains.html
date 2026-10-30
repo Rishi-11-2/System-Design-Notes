@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dissecting GitHub Outage: Why Failure Domains Must Be Localized — System Design Notes</title>
+  <meta name="description" content="Technical analysis of blast radius containment and failure domain localization based on GitHub's architecture outages. Examines automated failover runaway, telemetry blindness, cellular architectures, and bulkhead patterns.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css?v=3.3">
+  <link rel="stylesheet" href="../blog-theme.css?v=3.3">
+  <link rel="stylesheet" href="../assets/css/style.css?v=3.3">
+  <script>
+    (function() {
+      const saved = localStorage.getItem('theme');
+      if (saved) document.documentElement.dataset.theme = saved;
+    })();
+  </script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+  <div id="progress" aria-hidden="true"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">Articles</a></li>
+          <li><a href="../index.html#categories">Categories</a></li>
+          <li><a href="../index.html#pdf-library">PDF Library</a></li>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="github-nav-link">GitHub</a></li>
+        </ul>
+        <button id="theme-toggle" class="theme-toggle-btn" aria-label="Toggle theme">
+          <svg class="sun-icon" viewBox="0 0 24 24" width="18" height="18"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+          <svg class="moon-icon" viewBox="0 0 24 24" width="18" height="18"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <main class="post-container">
+    <div class="breadcrumb">
+      <a href="../index.html">Home</a>
+      <span class="separator">/</span>
+      <a href="../index.html#categories">Outage Dissections</a>
+      <span class="separator">/</span>
+      <span class="current">Localizing Failure Domains</span>
+    </div>
+
+    <header class="article-header">
+      <div class="badge-row">
+        <span class="badge badge-consensus">Outage Dissection</span>
+        <span class="badge badge-theory">Blast Radius</span>
+        <span class="badge badge-accent">Cellular Architecture</span>
+        <span class="badge badge-rounds">Bulkhead Pattern</span>
+      </div>
+      <h1 class="article-title">Dissecting GitHub Outage: Why Failure Domains Must Be Localized</h1>
+      <p class="article-subtitle">How a localized network glitch metastasized into a platform-wide blackout, and why systems at hyperscale require cellular boundaries, bulkheads, and uncoupled telemetry planes.</p>
+      <div class="article-meta">
+        <span class="meta-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> 22 min read</span>
+        <span class="meta-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> Arpit Bhayani Outage Dissections</span>
+        <span class="meta-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> Verified 3-Page Companion PDF</span>
+      </div>
+      <div class="pdf-action-banner">
+        <a href="../Docs/GitHub_Outage_Localizing_Failure_Domains_Technical_Breakdown.pdf" class="pdf-btn" target="_blank" download>
+          <span>📥 Download Technical PDF (3 Pages)</span>
+        </a>
+      </div>
+    </header>
+
+    <div class="article-container">
+      <article class="prose">
+        <div class="callout callout-note">
+          <div class="callout-title">📌 Core Architectural Takeaway: Blast Radius Expansion vs. Fault Isolation</div>
+          <p>In high-availability engineering, <strong>availability is not the absence of failure; it is the containment of failure</strong>. When an incident occurs in a specific subsystem or availability zone, the system's design must guarantee that the <em>blast radius</em> remains strictly bounded to that specific failure domain. In GitHub’s major outage, an isolated, 43-second optical link interruption in one network segment breached containment boundaries because automated failover systems, monitoring telemetry, and cross-region routing were globally coupled. Localizing failure domains requires establishing <strong>cellular architectures</strong>, implementing <strong>hard bulkheads</strong>, and physically decoupling the control plane from the operational data plane.</p>
+        </div>
+
+        <h2 id="the-anatomy-of-blast-radius-expansion">1. The Anatomy of Blast Radius Expansion</h2>
+        <p>A failure domain represents the maximum blast radius of a single fault. If a power distribution unit fails in Datacenter A, the failure domain should be Datacenter A. In distributed software architectures, failure domains frequently leak across boundaries due to invisible runtime dependencies:</p>
+
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>Component Layer</th>
+                <th>Intended Failure Domain</th>
+                <th>Observed Leakage &amp; Blast Radius</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Optical Backbone Link</strong></td>
+                <td>WAN link between US-East and US-West</td>
+                <td>Triggered global database failovers across both coasts simultaneously.</td>
+              </tr>
+              <tr>
+                <td><strong>Orchestrator Control Plane</strong></td>
+                <td>Local cluster health monitoring</td>
+                <td>Ran away with automated promotions during network flapping.</td>
+              </tr>
+              <tr>
+                <td><strong>Telemetry &amp; Healthchecks</strong></td>
+                <td>Independent operational insight</td>
+                <td>Monitoring agents stalled because healthcheck logs depended on failing databases.</td>
+              </tr>
+              <tr>
+                <td><strong>Application Cache Layer</strong></td>
+                <td>Performance acceleration tier</td>
+                <td>Ingested corrupted split-brain reads, polluting cache state for 24+ hours.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="telemetry-blindness-paradox">2. Telemetry Blindness: The Observer Effect in Outages</h2>
+        <p>A critical revelation in the post-mortem was <strong>Telemetry Blindness</strong>: the monitoring systems tasked with detecting degradation were themselves victims of the degradation:</p>
+
+        <div class="callout callout-warning">
+          <div class="callout-title">⚠️ The Circular Dependency Trap</div>
+          <p>Monitoring agents in the secondary data center recorded heartbeats to the primary database master over the WAN. When the WAN dropped, the heartbeat timed out. However, the telemetry agents also recorded their own healthcheck events into a local database table. When local proxies froze, the monitoring agents locked up. Because Orchestrator received no positive affirmations, it operated on incomplete, stale telemetry, triggering aggressive, erroneous failovers.</p>
+        </div>
+
+        <div class="mermaid-diagram-wrapper">
+          <svg viewBox="0 0 860 380" width="100%" height="auto" xmlns="http://www.w3.org/2000/svg" style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; font-family: var(--sans);">
+            <rect width="860" height="380" fill="var(--bg-card)" rx="8"/>
+            <text x="430" y="30" text-anchor="middle" font-size="16" font-weight="700" fill="var(--text-heading)">Failure Domain Containment: Monolithic Coupling vs. Cellular Bulkheads</text>
+            <text x="430" y="50" text-anchor="middle" font-size="12" fill="var(--text-muted)">Why Shared Global Infrastructure Turns Local Faults into Global Blackouts</text>
+
+            <!-- Monolithic Failure Domain (Left) -->
+            <rect x="50" y="80" width="350" height="260" rx="6" fill="#fef2f2" stroke="#ef4444" stroke-width="1.5"/>
+            <text x="225" y="105" text-anchor="middle" font-size="13" font-weight="700" fill="#ef4444">Monolithic Coupling (Global Blast Radius)</text>
+
+            <rect x="75" y="130" width="130" height="40" rx="4" fill="var(--bg-card)" stroke="#ef4444" stroke-width="1.5"/>
+            <text x="140" y="155" text-anchor="middle" font-size="11" font-weight="700">WAN Link Glitch</text>
+
+            <path d="M 205 150 L 250 150" stroke="#ef4444" stroke-width="2"/>
+            <rect x="250" y="130" width="130" height="40" rx="4" fill="var(--bg-card)" stroke="#ef4444" stroke-width="1.5"/>
+            <text x="315" y="155" text-anchor="middle" font-size="11" font-weight="700">Global Failover</text>
+
+            <path d="M 315 170 L 315 210" stroke="#ef4444" stroke-width="2"/>
+            <rect x="75" y="210" width="300" height="50" rx="4" fill="var(--bg-card)" stroke="#ef4444" stroke-width="1.5"/>
+            <text x="225" y="235" text-anchor="middle" font-size="11" font-weight="700" fill="#ef4444">Global Split Brain &amp; Cache Pollution</text>
+            <text x="225" y="250" text-anchor="middle" font-size="9" fill="var(--text-muted)">100% of Users and Services Impacted</text>
+
+            <rect x="75" y="280" width="300" height="40" rx="4" fill="var(--raised)" stroke="none"/>
+            <text x="225" y="305" text-anchor="middle" font-size="10" font-weight="600" fill="#ef4444">Blast Radius = 100% (Entire Platform)</text>
+
+            <!-- Cellular Architecture (Right) -->
+            <rect x="460" y="80" width="350" height="260" rx="6" fill="#f0fdf4" stroke="#10b981" stroke-width="1.5"/>
+            <text x="635" y="105" text-anchor="middle" font-size="13" font-weight="700" fill="#10b981">Cellular Architecture (Strict Bulkheads)</text>
+
+            <rect x="480" y="130" width="95" height="120" rx="4" fill="var(--bg-card)" stroke="#10b981" stroke-width="1.5"/>
+            <text x="527" y="155" text-anchor="middle" font-size="11" font-weight="700" fill="#10b981">Cell 1</text>
+            <text x="527" y="175" text-anchor="middle" font-size="8" fill="var(--text-muted)">Users A-G</text>
+            <text x="527" y="210" text-anchor="middle" font-size="9" font-weight="700" fill="#10b981">HEALTHY</text>
+
+            <rect x="585" y="130" width="100" height="120" rx="4" fill="#fef2f2" stroke="#ef4444" stroke-width="1.5"/>
+            <text x="635" y="155" text-anchor="middle" font-size="11" font-weight="700" fill="#ef4444">Cell 2 (Fault)</text>
+            <text x="635" y="175" text-anchor="middle" font-size="8" fill="var(--text-muted)">Users H-P</text>
+            <text x="635" y="210" text-anchor="middle" font-size="9" font-weight="700" fill="#ef4444">ISOLATED</text>
+
+            <rect x="695" y="130" width="95" height="120" rx="4" fill="var(--bg-card)" stroke="#10b981" stroke-width="1.5"/>
+            <text x="742" y="155" text-anchor="middle" font-size="11" font-weight="700" fill="#10b981">Cell 3</text>
+            <text x="742" y="175" text-anchor="middle" font-size="8" fill="var(--text-muted)">Users Q-Z</text>
+            <text x="742" y="210" text-anchor="middle" font-size="9" font-weight="700" fill="#10b981">HEALTHY</text>
+
+            <rect x="480" y="280" width="310" height="40" rx="4" fill="var(--raised)" stroke="none"/>
+            <text x="635" y="305" text-anchor="middle" font-size="10" font-weight="600" fill="#10b981">Blast Radius = 33% (Bounded to Faulty Cell)</text>
+          </svg>
+        </div>
+
+        <h2 id="the-cellular-architecture-solution">3. Cellular Architecture: Building Autonomous Silos</h2>
+        <p>To prevent catastrophic blast radius expansion, modern engineering organizations (including AWS, Slack, and GitHub in their subsequent re-architecture) adopt <strong>Cellular Architectures</strong>:</p>
+
+        <ol>
+          <li><strong>Autonomous, Self-Contained Units (Cells):</strong> Instead of a massive, monolithic database cluster serving 100M users, the system is sliced into $N$ identical, independent cells. Each cell contains its own application workers, cache layer, message queues, and dedicated MySQL database.</li>
+          <li><strong>Zero Cross-Cell Runtime Dependencies:</strong> A failure in Cell 2 (e.g. database corruption, cache poison, network blip) cannot leak into Cell 1 or Cell 3. The blast radius is strictly capped at $\frac{1}{N}$ of the user base.</li>
+          <li><strong>Stateless Routing Gateway:</strong> An ultra-lightweight routing layer inspects the user/repository identifier and routes traffic to the appropriate cell without querying backend databases.</li>
+        </ol>
+
+        <h2 id="bulkhead-patterns-in-production">4. The Bulkhead Pattern: Physical Resource Isolation</h2>
+        <p>Borrowing from naval architecture—where a ship's hull is divided into watertight bulkheads so a breach in one compartment does not sink the ship—distributed systems must isolate internal resource pools:</p>
+
+        <div class="callout callout-note">
+          <div class="callout-title">📐 The Three Critical Bulkhead Boundaries</div>
+          <p><strong>1. Connection Pool Bulkheads:</strong> Never share a single database connection pool between user-facing web requests and background asynchronous workers (like webhooks or Actions). If webhooks back up, they must not starve interactive web queries.</p>
+          <p><strong>2. Thread Pool Bulkheads:</strong> Isolate execution threads. A slow upstream dependency (e.g. external git LFS storage) must execute on a dedicated thread pool with strict bounds, preventing worker thread exhaustion.</p>
+          <p><strong>3. Regional Control Plane Bulkheads:</strong> Orchestration daemons must be regionally bound. A control daemon in Region B must never have the authority to unilaterally alter topology in Region A without global quorum consensus.</p>
+        </div>
+
+        <h2 id="decoupling-control-and-data-planes">5. Decoupling the Control Plane from the Data Plane</h2>
+        <p>A core architectural law derived from this outage: <strong>The Control Plane must never depend on the Data Plane it controls.</strong></p>
+
+        <pre><code class="language-text">BAD PATTERN (Coupled Control &amp; Data Planes):
+  Orchestrator (Control Plane)
+     ├── Reads topology from MySQL Master (Data Plane)
+     ├── Writes healthcheck heartbeats to MySQL Master (Data Plane)
+     └── Failure in Data Plane BLINDS the Control Plane!
+
+GOOD PATTERN (Strict Plane Decoupling):
+  Independent Control Plane (Consensus Tier - etcd / Raft)
+     ├── Runs on isolated bare-metal hardware with dedicated network interfaces.
+     ├── Maintains independent heartbeats via out-of-band network links.
+     ├── Fences faulty nodes using kernel-level STONITH or hardware PDU power cuts.
+     └── Never touches the MySQL storage layer for internal state!</code></pre>
+
+        <h2 id="engineering-takeaways">6. Systems Engineering Takeaways</h2>
+        <ol>
+          <li><strong>Design for Bounded Failure:</strong> Assume every component will fail in the worst possible way at peak traffic. If a single optical link, switch, or database node fails, mathematically prove what percentage of traffic is affected. If the answer is 100%, redesign.</li>
+          <li><strong>Avoid Automated WAN Failover:</strong> Automated cross-datacenter failover over wide-area networks is one of the most common causes of multi-hour enterprise outages. Prefer failing within a single multi-AZ region; WAN migrations should be initiated by humans or governed by 3-region quorums.</li>
+          <li><strong>Embrace Cellular Blast Radius Reductions:</strong> Break monoliths into autonomous cells. If a critical bug slips past CI into production, only 5% of users in the canary cell will encounter the defect, while 95% of users remain completely uninterrupted.</li>
+        </ol>
+      </article>
+
+      <aside class="toc-sidebar">
+        <div class="toc-title">Table of Contents</div>
+        <ul class="toc-list">
+          <li><a href="#the-anatomy-of-blast-radius-expansion">1. Anatomy of Blast Radius</a></li>
+          <li><a href="#telemetry-blindness-paradox">2. Telemetry Blindness Paradox</a></li>
+          <li><a href="#the-cellular-architecture-solution">3. Cellular Architecture Solution</a></li>
+          <li><a href="#bulkhead-patterns-in-production">4. The Bulkhead Pattern</a></li>
+          <li><a href="#decoupling-control-and-data-planes">5. Decoupling Control &amp; Data Planes</a></li>
+          <li><a href="#engineering-takeaways">6. Systems Engineering Takeaways</a></li>
+        </ul>
+
+        <div class="companion-box" style="margin-top: 1.25rem;">
+          <div class="companion-title">Companion PDF</div>
+          <p>Download the verified 3-page technical breakdown for offline study and architecture review.</p>
+          <a href="../Docs/GitHub_Outage_Localizing_Failure_Domains_Technical_Breakdown.pdf" class="download-link" target="_blank" download>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Localizing Failure Domains PDF
+          </a>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-container">
+      <div class="footer-col">
+        <div class="footer-brand">
+          <div class="brand-icon">⚡</div>
+          <span>System Design Notes</span>
+        </div>
+        <p class="footer-tagline">Curated engineering notes, production architecture dissections, and distributed systems research papers.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Outage Dissections</h5>
+        <ul>
+          <li><a href="github-outage-actions-data-inconsistencies-cache.html">GitHub Actions 24h Outage</a></li>
+          <li><a href="github-outage-localizing-failure-domains.html">Localizing Failure Domains</a></li>
+          <li><a href="atlassian-april-2022-mega-outage-dissection.html">Atlassian 14-Day Mega Outage</a></li>
+          <li><a href="github-rate-limiter-wobbling-reset-bug.html">GitHub Rate Limiter Wobble Bug</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Repository</h5>
+        <ul>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank">GitHub Repository</a></li>
+          <li><a href="../Docs/System_Design_Notes.pdf" target="_blank">Complete Notes (184 Pages)</a></li>
+          <li><a href="../Docs/GitHub_Outage_Localizing_Failure_Domains_Technical_Breakdown.pdf" target="_blank">Failure Domains PDF (3 Pages)</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>Released under MIT License • Open Source Engineering Notes</p>
+    </div>
+  </footer>
+
+  <script src="../assets/js/main.js?v=3.3"></script>
+</body>
+</html>

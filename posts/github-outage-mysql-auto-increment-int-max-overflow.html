@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>When IDs Run Out: GitHub's MySQL Auto-Increment INT Overflow Outage — System Design Notes</title>
+  <meta name="description" content="Technical post-mortem of GitHub's May 2020 outage when a core MySQL auto-increment primary key hit the signed 32-bit integer limit (2,147,483,647), causing primary key collisions and emergency schema repairs.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css?v=3.3">
+  <link rel="stylesheet" href="../blog-theme.css?v=3.3">
+  <link rel="stylesheet" href="../assets/css/style.css?v=3.3">
+  <script>
+    (function() {
+      const saved = localStorage.getItem('theme');
+      if (saved) document.documentElement.dataset.theme = saved;
+    })();
+  </script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+</head>
+<body class="blog-post">
+  <header class="site-header">
+    <div class="header-inner">
+      <a href="../index.html" class="site-title">System Design Notes</a>
+      <nav class="site-nav">
+        <a href="../index.html">All Notes</a>
+        <a href="../index.html?category=outages" class="active">Outage Dissections</a>
+        <a href="../index.html?category=distributed-algorithms">Distributed Algorithms</a>
+        <a href="../index.html?category=system-design">System Design</a>
+      </nav>
+      <div class="theme-switcher">
+        <button id="theme-toggle" aria-label="Toggle theme" title="Toggle theme">
+          <svg class="sun-icon" viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+          <svg class="moon-icon" viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <div class="article-container">
+    <article class="article-content">
+      <div class="article-header">
+        <div class="meta-details">
+          <span class="category-badge outage">Outage Dissection</span>
+          <span class="date">May 2020 Outage Analysis</span>
+          <span class="reading-time">13 min read</span>
+          <span class="source-link">Dissection based on <a href="https://www.youtube.com/watch?v=ZFRAFTn0cQ0" target="_blank" rel="noopener">Arpit Bhayani's Analysis</a></span>
+        </div>
+        <h1 class="article-title">When IDs Run Out: GitHub's MySQL Auto-Increment INT Overflow Outage</h1>
+        <p class="article-subtitle">How a high-ingestion MySQL table exhausted its signed 32-bit integer primary key limit at 2,147,483,647, provoking duplicate key collisions, sitewide HTTP 500 errors, and zero-downtime emergency migrations.</p>
+        <div class="pdf-download-card">
+          <div class="pdf-info">
+            <span class="pdf-badge">Companion Resource</span>
+            <h3>Technical Architecture Breakdown (PDF)</h3>
+            <p>Download the verified 3-page engineering review containing auto-increment saturation telemetry, INT vs BIGINT storage math, and emergency table swap runbooks.</p>
+          </div>
+          <a href="../Docs/GitHub_Outage_Auto_Increment_Overflow_Technical_Breakdown.pdf" class="pdf-download-btn" target="_blank" download>
+            <span>📥 Download PDF (3 Pages)</span>
+          </a>
+        </div>
+      </div>
+
+      <section id="executive-summary">
+        <h2>1. Executive Summary &amp; Outage Scope</h2>
+        <p>
+          On May 5, 2020, GitHub experienced a 2-hour and 24-minute partial service degradation affecting GitHub Actions, Pages, Dependabot, and webhook deliveries. The incident occurred when an auto-incrementing primary key on a core, high-volume database table reached the upper ceiling of a signed 32-bit integer:
+        </p>
+        $$\text{INT}_{\text{max}} = 2^{31} - 1 = 2,147,483,647$$
+        <p>
+          Once this boundary was crossed, MySQL could no longer increment the sequence. In accordance with MySQL's storage engine behavior, subsequent <code>INSERT</code> statements attempted to reuse the maximum integer $2,147,483,647$, immediately violating unique primary key constraints:
+        </p>
+        <pre><code class="language-sql">ERROR 1062 (23000): Duplicate entry '2147483647' for key 'PRIMARY'</code></pre>
+        <p>
+          In the application layer (Ruby on Rails), ActiveRecord raised <code>ActiveModel::RangeError</code>, causing API endpoints and background workers to fail with HTTP 500 errors across the platform.
+        </p>
+      </section>
+
+      <section id="the-anatomy-of-auto-increment">
+        <h2>2. Technical Anatomy: MySQL Integer Storage Mechanics</h2>
+        <p>
+          Relational databases represent numeric types using fixed-width binary encodings. In MySQL InnoDB, an <code>INT</code> column occupies exactly 4 bytes (32 bits) of disk and memory storage per row:
+        </p>
+
+        <div class="diagram-wrapper">
+          <svg viewBox="0 0 740 180" width="100%" height="180" xmlns="http://www.w3.org/2000/svg">
+            <rect x="20" y="20" width="700" height="40" rx="4" fill="var(--card-bg, #f8f9fa)" stroke="#0056b3" stroke-width="1.5"/>
+            <rect x="20" y="20" width="40" height="40" rx="4" fill="#ffebee" stroke="#b00020" stroke-width="1.5"/>
+            <text x="40" y="45" font-family="var(--mono)" font-size="11" font-weight="bold" text-anchor="middle" fill="#b00020">Bit 31</text>
+            <text x="380" y="45" font-family="var(--mono)" font-size="11" text-anchor="middle" fill="#0056b3">Bits 30 down to 0 (Value Payload: 31 Bits)</text>
+            <text x="40" y="75" font-family="var(--sans)" font-size="8.5" text-anchor="middle" fill="#b00020">Sign Bit (0 = +, 1 = -)</text>
+            <text x="380" y="75" font-family="var(--sans)" font-size="8.5" text-anchor="middle" fill="#555">Maximum Positive Value: 2^31 - 1 = 2,147,483,647</text>
+
+            <rect x="20" y="100" width="340" height="60" rx="4" fill="#f0f4f8" stroke="#0056b3" stroke-width="1"/>
+            <text x="190" y="125" font-family="var(--sans)" font-size="10" font-weight="bold" text-anchor="middle" fill="#0056b3">Unsigned INT (4 Bytes)</text>
+            <text x="190" y="145" font-family="var(--mono)" font-size="9.5" text-anchor="middle" fill="#333">0 to 4,294,967,295 (2x Headroom)</text>
+
+            <rect x="380" y="100" width="340" height="60" rx="4" fill="#e8f5e9" stroke="#2e7d32" stroke-width="1"/>
+            <text x="550" y="125" font-family="var(--sans)" font-size="10" font-weight="bold" text-anchor="middle" fill="#2e7d32">BIGINT (8 Bytes)</text>
+            <text x="550" y="145" font-family="var(--mono)" font-size="9.5" text-anchor="middle" fill="#333">0 to 9,223,372,036,854,775,807 (Infinite)</text>
+          </svg>
+        </div>
+
+        <p>
+          By default in SQL DDL specifications, an <code>INT</code> is <strong>signed</strong> unless explicitly designated as <code>UNSIGNED</code>. Because negative identifiers are never generated by auto-increment, fully 50% of the 32-bit address space (representing negative numbers from $-2^{31}$ to $-1$) is permanently squandered.
+        </p>
+      </section>
+
+      <section id="what-happens-at-overflow">
+        <h2>3. What Actually Happens at 2,147,483,647</h2>
+        <p>
+          When an auto-increment column approaches its upper boundary, MySQL's behavior depends on the version and SQL mode, but the catastrophic outcome is identical:
+        </p>
+
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Operation</th>
+              <th>Requested ID Value</th>
+              <th>MySQL Engine Action</th>
+              <th>Resulting Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Insert Row $N$</td>
+              <td><code>NULL</code> (Auto-increment)</td>
+              <td>Sequence allocates $2,147,483,647$</td>
+              <td><span class="badge info">Success</span> Max INT allocated</td>
+            </tr>
+            <tr>
+              <td>Insert Row $N+1$</td>
+              <td><code>NULL</code> (Auto-increment)</td>
+              <td>Clamps sequence to $2,147,483,647$</td>
+              <td><span class="badge crit">Collision</span> <code>ERROR 1062 (Duplicate entry)</code></td>
+            </tr>
+            <tr>
+              <td>Insert Row $N+2$</td>
+              <td><code>NULL</code> (Auto-increment)</td>
+              <td>Clamps sequence to $2,147,483,647$</td>
+              <td><span class="badge crit">Collision</span> <code>ERROR 1062 (Duplicate entry)</code></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="callout danger">
+          <div class="callout-title">The Complete Write Stoppage</div>
+          <p>
+            Once clamped at $2,147,483,647$, the auto-increment generator never rolls over or recovers automatically. <strong>100% of subsequent write transactions fail</strong>. In high-throughput ingest systems processing thousands of inserts per second, this results in an immediate, absolute write outage.
+          </p>
+        </div>
+      </section>
+
+      <section id="emergency-mitigation-playbook">
+        <h2>4. The Remediation Playbook: Emergency Schema Modifications</h2>
+        <p>
+          When an active production table hits this limit during an outage, standard offline <code>ALTER TABLE</code> cannot be executed because copying hundreds of millions of rows takes hours:
+        </p>
+
+        <div class="cards-grid">
+          <div class="card">
+            <h3 class="card-title">Approach 1: Double Headroom to UNSIGNED</h3>
+            <p>
+              Modifying the type from <code>signed INT</code> to <code>UNSIGNED INT</code> doubles the ceiling to $4,294,967,295$, buying months or years of headroom. However, in older MySQL versions, this still requires a table rewrite.
+            </p>
+          </div>
+          <div class="card">
+            <h3 class="card-title">Approach 2: Expand to BIGINT</h3>
+            <p>
+              Upgrading the column to <code>BIGINT</code> ($2^{63}-1 \approx 9.22 \times 10^{18}$) permanently eliminates the issue. Even at 1,000,000 inserts per second, a <code>BIGINT</code> sequence will not exhaust for over 292,000 years.
+            </p>
+          </div>
+        </div>
+
+        <div class="code-block-header">Emergency Alter Runbook: Fast Path Configuration</div>
+        <pre><code class="language-sql">-- 1. Disable non-critical runtime checks to accelerate execution
+SET SESSION transaction_isolation = 'READ-UNCOMMITTED';
+SET SESSION foreign_key_checks = 0;
+SET SESSION unique_checks = 0;
+SET SESSION sql_log_bin = 0; -- Caution: Must replay manually to replicas!
+
+-- 2. Execute targeted column type expansion
+ALTER TABLE high_volume_events 
+  MODIFY COLUMN id BIGINT NOT NULL AUTO_INCREMENT;
+
+-- 3. Re-enable safety checks
+SET SESSION foreign_key_checks = 1;
+SET SESSION unique_checks = 1;
+SET SESSION sql_log_bin = 1;</code></pre>
+      </section>
+
+      <section id="gh-ost-table-swap">
+        <h2>5. Zero-Downtime Table Swap Architecture</h2>
+        <p>
+          If the table cannot be locked even for emergency operations, GitHub deploys <code>gh-ost</code> to create a shadow table with <code>BIGINT</code> columns, backfills data asynchronously, and performs an atomic metadata swap:
+        </p>
+
+        <div class="diagram-wrapper">
+          <svg viewBox="0 0 740 180" width="100%" height="180" xmlns="http://www.w3.org/2000/svg">
+            <rect x="20" y="30" width="200" height="120" rx="6" fill="var(--card-bg, #f8f9fa)" stroke="#0056b3" stroke-width="1.5"/>
+            <text x="120" y="60" font-family="var(--sans)" font-size="12" font-weight="bold" text-anchor="middle" fill="#0056b3">Original Table (tbl)</text>
+            <text x="120" y="85" font-family="var(--mono)" font-size="9" text-anchor="middle" fill="#c62828">id INT (Exhausted)</text>
+            <text x="120" y="110" font-family="var(--sans)" font-size="8.5" text-anchor="middle" fill="#555">Locked or Replicating</text>
+
+            <path d="M 220 90 L 290 90" stroke="#0056b3" stroke-width="2" marker-end="url(#arr-swap)" fill="none"/>
+
+            <rect x="290" y="30" width="200" height="120" rx="6" fill="#e8f5e9" stroke="#2e7d32" stroke-width="1.5"/>
+            <text x="390" y="60" font-family="var(--sans)" font-size="12" font-weight="bold" text-anchor="middle" fill="#2e7d32">Ghost Table (_tbl_gho)</text>
+            <text x="390" y="85" font-family="var(--mono)" font-size="9" text-anchor="middle" fill="#2e7d32">id BIGINT (Ready)</text>
+            <text x="390" y="110" font-family="var(--sans)" font-size="8.5" text-anchor="middle" fill="#555">Row Copy + Binlog Replay</text>
+
+            <path d="M 490 90 L 560 90" stroke="#2e7d32" stroke-width="2" marker-end="url(#arr-green)" fill="none"/>
+
+            <rect x="560" y="30" width="160" height="120" rx="6" fill="var(--card-bg, #f8f9fa)" stroke="#0056b3" stroke-width="1.5"/>
+            <text x="640" y="60" font-family="var(--sans)" font-size="12" font-weight="bold" text-anchor="middle" fill="#0056b3">Atomic Swap</text>
+            <text x="640" y="85" font-family="var(--mono)" font-size="8.5" text-anchor="middle" fill="#333">RENAME TABLE</text>
+            <text x="640" y="105" font-family="var(--mono)" font-size="8" text-anchor="middle" fill="#555">tbl &rarr; _old,</text>
+            <text x="640" y="125" font-family="var(--mono)" font-size="8" text-anchor="middle" fill="#555">_gho &rarr; tbl</text>
+
+            <defs>
+              <marker id="arr-swap" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 1 L 8 5 L 0 9 z" fill="#0056b3" />
+              </marker>
+              <marker id="arr-green" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 1 L 8 5 L 0 9 z" fill="#2e7d32" />
+              </marker>
+            </defs>
+          </svg>
+        </div>
+      </section>
+
+      <section id="capacity-monitoring">
+        <h2>6. Proactive Defense: Continuous Auto-Increment Telemetry</h2>
+        <p>
+          Auto-increment overflow is 100% predictable. By querying MySQL's <code>information_schema</code> metadata dictionary, database reliability teams can track integer saturation metrics and alert weeks or months before a crisis:
+        </p>
+
+        <div class="code-block-header">SQL Telemetry: Auto-Increment Utilization Scanner</div>
+        <pre><code class="language-sql">-- Query to detect tables approaching integer exhaustion (> 70% capacity)
+SELECT 
+    table_schema,
+    table_name,
+    column_name,
+    data_type,
+    column_type,
+    auto_increment,
+    max_value,
+    ROUND((auto_increment / max_value) * 100, 2) AS pct_used
+FROM (
+    SELECT 
+        c.table_schema,
+        c.table_name,
+        c.column_name,
+        c.data_type,
+        c.column_type,
+        t.auto_increment,
+        CASE 
+            WHEN c.column_type LIKE '%unsigned%' AND c.data_type = 'int' THEN 4294967295
+            WHEN c.data_type = 'int' THEN 2147483647
+            WHEN c.column_type LIKE '%unsigned%' AND c.data_type = 'bigint' THEN 18446744073709551615
+            WHEN c.data_type = 'bigint' THEN 9223372036854775807
+        END AS max_value
+    FROM information_schema.columns c
+    JOIN information_schema.tables t 
+      ON c.table_schema = t.table_schema AND c.table_name = t.table_name
+    WHERE c.extra = 'auto_increment'
+) metrics
+WHERE (auto_increment / max_value) &gt; 0.70
+ORDER BY pct_used DESC;</code></pre>
+      </section>
+
+      <section id="engineering-checklist">
+        <h2>7. Production Engineering Checklist</h2>
+        <ul class="checklist">
+          <li><strong>Default to BIGINT for primary keys:</strong> In high-throughput architectures, always specify <code>BIGINT</code> for surrogate primary keys; the 4 extra bytes per row are trivial compared to the cost of an outage.</li>
+          <li><strong>Never omit the UNSIGNED keyword on 32-bit INTs:</strong> If 4-byte INT is strictly required for memory savings, always use <code>UNSIGNED</code> to avoid discarding half the range.</li>
+          <li><strong>Alert at 70% threshold:</strong> Wire scheduled monitoring daemons to notify SRE teams whenever auto-increment utilization exceeds 70%.</li>
+          <li><strong>Prepare gh-ost migration templates:</strong> Maintain pre-approved migration templates to expand key widths without downtime.</li>
+          <li><strong>Audit client ORM type mapping:</strong> Ensure client SDKs (Go, Java, Ruby) map database integers to 64-bit primitives to avoid client-side deserialization overflow.</li>
+        </ul>
+      </section>
+
+      <div class="article-footer">
+        <div class="footer-nav">
+          <a href="google-maps-outage-bad-rollout-cascading-retries.html" class="prev-post">← Google Maps Outage &amp; Retries</a>
+          <a href="spotify-global-outage-service-mesh-grpc-storm.html" class="next-post">Spotify Global Outage &amp; gRPC Storm →</a>
+        </div>
+      </div>
+    </article>
+
+    <aside class="toc-sidebar">
+      <div class="sidebar-sticky">
+        <div class="sidebar-header">
+          <span class="toc-title">Table of Contents</span>
+        </div>
+        <nav class="toc-list">
+          <a href="#executive-summary" class="toc-link">1. Executive Summary</a>
+          <a href="#the-anatomy-of-auto-increment" class="toc-link">2. Auto-Increment Mechanics</a>
+          <a href="#what-happens-at-overflow" class="toc-link">3. The Overflow Failure</a>
+          <a href="#emergency-mitigation-playbook" class="toc-link">4. Emergency Runbook</a>
+          <a href="#gh-ost-table-swap" class="toc-link">5. Zero-Downtime Swap</a>
+          <a href="#capacity-monitoring" class="toc-link">6. Saturation Telemetry</a>
+          <a href="#engineering-checklist" class="toc-link">7. Engineering Checklist</a>
+        </nav>
+        <div class="sidebar-download">
+          <a href="../Docs/GitHub_Outage_Auto_Increment_Overflow_Technical_Breakdown.pdf" class="download-link" target="_blank" download>
+            <span>📥 Technical PDF (3 Pages)</span>
+          </a>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <p>&copy; 2026 System Design Notes. Production Engineering &amp; Architecture Post-Mortems.</p>
+    </div>
+  </footer>
+
+  <script src="../theme.js?v=3.3"></script>
+</body>
+</html>

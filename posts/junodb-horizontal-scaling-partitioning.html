@@ -65,36 +65,6 @@
   </header>
 
   <div class="post-layout">
-    <aside class="post-sidebar">
-      <div class="sidebar-sticky">
-        <div class="sidebar-header">
-          <span class="badge-post">JunoDB Series #3</span>
-          <span class="reading-time">23 min read</span>
-        </div>
-        <nav class="toc" aria-label="Table of Contents">
-          <h4>Table of Contents</h4>
-          <ul>
-            <li><a href="#scaling-challenge">1. The Horizontal Scaling Challenge</a></li>
-            <li><a href="#consistent-hashing">2. Consistent Hashing &amp; Murmur3</a></li>
-            <li><a href="#virtual-shards">3. Virtual Shards Topology</a></li>
-            <li><a href="#2d-matrix-mapping">4. Mapping Shards to the 2D Grid</a></li>
-            <li><a href="#online-migration">5. Zero-Downtime Shard Migration</a></li>
-            <li><a href="#dual-routing">6. Dual-Routing &amp; Catch-Up Sync</a></li>
-            <li><a href="#comparison">7. JunoDB vs. Redis Cluster vs. Cassandra</a></li>
-            <li><a href="#key-takeaways">8. Key Architectural Takeaways</a></li>
-          </ul>
-        </nav>
-        <div class="companion-box">
-          <div class="companion-title">Companion PDF</div>
-          <p>Download the verified 3-page technical breakdown for offline study and architecture review.</p>
-          <a href="../Docs/JunoDB_Horizontal_Scaling_Partitioning_Technical_Breakdown.pdf" class="download-link" target="_blank" download>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            JunoDB Horizontal Scaling PDF
-          </a>
-        </div>
-      </div>
-    </aside>
-
     <main class="post-content">
       <header class="post-header">
         <div class="meta-row">
@@ -269,6 +239,36 @@ func (rt *RoutingTable) Route(key []byte) (*StorageGroup, uint32) {
         </div>
       </section>
     </main>
+
+    <aside class="post-sidebar">
+      <div class="sidebar-sticky">
+        <div class="sidebar-header">
+          <span class="badge-post">JunoDB Series #3</span>
+          <span class="reading-time">23 min read</span>
+        </div>
+        <nav class="toc" aria-label="Table of Contents">
+          <h4>Table of Contents</h4>
+          <ul>
+            <li><a href="#scaling-challenge">1. The Horizontal Scaling Challenge</a></li>
+            <li><a href="#consistent-hashing">2. Consistent Hashing &amp; Murmur3</a></li>
+            <li><a href="#virtual-shards">3. Virtual Shards Topology</a></li>
+            <li><a href="#2d-matrix-mapping">4. Mapping Shards to the 2D Grid</a></li>
+            <li><a href="#online-migration">5. Zero-Downtime Shard Migration</a></li>
+            <li><a href="#dual-routing">6. Dual-Routing &amp; Catch-Up Sync</a></li>
+            <li><a href="#comparison">7. JunoDB vs. Redis Cluster vs. Cassandra</a></li>
+            <li><a href="#key-takeaways">8. Key Architectural Takeaways</a></li>
+          </ul>
+        </nav>
+        <div class="companion-box">
+          <div class="companion-title">Companion PDF</div>
+          <p>Download the verified 3-page technical breakdown for offline study and architecture review.</p>
+          <a href="../Docs/JunoDB_Horizontal_Scaling_Partitioning_Technical_Breakdown.pdf" class="download-link" target="_blank" download>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            JunoDB Horizontal Scaling PDF
+          </a>
+        </div>
+      </div>
+    </aside>
   </div>
 
   <footer class="footer">

@@ -184,6 +184,18 @@ function initSearchAndFilter() {
   let activeCategory = 'all';
   let searchQuery = '';
 
+  // Check URL query parameters (e.g. ?category=outages)
+  const urlParams = new URLSearchParams(window.location.search);
+  const urlCategory = urlParams.get('category') || urlParams.get('topic');
+  if (urlCategory) {
+    const matchingChip = Array.from(filterChips).find(c => c.getAttribute('data-category') === urlCategory);
+    if (matchingChip) {
+      filterChips.forEach(c => c.classList.remove('active'));
+      matchingChip.classList.add('active');
+      activeCategory = urlCategory;
+    }
+  }
+
   // Render initial articles
   renderArticles();
 
@@ -223,7 +235,9 @@ function initSearchAndFilter() {
 
   function renderArticles() {
     const filtered = ARTICLES_DATA.filter(article => {
-      const matchesCategory = activeCategory === 'all' || article.categorySlug === activeCategory;
+      const matchesCategory = activeCategory === 'all' || 
+        article.categorySlug === activeCategory || 
+        article.topic === activeCategory;
       const matchesSearch = !searchQuery || 
         article.title.toLowerCase().includes(searchQuery) ||
         article.excerpt.toLowerCase().includes(searchQuery) ||

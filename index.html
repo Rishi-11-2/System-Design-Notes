@@ -81,20 +81,20 @@
     <!-- Stats Grid -->
     <div class="stats-grid">
       <div class="stat-card">
-        <div class="stat-number">86</div>
+        <div class="stat-number">99</div>
         <div class="stat-label">In-Depth Articles</div>
       </div>
       <div class="stat-card">
-        <div class="stat-number">184+</div>
-        <div class="stat-label">Slide Pages Extracted</div>
+        <div class="stat-number">15</div>
+        <div class="stat-label">Outage Dissections</div>
       </div>
       <div class="stat-card">
-        <div class="stat-number">17</div>
-        <div class="stat-label">Redis Modules</div>
+        <div class="stat-number">14</div>
+        <div class="stat-label">Distributed Algorithms</div>
       </div>
       <div class="stat-card">
-        <div class="stat-number">100%</div>
-        <div class="stat-label">Exact Notes Preserved</div>
+        <div class="stat-number">70</div>
+        <div class="stat-label">System Design Deconstructions</div>
       </div>
     </div>
   </header>
@@ -108,19 +108,21 @@
     </div>
 
     <div class="categories-filter">
-      <button class="filter-chip active" data-category="all">All Notes</button>
-      <button class="filter-chip" data-category="cloud-databases">Cloud Databases</button>
+      <button class="filter-chip active" data-category="all">All Notes (99)</button>
+      <button class="filter-chip" data-category="outages">Outage Dissections</button>
       <button class="filter-chip" data-category="distributed-algorithms">Distributed Algorithms</button>
-      <button class="filter-chip" data-category="distributed-systems">Distributed Systems</button>
+      <button class="filter-chip" data-category="system-design">System Design</button>
+      <button class="filter-chip" data-category="cloud-databases">Cloud Databases</button>
       <button class="filter-chip" data-category="streaming-kafka">Kafka &amp; Streaming</button>
-      <button class="filter-chip" data-category="microservices">Microservices</button>
+      <button class="filter-chip" data-category="distributed-systems">Distributed Systems</button>
       <button class="filter-chip" data-category="in-memory-redis">Redis &amp; In-Memory</button>
+      <button class="filter-chip" data-category="microservices">Microservices</button>
       <button class="filter-chip" data-category="foundations-scaling">Foundations &amp; Scaling</button>
       <button class="filter-chip" data-category="case-studies">Case Studies</button>
     </div>
 
     <div style="text-align: center; margin-top: 1rem; font-size: 0.8rem; color: var(--text-muted); font-family: var(--font-mono);" id="results-count">
-      Showing 86 of 86 notes
+      Showing 99 of 99 notes
     </div>
   </section>
 
@@ -955,6 +957,125 @@
           </a>
         </div>
 
+        <!-- 13 New Outage Dissection Reference PDFs -->
+        <div class="stat-card" style="text-align: left; display: flex; flex-direction: column; justify-content: space-between;">
+          <div>
+            <div style="font-weight: 700; color: var(--text-heading); margin-bottom: 0.35rem; font-family: var(--font-heading);">GitHub Outage: Actions &amp; Cache</div>
+            <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 1rem; font-family: var(--font-mono);">3 pages • Split-Brain &amp; Cache Poisoning</div>
+          </div>
+          <a href="Docs/GitHub_Outage_Actions_Data_Inconsistencies_Technical_Breakdown.pdf" target="_blank" download class="btn-secondary" style="font-size: 0.8rem; padding: 0.4rem 0.8rem; justify-content: center;">
+            <span>📥 Download PDF (3 Pages)</span>
+          </a>
+        </div>
+        <div class="stat-card" style="text-align: left; display: flex; flex-direction: column; justify-content: space-between;">
+          <div>
+            <div style="font-weight: 700; color: var(--text-heading); margin-bottom: 0.35rem; font-family: var(--font-heading);">GitHub Outage: Failure Domains</div>
+            <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 1rem; font-family: var(--font-mono);">3 pages • Cells &amp; Blast Radius Containment</div>
+          </div>
+          <a href="Docs/GitHub_Outage_Localizing_Failure_Domains_Technical_Breakdown.pdf" target="_blank" download class="btn-secondary" style="font-size: 0.8rem; padding: 0.4rem 0.8rem; justify-content: center;">
+            <span>📥 Download PDF (3 Pages)</span>
+          </a>
+        </div>
+        <div class="stat-card" style="text-align: left; display: flex; flex-direction: column; justify-content: space-between;">
+          <div>
+            <div style="font-weight: 700; color: var(--text-heading); margin-bottom: 0.35rem; font-family: var(--font-heading);">GitHub Outage: ZooKeeper Dual Leaders</div>
+            <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 1rem; font-family: var(--font-mono);">3 pages • Zab Protocol &amp; Split-Brain Fencing</div>
+          </div>
+          <a href="Docs/GitHub_Outage_ZooKeeper_Multiple_Leaders_Technical_Breakdown.pdf" target="_blank" download class="btn-secondary" style="font-size: 0.8rem; padding: 0.4rem 0.8rem; justify-content: center;">
+            <span>📥 Download PDF (3 Pages)</span>
+          </a>
+        </div>
+        <div class="stat-card" style="text-align: left; display: flex; flex-direction: column; justify-content: space-between;">
+          <div>
+            <div style="font-weight: 700; color: var(--text-heading); margin-bottom: 0.35rem; font-family: var(--font-heading);">GitHub Outage: ProxySQL Topology</div>
+            <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 1rem; font-family: var(--font-mono);">3 pages • Orchestrator Sync &amp; Hostgroups</div>
+          </div>
+          <a href="Docs/GitHub_Outage_Database_Topology_ProxySQL_Technical_Breakdown.pdf" target="_blank" download class="btn-secondary" style="font-size: 0.8rem; padding: 0.4rem 0.8rem; justify-content: center;">
+            <span>📥 Download PDF (3 Pages)</span>
+          </a>
+        </div>
+        <div class="stat-card" style="text-align: left; display: flex; flex-direction: column; justify-content: space-between;">
+          <div>
+            <div style="font-weight: 700; color: var(--text-heading); margin-bottom: 0.35rem; font-family: var(--font-heading);">GitHub Outage: Master Failover Loops</div>
+            <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 1rem; font-family: var(--font-mono);">3 pages • Flapping Promotion &amp; Fencing Tokens</div>
+          </div>
+          <a href="Docs/GitHub_Outage_Master_Failover_Failure_Technical_Breakdown.pdf" target="_blank" download class="btn-secondary" style="font-size: 0.8rem; padding: 0.4rem 0.8rem; justify-content: center;">
+            <span>📥 Download PDF (3 Pages)</span>
+          </a>
+        </div>
+        <div class="stat-card" style="text-align: left; display: flex; flex-direction: column; justify-content: space-between;">
+          <div>
+            <div style="font-weight: 700; color: var(--text-heading); margin-bottom: 0.35rem; font-family: var(--font-heading);">GitHub Outage: HA Blind Spots</div>
+            <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 1rem; font-family: var(--font-mono);">3 pages • Common-Mode Failures &amp; SRE</div>
+          </div>
+          <a href="Docs/GitHub_Outage_High_Availability_Blind_Spots_Technical_Breakdown.pdf" target="_blank" download class="btn-secondary" style="font-size: 0.8rem; padding: 0.4rem 0.8rem; justify-content: center;">
+            <span>📥 Download PDF (3 Pages)</span>
+          </a>
+        </div>
+        <div class="stat-card" style="text-align: left; display: flex; flex-direction: column; justify-content: space-between;">
+          <div>
+            <div style="font-weight: 700; color: var(--text-heading); margin-bottom: 0.35rem; font-family: var(--font-heading);">GitHub Outage: MySQL Optimizer Inversion</div>
+            <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 1rem; font-family: var(--font-mono);">3 pages • Cost-Based Optimizer &amp; Index Flips</div>
+          </div>
+          <a href="Docs/GitHub_Outage_MySQL_Index_Optimizer_Flip_Technical_Breakdown.pdf" target="_blank" download class="btn-secondary" style="font-size: 0.8rem; padding: 0.4rem 0.8rem; justify-content: center;">
+            <span>📥 Download PDF (3 Pages)</span>
+          </a>
+        </div>
+        <div class="stat-card" style="text-align: left; display: flex; flex-direction: column; justify-content: space-between;">
+          <div>
+            <div style="font-weight: 700; color: var(--text-heading); margin-bottom: 0.35rem; font-family: var(--font-heading);">GitHub Outage: Secret Scanning Starvation</div>
+            <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 1rem; font-family: var(--font-mono);">3 pages • ReDoS, RE2 Engine &amp; Push Queues</div>
+          </div>
+          <a href="Docs/GitHub_Outage_Secret_Scanning_Thread_Starvation_Technical_Breakdown.pdf" target="_blank" download class="btn-secondary" style="font-size: 0.8rem; padding: 0.4rem 0.8rem; justify-content: center;">
+            <span>📥 Download PDF (3 Pages)</span>
+          </a>
+        </div>
+        <div class="stat-card" style="text-align: left; display: flex; flex-direction: column; justify-content: space-between;">
+          <div>
+            <div style="font-weight: 700; color: var(--text-heading); margin-bottom: 0.35rem; font-family: var(--font-heading);">GitHub Outage: Edge Case Degradation</div>
+            <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 1rem; font-family: var(--font-mono);">3 pages • Query Amplification &amp; Little's Law</div>
+          </div>
+          <a href="Docs/GitHub_Outage_Edge_Case_Concurrency_Race_Technical_Breakdown.pdf" target="_blank" download class="btn-secondary" style="font-size: 0.8rem; padding: 0.4rem 0.8rem; justify-content: center;">
+            <span>📥 Download PDF (3 Pages)</span>
+          </a>
+        </div>
+        <div class="stat-card" style="text-align: left; display: flex; flex-direction: column; justify-content: space-between;">
+          <div>
+            <div style="font-weight: 700; color: var(--text-heading); margin-bottom: 0.35rem; font-family: var(--font-heading);">GitHub Outage: ALTER TABLE gh-ost</div>
+            <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 1rem; font-family: var(--font-mono);">3 pages • Binlog Deadlock &amp; Cascading Collapse</div>
+          </div>
+          <a href="Docs/GitHub_Outage_Alter_Table_Ghost_Migration_Technical_Breakdown.pdf" target="_blank" download class="btn-secondary" style="font-size: 0.8rem; padding: 0.4rem 0.8rem; justify-content: center;">
+            <span>📥 Download PDF (3 Pages)</span>
+          </a>
+        </div>
+        <div class="stat-card" style="text-align: left; display: flex; flex-direction: column; justify-content: space-between;">
+          <div>
+            <div style="font-weight: 700; color: var(--text-heading); margin-bottom: 0.35rem; font-family: var(--font-heading);">Google Maps Outage: Cascading Retries</div>
+            <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 1rem; font-family: var(--font-mono);">3 pages • Synchronous RPCs &amp; Circuit Breakers</div>
+          </div>
+          <a href="Docs/Google_Maps_Outage_Cascading_Retries_Technical_Breakdown.pdf" target="_blank" download class="btn-secondary" style="font-size: 0.8rem; padding: 0.4rem 0.8rem; justify-content: center;">
+            <span>📥 Download PDF (3 Pages)</span>
+          </a>
+        </div>
+        <div class="stat-card" style="text-align: left; display: flex; flex-direction: column; justify-content: space-between;">
+          <div>
+            <div style="font-weight: 700; color: var(--text-heading); margin-bottom: 0.35rem; font-family: var(--font-heading);">GitHub Outage: MySQL INT Overflow</div>
+            <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 1rem; font-family: var(--font-mono);">3 pages • 2.14B Ceiling &amp; Table Swapping</div>
+          </div>
+          <a href="Docs/GitHub_Outage_Auto_Increment_Overflow_Technical_Breakdown.pdf" target="_blank" download class="btn-secondary" style="font-size: 0.8rem; padding: 0.4rem 0.8rem; justify-content: center;">
+            <span>📥 Download PDF (3 Pages)</span>
+          </a>
+        </div>
+        <div class="stat-card" style="text-align: left; display: flex; flex-direction: column; justify-content: space-between;">
+          <div>
+            <div style="font-weight: 700; color: var(--text-heading); margin-bottom: 0.35rem; font-family: var(--font-heading);">Spotify Global Outage: gRPC Storm</div>
+            <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 1rem; font-family: var(--font-mono);">3 pages • Service Mesh &amp; 400M User Herd</div>
+          </div>
+          <a href="Docs/Spotify_Global_Outage_Service_Mesh_gRPC_Technical_Breakdown.pdf" target="_blank" download class="btn-secondary" style="font-size: 0.8rem; padding: 0.4rem 0.8rem; justify-content: center;">
+            <span>📥 Download PDF (3 Pages)</span>
+          </a>
+        </div>
+
       </div>
     </div>
   </section>
@@ -1026,6 +1147,19 @@
           <li><a href="Docs/Exponential_Information_Gathering_Crash_Consensus_Technical_Breakdown.pdf" target="_blank">EIG Crash Consensus PDF (3 Pages)</a></li>
           <li><a href="Docs/Exponential_Information_Gathering_Byzantine_Agreement_Technical_Breakdown.pdf" target="_blank">EIG Byzantine Agreement PDF (3 Pages)</a></li>
           <li><a href="Docs/Two_Phase_Commit_At_Scale_Distributed_Transactions_Technical_Breakdown.pdf" target="_blank">2PC at Scale PDF (3 Pages)</a></li>
+          <li><a href="Docs/GitHub_Outage_Actions_Data_Inconsistencies_Technical_Breakdown.pdf" target="_blank">GitHub Actions Outage PDF (3 Pages)</a></li>
+          <li><a href="Docs/GitHub_Outage_Localizing_Failure_Domains_Technical_Breakdown.pdf" target="_blank">GitHub Failure Domains PDF (3 Pages)</a></li>
+          <li><a href="Docs/GitHub_Outage_ZooKeeper_Multiple_Leaders_Technical_Breakdown.pdf" target="_blank">GitHub ZooKeeper Leaders PDF (3 Pages)</a></li>
+          <li><a href="Docs/GitHub_Outage_Database_Topology_ProxySQL_Technical_Breakdown.pdf" target="_blank">GitHub ProxySQL Topology PDF (3 Pages)</a></li>
+          <li><a href="Docs/GitHub_Outage_Master_Failover_Failure_Technical_Breakdown.pdf" target="_blank">GitHub Master Failover PDF (3 Pages)</a></li>
+          <li><a href="Docs/GitHub_Outage_High_Availability_Blind_Spots_Technical_Breakdown.pdf" target="_blank">GitHub HA Blind Spots PDF (3 Pages)</a></li>
+          <li><a href="Docs/GitHub_Outage_MySQL_Index_Optimizer_Flip_Technical_Breakdown.pdf" target="_blank">GitHub MySQL Optimizer Flip PDF (3 Pages)</a></li>
+          <li><a href="Docs/GitHub_Outage_Secret_Scanning_Thread_Starvation_Technical_Breakdown.pdf" target="_blank">GitHub Secret Scanning PDF (3 Pages)</a></li>
+          <li><a href="Docs/GitHub_Outage_Edge_Case_Concurrency_Race_Technical_Breakdown.pdf" target="_blank">GitHub Edge Case Query PDF (3 Pages)</a></li>
+          <li><a href="Docs/GitHub_Outage_Alter_Table_Ghost_Migration_Technical_Breakdown.pdf" target="_blank">GitHub gh-ost Alter Table PDF (3 Pages)</a></li>
+          <li><a href="Docs/Google_Maps_Outage_Cascading_Retries_Technical_Breakdown.pdf" target="_blank">Google Maps Outage PDF (3 Pages)</a></li>
+          <li><a href="Docs/GitHub_Outage_Auto_Increment_Overflow_Technical_Breakdown.pdf" target="_blank">GitHub INT Overflow PDF (3 Pages)</a></li>
+          <li><a href="Docs/Spotify_Global_Outage_Service_Mesh_gRPC_Technical_Breakdown.pdf" target="_blank">Spotify Global Outage PDF (3 Pages)</a></li>
           <li><a href="Docs/Atlassian_April_2022_Mega_Outage_Technical_Breakdown.pdf" target="_blank">Atlassian Mega Outage PDF (3 Pages)</a></li>
           <li><a href="Docs/Instagram_Hashtag_Counts_Technical_Breakdown.pdf" target="_blank">Instagram Hashtags PDF (3 Pages)</a></li>
           <li><a href="Docs/Swiggy_Chatbot_NLP_Technical_Breakdown.pdf" target="_blank">Swiggy Chatbot PDF (3 Pages)</a></li>

@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dissecting GitHub Outage: Split-Brain &amp; Multiple Leaders in ZooKeeper — System Design Notes</title>
+  <meta name="description" content="Technical dissection of GitHub's outage caused by multiple leaders in an Apache ZooKeeper cluster. Analyzes Zab consensus, epoch divergence, asymmetric network partitions, fencing tokens, and split-brain mitigation.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../theme.css?v=3.3">
+  <link rel="stylesheet" href="../blog-theme.css?v=3.3">
+  <link rel="stylesheet" href="../assets/css/style.css?v=3.3">
+  <script>
+    (function() {
+      const saved = localStorage.getItem('theme');
+      if (saved) document.documentElement.dataset.theme = saved;
+    })();
+  </script>
+  <!-- KaTeX for Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="initKaTeX()"></script>
+  <script>
+    function initKaTeX() {
+      if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false }
+          ],
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'annotation', 'annotation-xml'],
+          ignoredClasses: ['katex', 'mermaid'],
+          output: 'html',
+          throwOnError: false
+        });
+      }
+    }
+    document.addEventListener('DOMContentLoaded', initKaTeX);
+  </script>
+  <!-- Highlight.js for Code Highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/monokai.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/common.min.js"></script>
+</head>
+<body>
+  <div id="reading-progress"></div>
+  <div id="progress" aria-hidden="true"></div>
+
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="../index.html" class="brand-link">
+        <div class="brand-icon">⚡</div>
+        <span>System Design Notes</span>
+      </a>
+      <div class="nav-actions">
+        <div class="aui-ping-status" data-tooltip="System operational">
+          <span class="aui-ping-dot"></span>
+          <span class="aui-ping-label">Operational</span>
+        </div>
+        <ul class="nav-links">
+          <li><a href="../index.html">Articles</a></li>
+          <li><a href="../index.html#categories">Categories</a></li>
+          <li><a href="../index.html#pdf-library">PDF Library</a></li>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank" class="github-nav-link">GitHub</a></li>
+        </ul>
+        <button id="theme-toggle" class="theme-toggle-btn" aria-label="Toggle theme">
+          <svg class="sun-icon" viewBox="0 0 24 24" width="18" height="18"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+          <svg class="moon-icon" viewBox="0 0 24 24" width="18" height="18"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        </button>
+      </div>
+    </div>
+  </nav>
+
+  <main class="post-container">
+    <div class="breadcrumb">
+      <a href="../index.html">Home</a>
+      <span class="separator">/</span>
+      <a href="../index.html#categories">Outage Dissections</a>
+      <span class="separator">/</span>
+      <span class="current">ZooKeeper Multiple Leaders Outage</span>
+    </div>
+
+    <header class="article-header">
+      <div class="badge-row">
+        <span class="badge badge-consensus">Outage Dissection</span>
+        <span class="badge badge-theory">Consensus Bugs</span>
+        <span class="badge badge-accent">Apache ZooKeeper</span>
+        <span class="badge badge-rounds">Split-Brain Inversion</span>
+      </div>
+      <h1 class="article-title">Dissecting GitHub Outage: Split-Brain &amp; Multiple Leaders in ZooKeeper</h1>
+      <p class="article-subtitle">How asymmetric network packet loss breached ZooKeeper's Zab consensus invariants, creating dual simultaneous leaders that routed writes to conflicting MySQL masters.</p>
+      <div class="article-meta">
+        <span class="meta-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> 23 min read</span>
+        <span class="meta-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> Arpit Bhayani Outage Dissections</span>
+        <span class="meta-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> Verified 3-Page Companion PDF</span>
+      </div>
+      <div class="pdf-action-banner">
+        <a href="../Docs/GitHub_Outage_ZooKeeper_Multiple_Leaders_Technical_Breakdown.pdf" class="pdf-btn" target="_blank" download>
+          <span>📥 Download Technical PDF (3 Pages)</span>
+        </a>
+      </div>
+    </header>
+
+    <div class="article-container">
+      <article class="prose">
+        <div class="callout callout-note">
+          <div class="callout-title">📌 Primary Consensus Failure Abstract</div>
+          <p>Distributed coordination engines like <strong>Apache ZooKeeper</strong>, <strong>etcd</strong>, and <strong>Consul</strong> are mathematically engineered to guarantee that at any given moment in time, exactly <strong>one authoritative leader</strong> exists. In this critical GitHub infrastructure outage, an asymmetric network partition combined with a lease-expiration timing race condition caused a catastrophic breakdown of this invariant: <strong>two ZooKeeper nodes simultaneously believed they were the legitimate, quorum-backed cluster leader</strong>. As clients connected to both leaders, GitHub’s service discovery and database routing layers received conflicting master assignments, routing production writes to two different MySQL databases concurrently.</p>
+        </div>
+
+        <h2 id="zookeeper-role-at-github">1. The Role of ZooKeeper in GitHub’s Core Topology</h2>
+        <p>GitHub utilized an ensemble of Apache ZooKeeper nodes as the authoritative source of truth for:</p>
+        <ul>
+          <li><strong>Database Leader Registration:</strong> Recording which MySQL node was the active, writable master for each shard.</li>
+          <li><strong>ProxySQL Routing Topologies:</strong> Database proxies continuously watched ZooKeeper z-nodes to dynamically update backend write pools.</li>
+          <li><strong>Orchestrator Coordination:</strong> Orchestrator daemons acquired ephemeral locks in ZooKeeper to ensure only one orchestrator instance executed topology changes.</li>
+        </ul>
+
+        <div class="callout callout-warning">
+          <div class="callout-title">⚠️ The Absolute Prerequisite: Single Leader Invariant</div>
+          <p>ZooKeeper relies on the <strong>Zab (ZooKeeper Atomic Broadcast)</strong> consensus protocol. Zab requires that all writes pass through a single primary leader. The leader assigns a monotonically increasing 64-bit transaction ID ($zxid$), where the upper 32 bits represent the <em>epoch</em> and the lower 32 bits represent the <em>counter</em>. If multiple leaders emerge with diverging epochs, consensus collapses.</p>
+        </div>
+
+        <h2 id="how-multiple-leaders-formed">2. The Failure Cascade: How Multiple Leaders Emerged</h2>
+        <p>The emergence of multiple leaders was driven by a classic combination of <strong>asymmetric network partitioning</strong> and <strong>lease timeout lag</strong>:</p>
+
+        <div class="mermaid-diagram-wrapper">
+          <svg viewBox="0 0 860 380" width="100%" height="auto" xmlns="http://www.w3.org/2000/svg" style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; font-family: var(--sans);">
+            <rect width="860" height="380" fill="var(--bg-card)" rx="8"/>
+            <text x="430" y="30" text-anchor="middle" font-size="16" font-weight="700" fill="var(--text-heading)">ZooKeeper Multiple Leaders: Asymmetric Partition &amp; Dual Quorum Divergence</text>
+            <text x="430" y="50" text-anchor="middle" font-size="12" fill="var(--text-muted)">Node 1 Retains Stale Leadership while Node 3 Gathers New Quorum Across Split Network</text>
+
+            <!-- Partition Boundary -->
+            <line x1="430" y1="75" x2="430" y2="350" stroke="#ef4444" stroke-width="2" stroke-dasharray="6"/>
+            <text x="430" y="70" text-anchor="middle" font-size="11" font-weight="700" fill="#ef4444">Asymmetric Network Partition</text>
+
+            <!-- Partition A: Old Leader (Left) -->
+            <rect x="50" y="90" width="340" height="240" rx="6" fill="var(--raised)" stroke="var(--border-color)" stroke-width="1.5"/>
+            <text x="220" y="115" text-anchor="middle" font-size="13" font-weight="700" fill="var(--text-heading)">Partition A: Stale Quorum View</text>
+
+            <rect x="80" y="140" width="130" height="50" rx="4" fill="#fef2f2" stroke="#ef4444" stroke-width="2"/>
+            <text x="145" y="162" text-anchor="middle" font-size="11" font-weight="700" fill="#ef4444">ZK Node 1 (Leader e1)</text>
+            <text x="145" y="178" text-anchor="middle" font-size="9" fill="var(--text-muted)">Thinks it holds quorum</text>
+
+            <rect x="230" y="140" width="130" height="50" rx="4" fill="var(--bg-card)" stroke="var(--border-color)" stroke-width="1"/>
+            <text x="295" y="162" text-anchor="middle" font-size="11" font-weight="600">ZK Node 2</text>
+            <text x="295" y="178" text-anchor="middle" font-size="9" fill="var(--text-muted)">Follower (stalled)</text>
+
+            <rect x="80" y="220" width="280" height="90" rx="4" fill="var(--bg-card)" stroke="var(--border-color)" stroke-width="1"/>
+            <text x="95" y="245" font-size="11" font-weight="700" fill="#ef4444">Stale Routing Output:</text>
+            <text x="95" y="265" font-size="10" fill="var(--text-muted)">• Serves Master = MySQL-A to Client Cluster 1</text>
+            <text x="95" y="285" font-size="10" fill="var(--text-muted)">• Has not realized its heartbeats are timing out</text>
+
+            <!-- Partition B: New Leader (Right) -->
+            <rect x="470" y="90" width="340" height="240" rx="6" fill="var(--raised)" stroke="var(--border-color)" stroke-width="1.5"/>
+            <text x="640" y="115" text-anchor="middle" font-size="13" font-weight="700" fill="var(--accent)">Partition B: Newly Elected Quorum</text>
+
+            <rect x="500" y="140" width="130" height="50" rx="4" fill="var(--bg-card)" stroke="var(--accent)" stroke-width="2"/>
+            <text x="565" y="162" text-anchor="middle" font-size="11" font-weight="700" fill="var(--accent)">ZK Node 3 (Leader e2)</text>
+            <text x="565" y="178" text-anchor="middle" font-size="9" fill="var(--accent)">Elected via Quorum</text>
+
+            <rect x="650" y="140" width="130" height="50" rx="4" fill="var(--bg-card)" stroke="var(--border-color)" stroke-width="1"/>
+            <text x="715" y="162" text-anchor="middle" font-size="11" font-weight="600">ZK Nodes 4 &amp; 5</text>
+            <text x="715" y="178" text-anchor="middle" font-size="9" fill="var(--text-muted)">Followers (Epoch e2)</text>
+
+            <rect x="500" y="220" width="280" height="90" rx="4" fill="var(--bg-card)" stroke="var(--border-color)" stroke-width="1"/>
+            <text x="515" y="245" font-size="11" font-weight="700" fill="var(--accent)">New Routing Output:</text>
+            <text x="515" y="265" font-size="10" fill="var(--text-muted)">• Serves Master = MySQL-B to Client Cluster 2</text>
+            <text x="515" y="285" font-size="10" fill="var(--text-muted)">• Both MySQL-A and MySQL-B accept writes!</text>
+          </svg>
+        </div>
+
+        <h2 id="step-by-step-divergence-mechanism">3. Step-by-Step Divergence Mechanism</h2>
+        <ol>
+          <li><strong>Asymmetric Flapping:</strong> A network switch dropped outbound packets from Leader 1 to Nodes 3, 4, 5, but allowed inbound packets or dropped them intermittently.</li>
+          <li><strong>Election of Leader 2:</strong> Nodes 3, 4, and 5 timed out waiting for Leader 1’s heartbeat. Because they numbered 3 out of 5 nodes, they successfully formed a strict majority quorum ($\frac{5}{2} + 1 = 3$), bumped the epoch to $e_2$, and elected <strong>Node 3 as New Leader</strong>.</li>
+          <li><strong>The Old Leader's Delusion:</strong> Leader 1 had a longer socket timeout / GC pause and had not yet acknowledged its loss of quorum. It continued accepting read queries and serving cached leadership leases to clients connected to Partition A.</li>
+          <li><strong>Client Divergence:</strong>
+            <ul>
+              <li>Client App Pool 1 (connected to Leader 1) read: <code>master = db-east-01</code>.</li>
+              <li>Client App Pool 2 (connected to Leader 2) read: <code>master = db-east-02</code>.</li>
+            </ul>
+          </li>
+          <li><strong>The Result:</strong> Production writes were routed simultaneously to two different MySQL nodes, breaking referential integrity and causing massive primary key collisions.</li>
+        </ol>
+
+        <h2 id="the-fencing-token-solution">4. The Fencing Token Solution</h2>
+        <p>In distributed systems design, relying on a client or leader to "know" when its lease has expired is a fatal flaw. Networks can delay packets indefinitely, and garbage collection (GC) pauses can freeze a process for seconds after its lease expires.</p>
+
+        <div class="callout callout-note">
+          <div class="callout-title">📐 The Fencing Token Pattern (Martin Kleppmann)</div>
+          <p>Every time a consensus service grants a leadership lease or assigns a database master, it must issue a strictly monotonically increasing <strong>Fencing Token</strong> (e.g., ZooKeeper epoch + transaction ID):</p>
+          $$T_1 = (\text{epoch}: 1, \text{tx}: 104) \quad \longrightarrow \quad T_2 = (\text{epoch}: 2, \text{tx}: 1)$$
+          <p><strong>The Storage Layer Invariant:</strong> The storage tier (MySQL, ProxySQL, or storage server) must record the highest fencing token it has ever observed. If a client submits a write request with token $T_1$, but the storage layer has already observed $T_2$ ($T_1 < T_2$), the storage layer <strong>strictly rejects the write</strong>:</p>
+          $$\text{if } T_{\text{incoming}} \le T_{\text{max\_observed}} \implies \text{REJECT (STALE\_EPOCH)}$$
+        </div>
+
+        <h2 id="production-hardening-guidelines">5. Hardening ZooKeeper in Production</h2>
+        <pre><code class="language-text">1. Strict 3-Datacenter Topology:
+   └── Never split a 5-node cluster evenly between 2 datacenters (e.g. 3 in East, 2 in West).
+   └── If the WAN cuts, the 2-node side stalls, but if the 3-node side network flaps, multiple leaders emerge.
+   └── Solution: Deploy in 3 distinct Availability Zones (e.g., 2 in AZ-1, 2 in AZ-2, 1 in AZ-3).
+
+2. Aggressive Heartbeat Sync Limits:
+   └── Set tickTime=2000, initLimit=5, syncLimit=2.
+   └── Ensure leaders step down immediately (within 2 ticks) if fewer than quorum followers acknowledge ping.
+
+3. Client Read-Only on Disconnect:
+   └── When ZooKeeper client emits DISCONNECTED or SESSION_EXPIRED event,
+       application web workers must immediately reject all incoming POST/PUT requests
+       and enter safe read-only mode until connection is re-established.</code></pre>
+
+        <h2 id="engineering-takeaways">6. Systems Engineering Takeaways</h2>
+        <ol>
+          <li><strong>Quorum Protocols Do Not Prevent Asymmetric Split-Brain on Stale Leases:</strong> While Zab and Raft guarantee that only one leader can be elected per epoch, an old leader can continue serving stale state if client leases do not check monotonic epoch tokens.</li>
+          <li><strong>Never Trust the Client to Discard Its Own Lease:</strong> A node experiencing a Java GC pause or network delay does not know that its lease expired 500ms ago. Always enforce validation at the resource endpoint via fencing tokens.</li>
+          <li><strong>Odd Nodes Must Span Odd Failure Domains:</strong> A 5-node consensus cluster distributed across only 2 data centers is an architectural trap. Any fiber cut leaves one datacenter unable to form quorums and the other vulnerable to split-brain. Consensus requires 3 independent failure domains.</li>
+        </ol>
+      </article>
+
+      <aside class="toc-sidebar">
+        <div class="toc-title">Table of Contents</div>
+        <ul class="toc-list">
+          <li><a href="#zookeeper-role-at-github">1. ZooKeeper's Role at GitHub</a></li>
+          <li><a href="#how-multiple-leaders-formed">2. How Multiple Leaders Emerged</a></li>
+          <li><a href="#step-by-step-divergence-mechanism">3. Divergence Mechanism</a></li>
+          <li><a href="#the-fencing-token-solution">4. The Fencing Token Solution</a></li>
+          <li><a href="#production-hardening-guidelines">5. Production Hardening</a></li>
+          <li><a href="#engineering-takeaways">6. Systems Engineering Takeaways</a></li>
+        </ul>
+
+        <div class="companion-box" style="margin-top: 1.25rem;">
+          <div class="companion-title">Companion PDF</div>
+          <p>Download the verified 3-page technical breakdown for offline study and architecture review.</p>
+          <a href="../Docs/GitHub_Outage_ZooKeeper_Multiple_Leaders_Technical_Breakdown.pdf" class="download-link" target="_blank" download>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            ZooKeeper Outage PDF (3 Pages)
+          </a>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-container">
+      <div class="footer-col">
+        <div class="footer-brand">
+          <div class="brand-icon">⚡</div>
+          <span>System Design Notes</span>
+        </div>
+        <p class="footer-tagline">Curated engineering notes, production architecture dissections, and distributed systems research papers.</p>
+      </div>
+      <div class="footer-col">
+        <h5>Outage Dissections</h5>
+        <ul>
+          <li><a href="github-outage-actions-data-inconsistencies-cache.html">GitHub Actions 24h Outage</a></li>
+          <li><a href="github-outage-localizing-failure-domains.html">Localizing Failure Domains</a></li>
+          <li><a href="github-outage-zookeeper-multiple-leaders-split-brain.html">ZooKeeper Multiple Leaders</a></li>
+          <li><a href="atlassian-april-2022-mega-outage-dissection.html">Atlassian 14-Day Mega Outage</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Repository</h5>
+        <ul>
+          <li><a href="https://github.com/Rishi-11-2/System-Design-Notes" target="_blank">GitHub Repository</a></li>
+          <li><a href="../Docs/System_Design_Notes.pdf" target="_blank">Complete Notes (184 Pages)</a></li>
+          <li><a href="../Docs/GitHub_Outage_ZooKeeper_Multiple_Leaders_Technical_Breakdown.pdf" target="_blank">ZooKeeper Outage PDF (3 Pages)</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>Released under MIT License • Open Source Engineering Notes</p>
+    </div>
+  </footer>
+
+  <script src="../assets/js/main.js?v=3.3"></script>
+</body>
+</html>
